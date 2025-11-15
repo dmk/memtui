@@ -6,11 +6,13 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
+use super::render_connection_form;
 use super::state::{Panel, UiState};
+use crate::app::AppState;
 use crate::types::KeyMetadata;
 
 /// Main UI rendering function
-pub fn render(f: &mut Frame, ui_state: &mut UiState, keys: &[KeyMetadata], selected_value: &str) {
+pub fn render(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState) {
     // Create three-panel layout
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -22,25 +24,37 @@ pub fn render(f: &mut Frame, ui_state: &mut UiState, keys: &[KeyMetadata], selec
         .split(f.area());
 
     // Left panel: Connections
-    render_connections(f, ui_state, chunks[0]);
+    render_connections(f, app_state, ui_state, chunks[0]);
 
     // Middle panel: Key Browser
-    render_keys(f, ui_state, keys, chunks[1]);
+    render_keys(f, ui_state, &app_state.keys, chunks[1]);
 
     // Right panel: Value Viewer
-    render_value(f, ui_state, selected_value, chunks[2]);
+    render_value(
+        f,
+        ui_state,
+        &app_state.selected_value,
+        app_state.error_message.as_deref(),
+        chunks[2],
+    );
 
-    // Show help modal if active
-    if ui_state.show_help {
+    // Show modals
+    if ui_state.show_connection_form {
+        render_connection_form(f, &ui_state.connection_form, ui_state.form_error.as_deref());
+    } else if ui_state.show_help {
         render_help(f);
     }
 }
 
-fn render_connections(f: &mut Frame, ui_state: &mut UiState, area: Rect) {
-    let connections: Vec<ListItem> = ui_state
-        .connections
+fn render_connections(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area: Rect) {
+    let configs = app_state.connection_manager.get_configs();
+
+    let connections: Vec<ListItem> = configs
         .iter()
-        .map(|c| ListItem::new(c.as_str()))
+        .map(|config| {
+            let text = format!("{} ({}:{})", config.name, config.host, config.port);
+            ListItem::new(text)
+        })
         .collect();
 
     let connections_list = List::new(connections)
@@ -92,14 +106,29 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, keys: &[KeyMetadata], area
     f.render_stateful_widget(keys_list, area, &mut ui_state.key_state);
 }
 
-fn render_value(f: &mut Frame, ui_state: &UiState, selected_value: &str, area: Rect) {
-    let value_text = if !selected_value.is_empty() {
+fn render_value(
+    f: &mut Frame,
+    ui_state: &UiState,
+    selected_value: &str,
+    error: Option<&str>,
+    area: Rect,
+) {
+    let value_text = if let Some(err) = error {
+        format!("Error: {}", err)
+    } else if !selected_value.is_empty() {
         selected_value.to_string()
     } else {
         "Select a key to view its value".to_string()
     };
 
+    let style = if error.is_some() {
+        Style::default().fg(Color::Red)
+    } else {
+        Style::default()
+    };
+
     let value = Paragraph::new(value_text)
+        .style(style)
         .block(
             Block::default()
                 .title("Value Viewer")
@@ -126,6 +155,12 @@ pub fn render_help(f: &mut Frame) {
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
+        Line::from(Span::styled(
+            "Navigation",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(vec![
             Span::styled("Tab         ", Style::default().fg(Color::Yellow)),
             Span::raw("Next panel"),
@@ -142,12 +177,38 @@ pub fn render_help(f: &mut Frame) {
             Span::styled("↓/j         ", Style::default().fg(Color::Yellow)),
             Span::raw("Move down"),
         ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Connections",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled("n           ", Style::default().fg(Color::Yellow)),
+            Span::raw("New connection"),
+        ]),
+        Line::from(vec![
+            Span::styled("Enter       ", Style::default().fg(Color::Yellow)),
+            Span::raw("Connect/Disconnect"),
+        ]),
+        Line::from(vec![
+            Span::styled("d           ", Style::default().fg(Color::Yellow)),
+            Span::raw("Delete connection"),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "General",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(vec![
             Span::styled("?           ", Style::default().fg(Color::Yellow)),
             Span::raw("Toggle help"),
         ]),
         Line::from(vec![
-            Span::styled("q           ", Style::default().fg(Color::Yellow)),
+            Span::styled("q/Esc       ", Style::default().fg(Color::Yellow)),
             Span::raw("Quit"),
         ]),
         Line::from(""),

@@ -1,7 +1,7 @@
 # memtui Makefile
 # Convenience targets for build, test, lint, and development
 
-.PHONY: all build check test fmt clippy run clean help verify dev release
+.PHONY: all build check test fmt clippy run clean help verify dev release lint
 
 # Default target
 all: build
@@ -13,6 +13,8 @@ build:
 # Build release version
 release:
 	cargo build --release
+
+lint: fmt-check check clippy
 
 # Check compilation without building
 check:

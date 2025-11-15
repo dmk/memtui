@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionConfig {
     pub id: String,
     pub name: String,
@@ -32,7 +32,7 @@ impl std::fmt::Display for BackendType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Auth {
     /// Username + password
     UserPassword { username: String, password: String },
@@ -45,7 +45,7 @@ pub enum Auth {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsConfig {
     pub enabled: bool,
     pub ca_cert_path: Option<PathBuf>,

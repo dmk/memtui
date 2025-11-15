@@ -2,8 +2,10 @@ use super::{
     Backend, BackendCapabilities, BackendError, CommandStatus, ConnectionInfo, RawCommandResult,
     ServerInfo,
 };
-use crate::types::{Auth, BackendType, ConnectionConfig, KeyMetadata, KeyScanResult, Value, ValueType};
-use redis::{aio::ConnectionManager, AsyncCommands, RedisError};
+use crate::types::{
+    Auth, BackendType, ConnectionConfig, KeyMetadata, KeyScanResult, Value, ValueType,
+};
+use redis::{AsyncCommands, RedisError, aio::ConnectionManager};
 use std::time::{Duration, SystemTime};
 
 /// Redis backend implementation
@@ -126,9 +128,10 @@ impl RedisBackend {
                     _ if key.starts_with("db") => {
                         // Parse db0:keys=123,expires=45
                         if let Some(keys_part) = value.split(',').next()
-                            && let Some(count) = keys_part.strip_prefix("keys=") {
-                                keys_total += count.parse::<u64>().unwrap_or(0);
-                            }
+                            && let Some(count) = keys_part.strip_prefix("keys=")
+                        {
+                            keys_total += count.parse::<u64>().unwrap_or(0);
+                        }
                     }
                     _ => {}
                 }
@@ -167,8 +170,9 @@ impl Backend for RedisBackend {
         let client =
             redis::Client::open(url).map_err(|e| BackendError::ConnectionError(e.to_string()))?;
 
-        let connection = ConnectionManager::new(client)
+        let connection = tokio::time::timeout(self.config.timeout, ConnectionManager::new(client))
             .await
+            .map_err(|_| BackendError::Timeout)?
             .map_err(Self::convert_error)?;
 
         // Test the connection with INFO command
@@ -497,7 +501,8 @@ impl Backend for RedisBackend {
         let mut conn = self.get_connection()?.clone();
 
         if let Some(ttl) = ttl {
-            let _: () = conn.set_ex(key, value, ttl.as_secs())
+            let _: () = conn
+                .set_ex(key, value, ttl.as_secs())
                 .await
                 .map_err(Self::convert_error)?;
         } else {
@@ -762,10 +767,7 @@ uptime_in_seconds:12345
 
     #[test]
     fn test_convert_error_authentication() {
-        let redis_err = RedisError::from((
-            redis::ErrorKind::AuthenticationFailed,
-            "auth failed",
-        ));
+        let redis_err = RedisError::from((redis::ErrorKind::AuthenticationFailed, "auth failed"));
         let backend_err = RedisBackend::convert_error(redis_err);
         assert!(matches!(backend_err, BackendError::AuthenticationError(_)));
     }
@@ -807,9 +809,7 @@ mod integration_tests {
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(6379),
-            auth: std::env::var("REDIS_PASSWORD")
-                .ok()
-                .map(Auth::Token),
+            auth: std::env::var("REDIS_PASSWORD").ok().map(Auth::Token),
             database: Some("15".to_string()), // Use db 15 for tests
             tls: None,
             timeout: Duration::from_secs(5),
@@ -940,7 +940,10 @@ mod integration_tests {
         backend.set("test:scan:3", b"v3", None).await.unwrap();
 
         // Scan for test:scan:* pattern
-        let result = backend.scan_keys(Some("test:scan:*"), None, 100).await.unwrap();
+        let result = backend
+            .scan_keys(Some("test:scan:*"), None, 100)
+            .await
+            .unwrap();
         assert_eq!(result.keys.len(), 3);
     }
 
@@ -1043,4 +1046,3 @@ mod integration_tests {
         assert!(matches!(result, Err(BackendError::ReadOnly)));
     }
 }
-

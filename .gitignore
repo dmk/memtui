@@ -27,3 +27,4 @@ coverage/
 # Temporary files
 *.tmp
 *.bak
+dump.rdb

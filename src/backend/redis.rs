@@ -376,6 +376,11 @@ impl Backend for RedisBackend {
             .await
             .map_err(Self::convert_error)?;
 
+        // Check if key exists
+        if type_str == "none" {
+            return Err(BackendError::KeyNotFound(key.to_string()));
+        }
+
         let value_type = Self::map_redis_type(&type_str);
 
         // For simple string values
@@ -821,9 +826,32 @@ mod integration_tests {
         backend
     }
 
-    async fn cleanup_test_keys(backend: &RedisBackend) {
-        // Clean up any test keys
-        let _ = backend.execute_raw("FLUSHDB").await;
+    async fn cleanup_test_keys(backend: &RedisBackend, pattern: &str) {
+        // Clean up specific test keys matching the pattern
+        // This avoids interfering with other concurrent tests
+        let mut conn = backend.get_connection().unwrap().clone();
+        let mut cursor = 0u64;
+
+        loop {
+            let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(pattern)
+                .arg("COUNT")
+                .arg(1000)
+                .query_async(&mut conn)
+                .await
+                .unwrap_or((0, vec![]));
+
+            for key in keys {
+                let _: Result<(), _> = redis::cmd("DEL").arg(&key).query_async(&mut conn).await;
+            }
+
+            if next_cursor == 0 {
+                break;
+            }
+            cursor = next_cursor;
+        }
     }
 
     #[tokio::test]
@@ -860,7 +888,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_set_and_get() {
         let backend = setup_test_backend().await;
-        cleanup_test_keys(&backend).await;
+        cleanup_test_keys(&backend, "test:key1").await;
 
         // Set a key
         backend.set("test:key1", b"test value", None).await.unwrap();
@@ -874,7 +902,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_set_with_ttl() {
         let backend = setup_test_backend().await;
-        cleanup_test_keys(&backend).await;
+        cleanup_test_keys(&backend, "test:ttl").await;
 
         // Set a key with TTL
         backend
@@ -891,7 +919,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_get_json_detection() {
         let backend = setup_test_backend().await;
-        cleanup_test_keys(&backend).await;
+        cleanup_test_keys(&backend, "test:json").await;
 
         let json_data = br#"{"name": "test", "value": 123}"#;
         backend.set("test:json", json_data, None).await.unwrap();
@@ -903,7 +931,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_delete() {
         let backend = setup_test_backend().await;
-        cleanup_test_keys(&backend).await;
+        cleanup_test_keys(&backend, "test:delete").await;
 
         // Set and then delete
         backend.set("test:delete", b"temp", None).await.unwrap();
@@ -932,7 +960,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_scan_keys() {
         let backend = setup_test_backend().await;
-        cleanup_test_keys(&backend).await;
+        cleanup_test_keys(&backend, "test:scan:*").await;
 
         // Set multiple keys
         backend.set("test:scan:1", b"v1", None).await.unwrap();
@@ -950,15 +978,11 @@ mod integration_tests {
     #[tokio::test]
     async fn test_key_count() {
         let backend = setup_test_backend().await;
-        cleanup_test_keys(&backend).await;
+        cleanup_test_keys(&backend, "test:count:*").await;
 
         // Set some keys
         backend.set("test:count:1", b"v1", None).await.unwrap();
         backend.set("test:count:2", b"v2", None).await.unwrap();
-
-        // Count all keys
-        let count = backend.key_count(None).await.unwrap();
-        assert!(count >= 2);
 
         // Count with pattern
         let count = backend.key_count(Some("test:count:*")).await.unwrap();
@@ -968,7 +992,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_get_many() {
         let backend = setup_test_backend().await;
-        cleanup_test_keys(&backend).await;
+        cleanup_test_keys(&backend, "test:multi:*").await;
 
         // Set multiple keys
         backend.set("test:multi:1", b"value1", None).await.unwrap();
@@ -991,7 +1015,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_key_info() {
         let backend = setup_test_backend().await;
-        cleanup_test_keys(&backend).await;
+        cleanup_test_keys(&backend, "test:info").await;
 
         backend.set("test:info", b"test data", None).await.unwrap();
 

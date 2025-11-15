@@ -1,0 +1,34 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:8.2.3
+    container_name: memtui_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command:
+      - redis-server
+      - --save
+      - "60"
+      - "1000"
+      - --loglevel
+      - warning
+
+  memcached:
+    image: memcached:1.6
+    container_name: memtui_memcached
+    restart: unless-stopped
+    ports:
+      - "11211:11211"
+    command:
+      - memcached
+      - -m
+      - "128"
+      - -I
+      - 2m
+
+volumes:
+  redis_data:

@@ -52,12 +52,8 @@ pub trait Backend: Send + Sync {
     // ===== Write Operations (requires write_enabled flag) =====
 
     /// Set a value (only if write_enabled)
-    async fn set(
-        &self,
-        key: &str,
-        value: &[u8],
-        ttl: Option<Duration>,
-    ) -> Result<(), BackendError>;
+    async fn set(&self, key: &str, value: &[u8], ttl: Option<Duration>)
+    -> Result<(), BackendError>;
 
     /// Delete a key (only if write_enabled)
     async fn delete(&self, key: &str) -> Result<bool, BackendError>;

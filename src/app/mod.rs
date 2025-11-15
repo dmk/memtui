@@ -37,18 +37,18 @@ impl AppState {
     }
 
     pub async fn update_value(&mut self, selected_index: Option<usize>) {
-        if let Some(i) = selected_index {
-            if let Some(key) = self.keys.get(i) {
-                match self.backend.get(&key.name).await {
-                    Ok(value) => {
-                        self.selected_value = self
-                            .formatter
-                            .format(&value)
-                            .unwrap_or_else(|_| "<formatting error>".to_string());
-                    }
-                    Err(_) => {
-                        self.selected_value = "<error loading value>".to_string();
-                    }
+        if let Some(i) = selected_index
+            && let Some(key) = self.keys.get(i)
+        {
+            match self.backend.get(&key.name).await {
+                Ok(value) => {
+                    self.selected_value = self
+                        .formatter
+                        .format(&value)
+                        .unwrap_or_else(|_| "<formatting error>".to_string());
+                }
+                Err(_) => {
+                    self.selected_value = "<error loading value>".to_string();
                 }
             }
         }

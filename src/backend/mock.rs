@@ -101,7 +101,7 @@ impl Backend for MockBackend {
         Ok(ServerInfo {
             version: "7.0.0-mock".to_string(),
             uptime: Duration::from_secs(86400),
-            memory_used: 1024 * 1024 * 10, // 10 MB
+            memory_used: 1024 * 1024 * 10,       // 10 MB
             memory_max: Some(1024 * 1024 * 100), // 100 MB
             clients_connected: 5,
             keys_total: 4,
@@ -121,10 +121,10 @@ impl Backend for MockBackend {
         let mut keys = Self::mock_keys();
 
         // Simple pattern matching
-        if let Some(pattern) = pattern {
-            if pattern != "*" {
-                keys.retain(|k| k.name.contains(pattern));
-            }
+        if let Some(pattern) = pattern
+            && pattern != "*"
+        {
+            keys.retain(|k| k.name.contains(pattern));
         }
 
         Ok(KeyScanResult {

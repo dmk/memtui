@@ -1,9 +1,9 @@
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 
 use memtui::app::AppState;
@@ -66,29 +66,29 @@ async fn run_app<B: ratatui::backend::Backend>(
         })?;
 
         // Handle input
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if ui_state.show_help {
-                    // Close help on any key
-                    ui_state.show_help = false;
-                } else {
-                    match key.code {
-                        KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('?') => ui_state.show_help = true,
-                        KeyCode::Tab => ui_state.next_panel(),
-                        KeyCode::BackTab => ui_state.prev_panel(),
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            if ui_state.next_item(app_state.keys.len()) {
-                                app_state.update_value(ui_state.key_state.selected()).await;
-                            }
+        if event::poll(std::time::Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+        {
+            if ui_state.show_help {
+                // Close help on any key
+                ui_state.show_help = false;
+            } else {
+                match key.code {
+                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char('?') => ui_state.show_help = true,
+                    KeyCode::Tab => ui_state.next_panel(),
+                    KeyCode::BackTab => ui_state.prev_panel(),
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if ui_state.next_item(app_state.keys.len()) {
+                            app_state.update_value(ui_state.key_state.selected()).await;
                         }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            if ui_state.previous_item(app_state.keys.len()) {
-                                app_state.update_value(ui_state.key_state.selected()).await;
-                            }
-                        }
-                        _ => {}
                     }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if ui_state.previous_item(app_state.keys.len()) {
+                            app_state.update_value(ui_state.key_state.selected()).await;
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

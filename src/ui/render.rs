@@ -1,21 +1,16 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
-    Frame,
 };
 
-use crate::types::KeyMetadata;
 use super::state::{Panel, UiState};
+use crate::types::KeyMetadata;
 
 /// Main UI rendering function
-pub fn render(
-    f: &mut Frame,
-    ui_state: &mut UiState,
-    keys: &[KeyMetadata],
-    selected_value: &str,
-) {
+pub fn render(f: &mut Frame, ui_state: &mut UiState, keys: &[KeyMetadata], selected_value: &str) {
     // Create three-panel layout
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -194,4 +189,3 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1])[1]
 }
-

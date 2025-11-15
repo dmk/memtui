@@ -117,4 +117,3 @@ impl Default for UiState {
         Self::new()
     }
 }
-

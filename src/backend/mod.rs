@@ -1,10 +1,12 @@
 mod mock;
+mod redis;
 
 use crate::types::{BackendType, KeyMetadata, KeyScanResult, Value};
 use std::time::Duration;
 use thiserror::Error;
 
 pub use mock::MockBackend;
+pub use redis::RedisBackend;
 
 /// Main abstraction for all backend stores
 #[async_trait::async_trait]

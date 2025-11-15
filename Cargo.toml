@@ -9,3 +9,9 @@ crossterm = "0.28"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 thiserror = "1.0"
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+serde_json = "1.0"
+
+[features]
+# Integration tests require a running Redis instance
+integration-tests = []

@@ -86,6 +86,27 @@ All operations are read-only to prevent accidents. Write operations will be opt-
 
 This is early stage. If you want to add a backend, implement the `Backend` trait in `src/backend/`.
 
+## Development
+
+### Quick Start
+
+```bash
+# Build and run
+make run
+
+# Run tests
+make test
+
+# Format and lint
+make fmt
+make clippy
+
+# Full verification (CI checks)
+make verify
+```
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for more details.
+
 ## License
 
-TBD
+Apache License 2.0 - see [LICENSE](./LICENSE) for details

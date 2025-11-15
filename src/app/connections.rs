@@ -1,7 +1,6 @@
-use crate::backend::{Backend, MockBackend, RedisBackend};
+use crate::backend::{Backend, RedisBackend};
 use crate::types::{BackendType, ConnectionConfig};
 use std::collections::HashMap;
-use std::time::Duration;
 
 /// Manages multiple backend connections
 pub struct ConnectionManager {
@@ -12,28 +11,11 @@ pub struct ConnectionManager {
 
 impl ConnectionManager {
     pub fn new() -> Self {
-        let mut manager = Self {
+        Self {
             connections: HashMap::new(),
             configs: HashMap::new(),
             active_id: None,
-        };
-
-        // Add default mock connection configuration
-        let mock_config = ConnectionConfig {
-            id: "mock".to_string(),
-            name: "Mock Backend".to_string(),
-            backend_type: BackendType::Redis,
-            host: "localhost".to_string(),
-            port: 6379,
-            auth: None,
-            database: Some("0".to_string()),
-            tls: None,
-            timeout: Duration::from_secs(2),
-            read_only: true,
-        };
-
-        manager.configs.insert("mock".to_string(), mock_config);
-        manager
+        }
     }
 
     /// Add a new connection configuration
@@ -45,6 +27,20 @@ impl ConnectionManager {
     /// Get all connection configs
     pub fn get_configs(&self) -> Vec<&ConnectionConfig> {
         self.configs.values().collect()
+    }
+
+    /// Get all connection configs as a Vec (for saving)
+    pub fn get_all_configs(&self) -> Vec<ConnectionConfig> {
+        self.configs.values().cloned().collect()
+    }
+
+    /// Load connections from a list
+    pub fn load_configs(&mut self, configs: Vec<ConnectionConfig>) {
+        self.configs.clear();
+        for config in configs {
+            let id = config.id.clone();
+            self.configs.insert(id, config);
+        }
     }
 
     /// Get a connection config by ID
@@ -60,15 +56,6 @@ impl ConnectionManager {
         }
 
         let config = self.configs.get(id).ok_or("Connection not found")?.clone();
-
-        // Special-case: mock backend uses in-memory data
-        if id == "mock" {
-            let mut backend: Box<dyn Backend> = Box::new(MockBackend::new(config.read_only));
-            backend.connect().await?;
-            self.connections.insert(id.to_string(), backend);
-            self.active_id = Some(id.to_string());
-            return Ok(());
-        }
 
         // Create backend based on type
         let mut backend: Box<dyn Backend> = match config.backend_type {

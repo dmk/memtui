@@ -8,6 +8,7 @@ use std::io;
 
 use memtui::app::AppState;
 use memtui::ui::{self, Panel, UiState};
+use memtui::userdata;
 
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
@@ -21,13 +22,22 @@ async fn main() -> Result<(), io::Error> {
     // Create app state (with connection manager)
     let mut app_state = AppState::new();
 
+    // Load saved connections
+    if let Ok(connections) = userdata::load_connections() {
+        app_state.connection_manager.load_configs(connections);
+    }
+
     // Create UI state (display + navigation)
     let mut ui_state = UiState::new();
 
-    if ui_state.connection_state.selected().is_none() {
+    // Select first connection if any exist
+    let has_connections = !app_state.connection_manager.get_configs().is_empty();
+    if has_connections {
         ui_state.connection_state.select(Some(0));
+        activate_selected_connection(&mut app_state, &mut ui_state).await;
+    } else {
+        ui_state.connection_state.select(None);
     }
-    activate_selected_connection(&mut app_state, &mut ui_state).await;
 
     // Run app
     let res = run_app(&mut terminal, &mut app_state, &mut ui_state).await;
@@ -74,6 +84,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                             Ok(config) => {
                                 let new_id = config.id.clone();
                                 app_state.connection_manager.add_connection(config);
+
+                                // Save connections to disk
+                                let all_configs = app_state.connection_manager.get_all_configs();
+                                let _ = userdata::save_connections(&all_configs);
+
                                 if let Some(idx) = app_state
                                     .connection_manager
                                     .get_configs()
@@ -131,10 +146,13 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 .iter()
                                 .map(|c| c.id.clone())
                                 .collect();
-                            if let Some(id) = configs.get(idx)
-                                && id != "mock"
-                            {
+                            if let Some(id) = configs.get(idx) {
                                 app_state.connection_manager.remove_config(id);
+
+                                // Save connections to disk
+                                let all_configs = app_state.connection_manager.get_all_configs();
+                                let _ = userdata::save_connections(&all_configs);
+
                                 let remaining = app_state.connection_manager.get_configs();
                                 if !remaining.is_empty() {
                                     let new_idx = idx.min(remaining.len() - 1);

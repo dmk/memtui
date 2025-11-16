@@ -1,3 +1,7 @@
+mod json;
+
+pub use json::{JsonColorConfig, JsonFormatter};
+
 use crate::types::Value;
 
 /// Value formatter trait for display

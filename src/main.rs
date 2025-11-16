@@ -244,7 +244,7 @@ async fn activate_selected_connection(app_state: &mut AppState, ui_state: &mut U
             app_state.update_value(ui_state.key_state.selected()).await;
         } else {
             ui_state.key_state.select(None);
-            app_state.selected_value.clear();
+            app_state.selected_value = None;
         }
     }
 }

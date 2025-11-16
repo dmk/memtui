@@ -60,8 +60,8 @@
 
 ### Value Display
 
-- [ ] Auto-detect value format (JSON, msgpack, text, binary)
-- [ ] JSON syntax highlighting & pretty-print
+- [x] Auto-detect value format (JSON, msgpack, text, binary)
+- [x] JSON syntax highlighting & pretty-print
 - [ ] Binary hex dump display
 - [ ] Copy value to clipboard
 - [ ] Export value to file

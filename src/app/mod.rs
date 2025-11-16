@@ -2,15 +2,16 @@ mod connections;
 
 pub use connections::{ConnectionManager, ConnectionStatus};
 
-use crate::formatter::{Formatter, TextFormatter};
-use crate::types::KeyMetadata;
+use crate::formatter::{JsonColorConfig, JsonFormatter, TextFormatter};
+use crate::types::{KeyMetadata, Value};
 
 /// Main application state (backend connection + data)
 pub struct AppState {
     pub connection_manager: ConnectionManager,
     pub keys: Vec<KeyMetadata>,
-    pub selected_value: String,
-    pub formatter: TextFormatter,
+    pub selected_value: Option<Value>,
+    pub text_formatter: TextFormatter,
+    pub json_formatter: JsonFormatter,
     pub error_message: Option<String>,
 }
 
@@ -19,10 +20,16 @@ impl AppState {
         Self {
             connection_manager: ConnectionManager::new(),
             keys: Vec::new(),
-            selected_value: String::new(),
-            formatter: TextFormatter,
+            selected_value: None,
+            text_formatter: TextFormatter,
+            json_formatter: JsonFormatter::new(JsonColorConfig::default()),
             error_message: None,
         }
+    }
+
+    /// Update JSON color configuration
+    pub fn set_json_config(&mut self, config: JsonColorConfig) {
+        self.json_formatter = JsonFormatter::new(config);
     }
 
     pub async fn connect_to(&mut self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -42,7 +49,7 @@ impl AppState {
     pub async fn disconnect_from(&mut self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
         self.error_message = None;
         self.keys.clear();
-        self.selected_value.clear();
+        self.selected_value = None;
         self.connection_manager.disconnect(id).await
     }
 
@@ -68,14 +75,12 @@ impl AppState {
         {
             match backend.get(&key.name).await {
                 Ok(value) => {
-                    self.selected_value = self
-                        .formatter
-                        .format(&value)
-                        .unwrap_or_else(|_| "<formatting error>".to_string());
+                    self.selected_value = Some(value);
                     self.error_message = None;
                 }
                 Err(e) => {
-                    self.selected_value = format!("<error loading value: {}>", e);
+                    self.selected_value = None;
+                    self.error_message = Some(format!("Error loading value: {}", e));
                 }
             }
         }

@@ -1,7 +1,7 @@
 mod memcached;
 mod mock;
 mod redis;
-mod utils;
+pub mod utils;
 
 use crate::types::{BackendType, KeyMetadata, KeyScanResult, Value};
 use std::time::Duration;

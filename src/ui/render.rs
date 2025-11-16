@@ -9,6 +9,7 @@ use ratatui::{
 use super::render_connection_form;
 use super::state::{Panel, UiState};
 use crate::app::{AppState, ConnectionStatus};
+use crate::formatter::Formatter;
 use crate::types::KeyMetadata;
 
 /// Main UI rendering function
@@ -36,13 +37,7 @@ pub fn render(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState) {
     render_keys(f, ui_state, &app_state.keys, chunks[1]);
 
     // Right panel: Value Viewer
-    render_value(
-        f,
-        ui_state,
-        &app_state.selected_value,
-        app_state.error_message.as_deref(),
-        chunks[2],
-    );
+    render_value(f, ui_state, app_state, chunks[2]);
 
     // Bottom: Status bar
     render_status_bar(f, app_state, main_chunks[1]);
@@ -125,28 +120,54 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, keys: &[KeyMetadata], area
     f.render_stateful_widget(keys_list, area, &mut ui_state.key_state);
 }
 
-fn render_value(
-    f: &mut Frame,
-    ui_state: &UiState,
-    selected_value: &str,
-    error: Option<&str>,
-    area: Rect,
-) {
-    let value_text = if let Some(err) = error {
-        format!("Error: {}", err)
-    } else if !selected_value.is_empty() {
-        selected_value.to_string()
+fn render_value(f: &mut Frame, ui_state: &UiState, app_state: &AppState, area: Rect) {
+    let (lines, style) = if let Some(err) = &app_state.error_message {
+        // Error message
+        (
+            vec![Line::from(format!("Error: {}", err))],
+            Style::default().fg(Color::Red),
+        )
+    } else if let Some(value) = &app_state.selected_value {
+        // Try JSON formatting first
+        if app_state.json_formatter.can_format(value) {
+            match app_state.json_formatter.format_to_lines(value) {
+                Ok(json_lines) => (json_lines, Style::default()),
+                Err(_) => {
+                    // Fallback to text formatter
+                    match app_state.text_formatter.format(value) {
+                        Ok(text) => (
+                            text.lines().map(|l| Line::from(l.to_string())).collect(),
+                            Style::default(),
+                        ),
+                        Err(_) => (
+                            vec![Line::from("<formatting error>")],
+                            Style::default().fg(Color::Red),
+                        ),
+                    }
+                }
+            }
+        } else {
+            // Use text formatter
+            match app_state.text_formatter.format(value) {
+                Ok(text) => (
+                    text.lines().map(|l| Line::from(l.to_string())).collect(),
+                    Style::default(),
+                ),
+                Err(_) => (
+                    vec![Line::from("<formatting error>")],
+                    Style::default().fg(Color::Red),
+                ),
+            }
+        }
     } else {
-        "Select a key to view its value".to_string()
+        // No value selected
+        (
+            vec![Line::from("Select a key to view its value")],
+            Style::default().fg(Color::DarkGray),
+        )
     };
 
-    let style = if error.is_some() {
-        Style::default().fg(Color::Red)
-    } else {
-        Style::default()
-    };
-
-    let value = Paragraph::new(value_text)
+    let value_widget = Paragraph::new(lines)
         .style(style)
         .block(
             Block::default()
@@ -160,7 +181,7 @@ fn render_value(
         )
         .wrap(Wrap { trim: false });
 
-    f.render_widget(value, area);
+    f.render_widget(value_widget, area);
 }
 
 pub fn render_help(f: &mut Frame) {

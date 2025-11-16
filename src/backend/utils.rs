@@ -1,4 +1,5 @@
 /// Detect if data is JSON by checking if it starts/ends with JSON delimiters
+///
 pub fn is_json(data: &[u8]) -> bool {
     if let Ok(s) = std::str::from_utf8(data) {
         let trimmed = s.trim();

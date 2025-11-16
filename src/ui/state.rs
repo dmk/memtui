@@ -1,5 +1,5 @@
 use super::ConnectionForm;
-use ratatui::widgets::ListState;
+use ratatui::widgets::{ListState, ScrollbarState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel {
@@ -17,6 +17,7 @@ pub struct UiState {
     pub form_error: Option<String>,
     pub connection_state: ListState,
     pub key_state: ListState,
+    pub key_scrollbar_state: ScrollbarState,
 }
 
 impl UiState {
@@ -29,6 +30,7 @@ impl UiState {
             form_error: None,
             connection_state: ListState::default(),
             key_state: ListState::default(),
+            key_scrollbar_state: ScrollbarState::default(),
         };
         // Select first connection by default
         state.connection_state.select(Some(0));
@@ -88,7 +90,7 @@ impl UiState {
             Panel::Keys => {
                 let i = match self.key_state.selected() {
                     Some(i) => {
-                        if i >= keys_len - 1 {
+                        if i >= keys_len.saturating_sub(1) {
                             0
                         } else {
                             i + 1
@@ -126,7 +128,7 @@ impl UiState {
                 let i = match self.key_state.selected() {
                     Some(i) => {
                         if i == 0 {
-                            keys_len - 1
+                            keys_len.saturating_sub(1)
                         } else {
                             i - 1
                         }

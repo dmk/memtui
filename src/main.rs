@@ -181,7 +181,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::BackTab => ui_state.prev_panel(),
                     KeyCode::Down | KeyCode::Char('j') => {
                         let connections_len = app_state.connection_manager.get_configs().len();
-                        let keys_len = app_state.keys.len();
+                        let keys_len = app_state
+                            .total_key_count
+                            .map(|t| t as usize)
+                            .unwrap_or_else(|| app_state.keys.len());
 
                         if ui_state.next_item(connections_len, keys_len) {
                             match ui_state.active_panel {
@@ -189,6 +192,13 @@ async fn run_app<B: ratatui::backend::Backend>(
                                     activate_selected_connection(app_state, ui_state).await;
                                 }
                                 Panel::Keys => {
+                                    // Ensure region around selection is loaded (handles wrap)
+                                    if let Some(idx) = ui_state.key_state.selected()
+                                        && app_state.needs_loading_around(idx)
+                                    {
+                                        app_state.load_until_filled_around(idx, 10).await;
+                                    }
+
                                     app_state.update_value(ui_state.key_state.selected()).await;
                                 }
                                 Panel::Value => {}
@@ -197,7 +207,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
                         let connections_len = app_state.connection_manager.get_configs().len();
-                        let keys_len = app_state.keys.len();
+                        let keys_len = app_state
+                            .total_key_count
+                            .map(|t| t as usize)
+                            .unwrap_or_else(|| app_state.keys.len());
 
                         if ui_state.previous_item(connections_len, keys_len) {
                             match ui_state.active_panel {
@@ -205,6 +218,13 @@ async fn run_app<B: ratatui::backend::Backend>(
                                     activate_selected_connection(app_state, ui_state).await;
                                 }
                                 Panel::Keys => {
+                                    // Ensure region around selection is loaded (handles wrap)
+                                    if let Some(idx) = ui_state.key_state.selected()
+                                        && app_state.needs_loading_around(idx)
+                                    {
+                                        app_state.load_until_filled_around(idx, 10).await;
+                                    }
+
                                     app_state.update_value(ui_state.key_state.selected()).await;
                                 }
                                 Panel::Value => {}

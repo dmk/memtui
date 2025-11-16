@@ -30,11 +30,10 @@ async fn main() -> Result<(), io::Error> {
     // Create UI state (display + navigation)
     let mut ui_state = UiState::new();
 
-    // Select first connection if any exist
+    // Select first connection if any exist (but don't connect yet - will happen in background)
     let has_connections = !app_state.connection_manager.get_configs().is_empty();
     if has_connections {
         ui_state.connection_state.select(Some(0));
-        activate_selected_connection(&mut app_state, &mut ui_state).await;
     } else {
         ui_state.connection_state.select(None);
     }
@@ -63,10 +62,21 @@ async fn run_app<B: ratatui::backend::Backend>(
     app_state: &mut AppState,
     ui_state: &mut UiState,
 ) -> io::Result<()> {
+    let mut initial_connection_pending = ui_state.connection_state.selected().is_some();
+
     loop {
+        // Draw UI first
         terminal.draw(|f| {
             ui::render(f, app_state, ui_state);
         })?;
+
+        // Handle initial connection after first render
+        if initial_connection_pending {
+            initial_connection_pending = false;
+            activate_selected_connection(app_state, ui_state).await;
+            // Force a redraw after connection attempt
+            continue;
+        }
 
         // Handle input
         if event::poll(std::time::Duration::from_millis(100))?

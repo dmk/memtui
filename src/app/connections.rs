@@ -2,10 +2,20 @@ use crate::backend::{Backend, MemcachedBackend, RedisBackend};
 use crate::types::{BackendType, ConnectionConfig};
 use std::collections::HashMap;
 
+/// Connection status for a backend
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConnectionStatus {
+    Disconnected,
+    Connecting,
+    Connected,
+    Error(String),
+}
+
 /// Manages multiple backend connections
 pub struct ConnectionManager {
     connections: HashMap<String, Box<dyn Backend>>,
     configs: HashMap<String, ConnectionConfig>,
+    statuses: HashMap<String, ConnectionStatus>,
     active_id: Option<String>,
 }
 
@@ -14,6 +24,7 @@ impl ConnectionManager {
         Self {
             connections: HashMap::new(),
             configs: HashMap::new(),
+            statuses: HashMap::new(),
             active_id: None,
         }
     }
@@ -21,6 +32,8 @@ impl ConnectionManager {
     /// Add a new connection configuration
     pub fn add_connection(&mut self, config: ConnectionConfig) {
         let id = config.id.clone();
+        self.statuses
+            .insert(id.clone(), ConnectionStatus::Disconnected);
         self.configs.insert(id, config);
     }
 
@@ -37,8 +50,11 @@ impl ConnectionManager {
     /// Load connections from a list
     pub fn load_configs(&mut self, configs: Vec<ConnectionConfig>) {
         self.configs.clear();
+        self.statuses.clear();
         for config in configs {
             let id = config.id.clone();
+            self.statuses
+                .insert(id.clone(), ConnectionStatus::Disconnected);
             self.configs.insert(id, config);
         }
     }
@@ -48,12 +64,17 @@ impl ConnectionManager {
         self.configs.get(id)
     }
 
-    /// Connect to a backend
+    /// Connect to a backend with timeout
     pub async fn connect(&mut self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
         if self.connections.contains_key(id) {
             self.active_id = Some(id.to_string());
+            self.statuses
+                .insert(id.to_string(), ConnectionStatus::Connected);
             return Ok(());
         }
+
+        self.statuses
+            .insert(id.to_string(), ConnectionStatus::Connecting);
 
         let config = self.configs.get(id).ok_or("Connection not found")?.clone();
 
@@ -62,18 +83,40 @@ impl ConnectionManager {
             BackendType::Redis => Box::new(RedisBackend::new(config)),
             BackendType::Memcached => Box::new(MemcachedBackend::new(config)),
             BackendType::Etcd => {
+                self.statuses.insert(
+                    id.to_string(),
+                    ConnectionStatus::Error("Etcd not yet implemented".to_string()),
+                );
                 return Err("Etcd not yet implemented".into());
             }
         };
 
-        // Attempt connection
-        backend.connect().await?;
+        // Attempt connection with timeout
+        let connect_result =
+            tokio::time::timeout(std::time::Duration::from_secs(5), backend.connect()).await;
 
-        // Store the connection
-        self.connections.insert(id.to_string(), backend);
-        self.active_id = Some(id.to_string());
-
-        Ok(())
+        match connect_result {
+            Ok(Ok(_)) => {
+                // Store the connection
+                self.connections.insert(id.to_string(), backend);
+                self.active_id = Some(id.to_string());
+                self.statuses
+                    .insert(id.to_string(), ConnectionStatus::Connected);
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                let err_msg = e.to_string();
+                self.statuses
+                    .insert(id.to_string(), ConnectionStatus::Error(err_msg.clone()));
+                Err(Box::new(e))
+            }
+            Err(_) => {
+                let err_msg = "Connection timeout".to_string();
+                self.statuses
+                    .insert(id.to_string(), ConnectionStatus::Error(err_msg.clone()));
+                Err(err_msg.into())
+            }
+        }
     }
 
     /// Disconnect from a backend
@@ -81,6 +124,9 @@ impl ConnectionManager {
         if let Some(mut backend) = self.connections.remove(id) {
             backend.disconnect().await?;
         }
+
+        self.statuses
+            .insert(id.to_string(), ConnectionStatus::Disconnected);
 
         if self.active_id.as_deref() == Some(id) {
             self.active_id = None;
@@ -128,9 +174,23 @@ impl ConnectionManager {
     pub fn remove_config(&mut self, id: &str) {
         self.configs.remove(id);
         self.connections.remove(id);
+        self.statuses.remove(id);
         if self.active_id.as_deref() == Some(id) {
             self.active_id = None;
         }
+    }
+
+    /// Get connection status
+    pub fn get_status(&self, id: &str) -> ConnectionStatus {
+        self.statuses
+            .get(id)
+            .cloned()
+            .unwrap_or(ConnectionStatus::Disconnected)
+    }
+
+    /// Get the status of the active connection
+    pub fn get_active_status(&self) -> Option<ConnectionStatus> {
+        self.active_id.as_ref().map(|id| self.get_status(id))
     }
 }
 

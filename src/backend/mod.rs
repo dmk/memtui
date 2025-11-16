@@ -267,13 +267,13 @@ mod tests {
 
         // Test JSON key
         let value = backend.get("user:123").await.unwrap();
-        assert!(value.data.len() > 0);
+        assert!(!value.data.is_empty());
         assert_eq!(value.value_type, crate::types::ValueType::Json);
         assert!(String::from_utf8_lossy(&value.data).contains("Alice"));
 
         // Test string key
         let value = backend.get("session:abc").await.unwrap();
-        assert!(value.data.len() > 0);
+        assert!(!value.data.is_empty());
         assert_eq!(value.value_type, crate::types::ValueType::String);
     }
 

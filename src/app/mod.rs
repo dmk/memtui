@@ -1,6 +1,6 @@
 mod connections;
 
-pub use connections::ConnectionManager;
+pub use connections::{ConnectionManager, ConnectionStatus};
 
 use crate::formatter::{Formatter, TextFormatter};
 use crate::types::KeyMetadata;

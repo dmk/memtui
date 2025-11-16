@@ -8,11 +8,17 @@ use ratatui::{
 
 use super::render_connection_form;
 use super::state::{Panel, UiState};
-use crate::app::AppState;
+use crate::app::{AppState, ConnectionStatus};
 use crate::types::KeyMetadata;
 
 /// Main UI rendering function
 pub fn render(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState) {
+    // Create main layout with status bar at the bottom
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(f.area());
+
     // Create three-panel layout
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -21,7 +27,7 @@ pub fn render(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState) {
             Constraint::Percentage(35),
             Constraint::Percentage(40),
         ])
-        .split(f.area());
+        .split(main_chunks[0]);
 
     // Left panel: Connections
     render_connections(f, app_state, ui_state, chunks[0]);
@@ -38,6 +44,9 @@ pub fn render(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState) {
         chunks[2],
     );
 
+    // Bottom: Status bar
+    render_status_bar(f, app_state, main_chunks[1]);
+
     // Show modals
     if ui_state.show_connection_form {
         render_connection_form(f, &ui_state.connection_form, ui_state.form_error.as_deref());
@@ -52,7 +61,17 @@ fn render_connections(f: &mut Frame, app_state: &AppState, ui_state: &mut UiStat
     let connections: Vec<ListItem> = configs
         .iter()
         .map(|config| {
-            let text = format!("{} ({}:{})", config.name, config.host, config.port);
+            let status = app_state.connection_manager.get_status(&config.id);
+            let status_indicator = match status {
+                ConnectionStatus::Connected => "●",
+                ConnectionStatus::Connecting => "◐",
+                ConnectionStatus::Disconnected => "○",
+                ConnectionStatus::Error(_) => "✗",
+            };
+            let text = format!(
+                "{} {} ({}:{})",
+                status_indicator, config.name, config.host, config.port
+            );
             ListItem::new(text)
         })
         .collect();
@@ -229,6 +248,54 @@ pub fn render_help(f: &mut Frame) {
 
     f.render_widget(Clear, area);
     f.render_widget(help, area);
+}
+
+fn render_status_bar(f: &mut Frame, app_state: &AppState, area: Rect) {
+    let status_text = if let Some(status) = app_state.connection_manager.get_active_status() {
+        match status {
+            ConnectionStatus::Connected => {
+                if let Some(id) = app_state.connection_manager.get_active_id() {
+                    if let Some(config) = app_state.connection_manager.get_config(id) {
+                        format!(
+                            "Connected to {} ({}:{})",
+                            config.name, config.host, config.port
+                        )
+                    } else {
+                        "Connected".to_string()
+                    }
+                } else {
+                    "Connected".to_string()
+                }
+            }
+            ConnectionStatus::Connecting => "Connecting...".to_string(),
+            ConnectionStatus::Disconnected => "Not connected".to_string(),
+            ConnectionStatus::Error(ref msg) => format!("Error: {}", msg),
+        }
+    } else {
+        "No connection selected".to_string()
+    };
+
+    let (style, status_label) =
+        if let Some(status) = app_state.connection_manager.get_active_status() {
+            match status {
+                ConnectionStatus::Connected => (Style::default().fg(Color::Green), "● "),
+                ConnectionStatus::Connecting => (Style::default().fg(Color::Yellow), "◐ "),
+                ConnectionStatus::Disconnected => (Style::default().fg(Color::DarkGray), "○ "),
+                ConnectionStatus::Error(_) => (Style::default().fg(Color::Red), "✗ "),
+            }
+        } else {
+            (Style::default().fg(Color::DarkGray), "○ ")
+        };
+
+    let status_line = Line::from(vec![
+        Span::styled(status_label, style),
+        Span::raw(status_text),
+        Span::raw(" | Press ? for help | q to quit"),
+    ]);
+
+    let status_bar = Paragraph::new(status_line).style(Style::default().bg(Color::Black));
+
+    f.render_widget(status_bar, area);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

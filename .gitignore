@@ -27,4 +27,7 @@ coverage/
 # Temporary files
 *.tmp
 *.bak
-dump.rdb
+
+# Python
+.venv/
+__pycache__/

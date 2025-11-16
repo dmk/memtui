@@ -81,17 +81,6 @@ impl RedisBackend {
         }
     }
 
-    /// Detect if a string value is JSON
-    fn is_json(data: &[u8]) -> bool {
-        if let Ok(s) = std::str::from_utf8(data) {
-            let trimmed = s.trim();
-            (trimmed.starts_with('{') && trimmed.ends_with('}'))
-                || (trimmed.starts_with('[') && trimmed.ends_with(']'))
-        } else {
-            false
-        }
-    }
-
     /// Parse Redis INFO response into a structured format
     fn parse_info(info_str: &str) -> Result<ServerInfo, BackendError> {
         let mut version = String::new();
@@ -394,7 +383,7 @@ impl Backend for RedisBackend {
             })?;
 
             // Try to detect if it's JSON
-            let final_type = if Self::is_json(&data) {
+            let final_type = if super::utils::is_json(&data) {
                 ValueType::Json
             } else if data.iter().all(|&b| b.is_ascii()) {
                 ValueType::String
@@ -471,7 +460,7 @@ impl Backend for RedisBackend {
         let mut results = Vec::new();
         for (key, maybe_value) in keys.iter().zip(values.iter()) {
             if let Some(data) = maybe_value {
-                let final_type = if Self::is_json(data) {
+                let final_type = if super::utils::is_json(data) {
                     ValueType::Json
                 } else if data.iter().all(|&b| b.is_ascii()) {
                     ValueType::String
@@ -661,35 +650,6 @@ mod tests {
         assert_eq!(RedisBackend::map_redis_type("hash"), ValueType::Hash);
         assert_eq!(RedisBackend::map_redis_type("unknown"), ValueType::Unknown);
         assert_eq!(RedisBackend::map_redis_type("stream"), ValueType::Unknown);
-    }
-
-    #[test]
-    fn test_is_json_object() {
-        assert!(RedisBackend::is_json(b"{\"key\": \"value\"}"));
-        assert!(RedisBackend::is_json(b"  {\"key\": \"value\"}  "));
-        assert!(RedisBackend::is_json(b"{}"));
-    }
-
-    #[test]
-    fn test_is_json_array() {
-        assert!(RedisBackend::is_json(b"[1, 2, 3]"));
-        assert!(RedisBackend::is_json(b"  [1, 2, 3]  "));
-        assert!(RedisBackend::is_json(b"[]"));
-    }
-
-    #[test]
-    fn test_is_not_json() {
-        assert!(!RedisBackend::is_json(b"plain string"));
-        assert!(!RedisBackend::is_json(b"123"));
-        assert!(!RedisBackend::is_json(b"{incomplete"));
-        assert!(!RedisBackend::is_json(b"[incomplete"));
-        assert!(!RedisBackend::is_json(b""));
-    }
-
-    #[test]
-    fn test_is_json_invalid_utf8() {
-        // Invalid UTF-8 should return false
-        assert!(!RedisBackend::is_json(&[0xFF, 0xFE]));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::backend::{Backend, RedisBackend};
+use crate::backend::{Backend, MemcachedBackend, RedisBackend};
 use crate::types::{BackendType, ConnectionConfig};
 use std::collections::HashMap;
 
@@ -60,9 +60,7 @@ impl ConnectionManager {
         // Create backend based on type
         let mut backend: Box<dyn Backend> = match config.backend_type {
             BackendType::Redis => Box::new(RedisBackend::new(config)),
-            BackendType::Memcached => {
-                return Err("Memcached not yet implemented".into());
-            }
+            BackendType::Memcached => Box::new(MemcachedBackend::new(config)),
             BackendType::Etcd => {
                 return Err("Etcd not yet implemented".into());
             }

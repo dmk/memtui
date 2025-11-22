@@ -22,6 +22,10 @@ pub enum Action {
     Enter,
     Escape,
     ToggleHelp,
+    OpenConnectionPalette,
+    CloseConnectionPalette,
+    NextConnectionTab,
+    PrevConnectionTab,
 
     // Connection Form
     OpenConnectionForm,
@@ -36,7 +40,7 @@ pub enum Action {
     Connect(String),
     Disconnect(String),
     DeleteConnection(String),
-    SelectConnection(usize),
+    FocusConnection(String),
 
     // Data Actions (Intent)
     LoadKeys,

@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState},
 };
 
 pub struct ConnectionListProps<'a> {
@@ -127,23 +127,27 @@ impl Component for ConnectionList {
             })
             .collect();
 
+        let highlight_border = if props.is_active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
         let connections_list = List::new(connections)
             .block(
                 Block::default()
                     .title("Connections")
                     .borders(Borders::ALL)
-                    .border_style(if props.is_active {
-                        Style::default().fg(Color::Cyan)
-                    } else {
-                        Style::default().fg(Color::White)
-                    }),
+                    .border_type(BorderType::Rounded)
+                    .border_style(highlight_border),
             )
             .highlight_style(
                 Style::default()
-                    .bg(Color::DarkGray)
+                    .bg(Color::Rgb(30, 30, 34))
+                    .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol("> ");
+            .highlight_symbol("› ");
 
         f.render_stateful_widget(connections_list, area, &mut self.state);
     }

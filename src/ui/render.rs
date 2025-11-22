@@ -1,6 +1,9 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
 use super::components::{
@@ -8,44 +11,40 @@ use super::components::{
     value_viewer::ValueViewerProps,
 };
 use super::render_connection_form;
-use super::state::{Panel, UiState};
-use crate::app::AppState;
+use super::state::{Panel, TabRegion, UiState};
+use crate::app::{AppState, ConnectionStatus};
 
 /// Main UI rendering function
 pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
-    // Create main layout with status bar at the bottom
-    let main_chunks = Layout::default()
+    let root = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
         .split(f.area());
 
-    // Create three-panel layout
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(35),
-            Constraint::Percentage(40),
-        ])
-        .split(main_chunks[0]);
+    let tab_area = root[0];
+    let body_area = root[1];
+    let status_area = root[2];
 
-    ui_state.last_connection_area = Some(chunks[0]);
-    ui_state.last_key_area = Some(chunks[1]);
-    ui_state.last_value_area = Some(chunks[2]);
+    render_tabs(f, app_state, ui_state, tab_area);
 
-    // Left panel: Connections
-    render_connections(f, app_state, ui_state, chunks[0]);
+    if app_state.connection_manager.get_active_id().is_some() {
+        render_body(f, app_state, ui_state, body_area);
+    } else {
+        ui_state.last_key_area = None;
+        ui_state.last_value_area = None;
+        render_welcome(f, app_state, ui_state, body_area);
+    }
 
-    // Middle panel: Key Browser
-    render_keys(f, ui_state, app_state, chunks[1]);
+    render_status_bar(f, app_state, status_area);
 
-    // Right panel: Value Viewer
-    render_value(f, ui_state, app_state, chunks[2]);
+    if ui_state.show_connection_palette {
+        render_connection_palette(f, app_state, ui_state);
+    }
 
-    // Bottom: Status bar
-    render_status_bar(f, app_state, main_chunks[1]);
-
-    // Show modals
     if ui_state.show_connection_form {
         render_connection_form(f, &ui_state.connection_form, ui_state.form_error.as_deref());
     } else if ui_state.show_help {
@@ -53,27 +52,101 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
     }
 }
 
-fn render_connections(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area: Rect) {
-    let props = ConnectionListProps {
-        configs: app_state.connection_manager.get_configs(),
-        active_id: app_state.connection_manager.get_active_id(),
-        statuses: app_state.connection_manager.get_statuses(),
-        is_active: ui_state.active_panel == Panel::Connections,
-    };
+fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area: Rect) {
+    ui_state.tab_regions.clear();
+    ui_state.tab_bar_area = Some(area);
 
-    ui_state.connection_list.render(f, area, props);
+    let mut spans = Vec::new();
+    let mut cursor_x = area.x;
+    let max_x = area.x.saturating_add(area.width);
+    let configs = app_state.connection_manager.get_configs();
+
+    let block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(Color::DarkGray));
+    f.render_widget(block, area);
+
+    if configs.is_empty() {
+        let placeholder = Paragraph::new("No connections yet — press Ctrl+N to add one")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(placeholder, area);
+        return;
+    }
+
+    for config in configs {
+        let status = app_state.connection_manager.get_status(&config.id);
+        let (icon, tone) = match status {
+            ConnectionStatus::Connected => ("●", Color::Green),
+            ConnectionStatus::Connecting => ("◐", Color::Yellow),
+            ConnectionStatus::Disconnected => ("○", Color::DarkGray),
+            ConnectionStatus::Error(_) => ("✗", Color::Red),
+        };
+
+        let is_active = app_state
+            .connection_manager
+            .get_active_id()
+            .map(|id| id == config.id.as_str())
+            .unwrap_or(false);
+
+        let label = format!(" {} {} ", icon, config.name);
+        let width = label.chars().count() as u16;
+        if cursor_x.saturating_add(width) > max_x {
+            break;
+        }
+
+        let style = if is_active {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(tone)
+        };
+
+        let tab_area = Rect::new(cursor_x, area.y, width.max(1), area.height);
+        ui_state.tab_regions.push(TabRegion {
+            id: config.id.clone(),
+            area: tab_area,
+        });
+        spans.push(Span::styled(label, style));
+        spans.push(Span::raw("  "));
+        cursor_x = cursor_x.saturating_add(width + 2);
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::styled(
+            "Ctrl+P to open connections",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    let tabs_line = Paragraph::new(Line::from(spans)).alignment(Alignment::Left);
+    f.render_widget(tabs_line, area);
+}
+
+fn render_body(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, area: Rect) {
+    let body_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .margin(1)
+        .split(area);
+
+    ui_state.last_key_area = Some(body_chunks[0]);
+    ui_state.last_value_area = Some(body_chunks[1]);
+
+    render_keys(f, ui_state, app_state, body_chunks[0]);
+    render_value(f, ui_state, app_state, body_chunks[1]);
 }
 
 fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, area: Rect) {
-    // Update viewport height in app_state for logic that depends on it (like scrolling logic in AppState)
-    // Note: KeyBrowser also calculates it internally for rendering.
     app_state.viewport_height = area.height.saturating_sub(2) as usize;
 
     let props = KeyBrowserProps {
         keys: &app_state.keys,
         total_count: app_state.total_key_count,
         is_loading: app_state.is_loading_keys,
-        active_search_query: None, // TODO: Implement search query
+        active_search_query: None,
         is_active: ui_state.active_panel == Panel::Keys,
     };
 
@@ -99,14 +172,104 @@ fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, are
     ui_state.value_viewer.render(f, area, props);
 }
 
-pub fn render_help(f: &mut Frame) {
-    use ratatui::{
-        layout::Alignment,
-        style::{Color, Modifier, Style},
-        text::{Line, Span},
-        widgets::{Block, Borders, Clear, Paragraph},
+fn render_welcome(f: &mut Frame, app_state: &AppState, ui_state: &UiState, area: Rect) {
+    let card_area = centered_rect(70, 70, area);
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Welcome to memtui",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from("Browse keys once you connect to a datastore."),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Recent connections",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+    ];
+
+    let configs = app_state.connection_manager.get_configs();
+    let mut displayed = 0;
+    for id in &ui_state.recent_connection_ids {
+        if let Some(config) = configs.iter().find(|c| c.id == *id) {
+            lines.push(Line::from(format!(
+                "{}  {}:{} ({})",
+                config.name, config.host, config.port, config.backend_type
+            )));
+            displayed += 1;
+            if displayed >= 5 {
+                break;
+            }
+        }
+    }
+
+    if displayed == 0 {
+        lines.push(Line::from(Span::styled(
+            "No recent connections yet.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("Ctrl+P", Style::default().fg(Color::Yellow)),
+        Span::raw(" open connections   "),
+        Span::styled("Ctrl+N", Style::default().fg(Color::Yellow)),
+        Span::raw(" new connection"),
+    ]));
+
+    let card = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: false });
+
+    f.render_widget(card, card_area);
+}
+
+fn render_connection_palette(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState) {
+    let area = centered_rect(60, 70, f.area());
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(6), Constraint::Length(3)])
+        .margin(1)
+        .split(area);
+
+    ui_state.connection_palette_area = Some(chunks[0]);
+
+    let props = ConnectionListProps {
+        configs: app_state.connection_manager.get_configs(),
+        active_id: app_state.connection_manager.get_active_id(),
+        statuses: app_state.connection_manager.get_statuses(),
+        is_active: true,
     };
 
+    f.render_widget(Clear, area);
+    ui_state.connection_list.render(f, chunks[0], props);
+
+    let instructions = Paragraph::new(Line::from(vec![
+        Span::styled("Enter", Style::default().fg(Color::Yellow)),
+        Span::raw(" connect / focus   "),
+        Span::styled("d", Style::default().fg(Color::Yellow)),
+        Span::raw(" delete   "),
+        Span::styled("Esc", Style::default().fg(Color::Yellow)),
+        Span::raw(" close"),
+    ]))
+    .alignment(Alignment::Center)
+    .style(Style::default().fg(Color::DarkGray));
+
+    f.render_widget(instructions, chunks[1]);
+}
+
+pub fn render_help(f: &mut Frame) {
     let area = centered_rect(60, 50, f.area());
 
     let help_text = vec![
@@ -147,16 +310,28 @@ pub fn render_help(f: &mut Frame) {
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(vec![
-            Span::styled("n           ", Style::default().fg(Color::Yellow)),
+            Span::styled("Ctrl+P      ", Style::default().fg(Color::Yellow)),
+            Span::raw("Open palette"),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+N      ", Style::default().fg(Color::Yellow)),
             Span::raw("New connection"),
         ]),
         Line::from(vec![
+            Span::styled("Ctrl+Tab    ", Style::default().fg(Color::Yellow)),
+            Span::raw("Next connection tab"),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+BackTab", Style::default().fg(Color::Yellow)),
+            Span::raw("Previous tab"),
+        ]),
+        Line::from(vec![
             Span::styled("Enter       ", Style::default().fg(Color::Yellow)),
-            Span::raw("Connect/Disconnect"),
+            Span::raw("Connect / focus"),
         ]),
         Line::from(vec![
             Span::styled("d           ", Style::default().fg(Color::Yellow)),
-            Span::raw("Delete connection"),
+            Span::raw("Delete selected"),
         ]),
         Line::from(""),
         Line::from(Span::styled(
@@ -185,6 +360,7 @@ pub fn render_help(f: &mut Frame) {
             Block::default()
                 .title("Help")
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Cyan)),
         )
         .alignment(Alignment::Left);
@@ -194,13 +370,6 @@ pub fn render_help(f: &mut Frame) {
 }
 
 fn render_status_bar(f: &mut Frame, app_state: &AppState, area: Rect) {
-    use crate::app::ConnectionStatus;
-    use ratatui::{
-        style::{Color, Style},
-        text::{Line, Span},
-        widgets::Paragraph,
-    };
-
     let status_text = if let Some(status) = app_state.connection_manager.get_active_status() {
         match status {
             ConnectionStatus::Connected => {
@@ -240,11 +409,10 @@ fn render_status_bar(f: &mut Frame, app_state: &AppState, area: Rect) {
     let status_line = Line::from(vec![
         Span::styled(status_label, style),
         Span::raw(status_text),
-        Span::raw(" | Press ? for help | q to quit"),
+        Span::raw("  |  Ctrl+Tab next tab  |  Ctrl+P palette  |  Ctrl+N new  |  ? help  |  q quit"),
     ]);
 
     let status_bar = Paragraph::new(status_line).style(Style::default().bg(Color::Black));
-
     f.render_widget(status_bar, area);
 }
 

@@ -7,9 +7,14 @@ use strum::{EnumIter, IntoEnumIterator};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
 pub enum Panel {
-    Connections,
     Keys,
     Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct TabRegion {
+    pub id: String,
+    pub area: Rect,
 }
 
 /// UI state - manages display and navigation
@@ -23,20 +28,19 @@ pub struct UiState {
     pub connection_list: ConnectionList,
     pub key_browser: KeyBrowser,
     pub value_viewer: ValueViewer,
-    pub last_connection_area: Option<Rect>,
     pub last_key_area: Option<Rect>,
     pub last_value_area: Option<Rect>,
-    // Shortcuts for compatibility with existing main.rs logic
-    // We expose getters/setters or just public fields if we want to keep refactor minimal
-    // But main.rs accesses .connection_state directly.
-    // I will expose them via public fields in the components,
-    // and add proxy methods or update main.rs to access them via components.
+    pub tab_regions: Vec<TabRegion>,
+    pub tab_bar_area: Option<Rect>,
+    pub show_connection_palette: bool,
+    pub connection_palette_area: Option<Rect>,
+    pub recent_connection_ids: Vec<String>,
 }
 
 impl UiState {
     pub fn new() -> Self {
         Self {
-            active_panel: Panel::Connections,
+            active_panel: Panel::Keys,
             show_help: false,
             show_connection_form: false,
             connection_form: ConnectionForm::new(),
@@ -45,13 +49,16 @@ impl UiState {
             connection_list: ConnectionList::new(),
             key_browser: KeyBrowser::new(),
             value_viewer: ValueViewer::new(),
-            last_connection_area: None,
             last_key_area: None,
             last_value_area: None,
+            tab_regions: Vec::new(),
+            tab_bar_area: None,
+            show_connection_palette: false,
+            connection_palette_area: None,
+            recent_connection_ids: Vec::new(),
         }
     }
 
-    // Helper accessors for main.rs compatibility (temporary until main.rs is fully updated)
     pub fn connection_state(&mut self) -> &mut ratatui::widgets::ListState {
         &mut self.connection_list.state
     }
@@ -75,6 +82,15 @@ impl UiState {
         self.form_error = Some(error);
     }
 
+    pub fn open_connection_palette(&mut self) {
+        self.show_connection_palette = true;
+    }
+
+    pub fn close_connection_palette(&mut self) {
+        self.show_connection_palette = false;
+        self.connection_palette_area = None;
+    }
+
     pub fn next_panel(&mut self) {
         let mut cycle = Panel::iter().cycle();
         if let Some(_) = cycle.find(|&p| p == self.active_panel)
@@ -93,22 +109,15 @@ impl UiState {
         }
     }
 
-    pub fn next_item(&mut self, connections_len: usize, keys_len: usize) -> bool {
+    pub fn next_item(&mut self, keys_len: usize) -> bool {
         match self.active_panel {
-            Panel::Connections => {
-                if connections_len == 0 {
-                    return false;
-                }
-                self.connection_list.next(connections_len);
-                true
-            }
             Panel::Keys => {
                 if keys_len == 0 {
                     self.key_browser.select(None);
                     return false;
                 }
                 let current = self.key_browser.state.selected().unwrap_or(0);
-                let next = if current >= keys_len - 1 {
+                let next = if current >= keys_len.saturating_sub(1) {
                     0
                 } else {
                     current + 1
@@ -120,15 +129,8 @@ impl UiState {
         }
     }
 
-    pub fn previous_item(&mut self, connections_len: usize, keys_len: usize) -> bool {
+    pub fn previous_item(&mut self, keys_len: usize) -> bool {
         match self.active_panel {
-            Panel::Connections => {
-                if connections_len == 0 {
-                    return false;
-                }
-                self.connection_list.prev(connections_len);
-                true
-            }
             Panel::Keys => {
                 if keys_len == 0 {
                     self.key_browser.select(None);

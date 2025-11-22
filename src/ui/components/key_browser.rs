@@ -1,11 +1,12 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
-    layout::{Margin, Rect},
+    layout::{Alignment, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Block, BorderType, Borders, List, ListItem, ListState, Scrollbar, ScrollbarOrientation,
+        ScrollbarState,
     },
 };
 
@@ -137,22 +138,14 @@ impl Component for KeyBrowser {
         }
 
         let keys_list = List::new(key_items)
-            .block(
-                Block::default()
-                    .title(title)
-                    .borders(Borders::ALL)
-                    .border_style(if props.is_active {
-                        Style::default().fg(Color::Cyan)
-                    } else {
-                        Style::default().fg(Color::White)
-                    }),
-            )
+            .block(Self::card_block(title, props.is_active))
             .highlight_style(
                 Style::default()
-                    .bg(Color::DarkGray)
+                    .bg(Color::Rgb(30, 30, 34))
+                    .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol("> ");
+            .highlight_symbol("› ");
 
         // Use a local state with relative selection for the visible window
         let mut view_state = self.state.clone();
@@ -378,5 +371,20 @@ impl KeyBrowser {
         let mut truncated: String = text.chars().take(max_chars - 3).collect();
         truncated.push_str("...");
         truncated
+    }
+
+    fn card_block(title: String, is_active: bool) -> Block<'static> {
+        let border_style = if is_active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        Block::default()
+            .title(Line::from(title))
+            .title_alignment(Alignment::Left)
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(border_style)
     }
 }

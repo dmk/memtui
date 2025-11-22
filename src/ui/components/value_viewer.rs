@@ -5,10 +5,10 @@ use crate::types::{Value, ValueType};
 use crossterm::event::KeyEvent;
 use ratatui::{
     Frame,
-    layout::{Constraint, Rect},
+    layout::{Alignment, Constraint, Rect},
     style::{Color, Modifier, Style},
     text::Line,
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap},
+    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, Wrap},
 };
 use serde_json::Value as JsonValue;
 
@@ -29,14 +29,18 @@ impl ValueViewer {
     }
 
     fn viewer_block(is_active: bool, title: impl Into<String>) -> Block<'static> {
+        let border_style = if is_active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
         Block::default()
             .title(Line::from(title.into()))
+            .title_alignment(Alignment::Left)
             .borders(Borders::ALL)
-            .border_style(if is_active {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::White)
-            })
+            .border_type(BorderType::Rounded)
+            .border_style(border_style)
     }
 
     fn render_paragraph(

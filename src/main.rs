@@ -1,7 +1,7 @@
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, MouseButton, MouseEvent,
-        MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
+        MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -47,8 +47,12 @@ impl App {
             app_state.connection_manager.load_configs(connections);
         }
 
-        // Select first connection if any exist
-        if !app_state.connection_manager.get_configs().is_empty() {
+        if let Ok(recents) = userdata::load_recent_connection_ids() {
+            ui_state.recent_connection_ids = recents;
+        }
+
+        let configs = app_state.connection_manager.get_configs();
+        if !configs.is_empty() {
             ui_state.connection_list.state.select(Some(0));
         }
 
@@ -123,50 +127,44 @@ impl App {
             }
             Action::NextPanel => self.ui_state.next_panel(),
             Action::PrevPanel => self.ui_state.prev_panel(),
+            Action::NextConnectionTab => self.cycle_connection_tab(true),
+            Action::PrevConnectionTab => self.cycle_connection_tab(false),
 
             Action::NextItem => {
-                let connections_len = self.app_state.connection_manager.get_configs().len();
-                let keys_len = self
-                    .app_state
-                    .total_key_count
-                    .map(|t| t as usize)
-                    .unwrap_or(self.app_state.keys.len());
-                if self.ui_state.next_item(connections_len, keys_len) {
-                    match self.ui_state.active_panel {
-                        Panel::Connections => {
-                            if let Some(idx) = self.ui_state.connection_list.state.selected() {
-                                let _ = self.action_tx.send(Action::SelectConnection(idx));
-                            }
-                        }
-                        Panel::Keys => {
-                            if let Some(idx) = self.ui_state.key_browser.state.selected() {
-                                let _ = self.action_tx.send(Action::SelectKey(idx));
-                            }
-                        }
-                        _ => {}
+                if self.ui_state.show_connection_palette {
+                    let connections_len = self.app_state.connection_manager.get_configs().len();
+                    if connections_len > 0 {
+                        self.ui_state.connection_list.next(connections_len);
+                    }
+                } else {
+                    let keys_len = self
+                        .app_state
+                        .total_key_count
+                        .map(|t| t as usize)
+                        .unwrap_or(self.app_state.keys.len());
+                    if self.ui_state.next_item(keys_len)
+                        && let Some(idx) = self.ui_state.key_browser.state.selected()
+                    {
+                        let _ = self.action_tx.send(Action::SelectKey(idx));
                     }
                 }
             }
             Action::PrevItem => {
-                let connections_len = self.app_state.connection_manager.get_configs().len();
-                let keys_len = self
-                    .app_state
-                    .total_key_count
-                    .map(|t| t as usize)
-                    .unwrap_or(self.app_state.keys.len());
-                if self.ui_state.previous_item(connections_len, keys_len) {
-                    match self.ui_state.active_panel {
-                        Panel::Connections => {
-                            if let Some(idx) = self.ui_state.connection_list.state.selected() {
-                                let _ = self.action_tx.send(Action::SelectConnection(idx));
-                            }
-                        }
-                        Panel::Keys => {
-                            if let Some(idx) = self.ui_state.key_browser.state.selected() {
-                                let _ = self.action_tx.send(Action::SelectKey(idx));
-                            }
-                        }
-                        _ => {}
+                if self.ui_state.show_connection_palette {
+                    let connections_len = self.app_state.connection_manager.get_configs().len();
+                    if connections_len > 0 {
+                        self.ui_state.connection_list.prev(connections_len);
+                    }
+                } else {
+                    let keys_len = self
+                        .app_state
+                        .total_key_count
+                        .map(|t| t as usize)
+                        .unwrap_or(self.app_state.keys.len());
+                    if self.ui_state.previous_item(keys_len)
+                        && let Some(idx) = self.ui_state.key_browser.state.selected()
+                    {
+                        let _ = self.action_tx.send(Action::SelectKey(idx));
                     }
                 }
             }
@@ -174,6 +172,22 @@ impl App {
             Action::OpenConnectionForm => self.ui_state.open_connection_form(),
             Action::CloseConnectionForm => self.ui_state.close_connection_form(),
             Action::ToggleHelp => self.ui_state.show_help = !self.ui_state.show_help,
+            Action::OpenConnectionPalette => {
+                self.ui_state.open_connection_palette();
+                let configs = self.app_state.connection_manager.get_configs();
+                if configs.is_empty() {
+                    self.ui_state.connection_list.state.select(None);
+                } else if let Some(active_id) = self.app_state.connection_manager.get_active_id() {
+                    if let Some(idx) = configs.iter().position(|cfg| cfg.id == active_id) {
+                        self.ui_state.connection_list.state.select(Some(idx));
+                    } else {
+                        self.ui_state.connection_list.state.select(Some(0));
+                    }
+                } else {
+                    self.ui_state.connection_list.state.select(Some(0));
+                }
+            }
+            Action::CloseConnectionPalette => self.ui_state.close_connection_palette(),
 
             Action::ConnectionFormNextField => self.ui_state.connection_form.next_field(),
             Action::ConnectionFormPrevField => self.ui_state.connection_form.prev_field(),
@@ -186,18 +200,16 @@ impl App {
                         }
                         Err(e) => self.ui_state.set_form_error(e),
                     }
-                } else if self.ui_state.active_panel == Panel::Connections
-                    && let Some(idx) = self.ui_state.connection_list.state.selected()
-                    && let Some(config) = self.app_state.connection_manager.get_configs().get(idx)
-                {
-                    let id = config.id.clone();
-                    if self.app_state.connection_manager.is_connected(&id) {
-                        let _ = self.action_tx.send(Action::Disconnect(id));
-                    } else {
-                        let _ = self.action_tx.send(Action::Connect(id));
+                } else if self.ui_state.show_connection_palette {
+                    if let Some(idx) = self.ui_state.connection_list.state.selected() {
+                        let configs = self.app_state.connection_manager.get_configs();
+                        if let Some(config) = configs.get(idx) {
+                            let _ = self
+                                .action_tx
+                                .send(Action::FocusConnection(config.id.clone()));
+                        }
                     }
-                } else if self.ui_state.active_panel == Panel::Connections {
-                    self.ui_state.active_panel = Panel::Keys;
+                    self.ui_state.close_connection_palette();
                 }
             }
 
@@ -207,19 +219,38 @@ impl App {
                     .add_connection(config.clone());
                 let all_configs = self.app_state.connection_manager.get_all_configs();
                 let _ = userdata::save_connections(&all_configs);
-                let _ = self.action_tx.send(Action::Connect(config.id.clone()));
                 self.ui_state.close_connection_form();
+                let _ = self
+                    .action_tx
+                    .send(Action::FocusConnection(config.id.clone()));
             }
 
             Action::DeleteConnection(id) => {
                 self.app_state.connection_manager.remove_config(&id);
                 let all_configs = self.app_state.connection_manager.get_all_configs();
                 let _ = userdata::save_connections(&all_configs);
-                self.ui_state.connection_list.state.select(None);
+                if let Ok(ids) = userdata::remove_recent_connection_id(&id) {
+                    self.ui_state.recent_connection_ids = ids;
+                }
+
+                let remaining = self.app_state.connection_manager.get_configs();
+                if remaining.is_empty() {
+                    self.ui_state.connection_list.state.select(None);
+                    self.ui_state.close_connection_palette();
+                } else {
+                    let current = self
+                        .ui_state
+                        .connection_list
+                        .state
+                        .selected()
+                        .unwrap_or(0)
+                        .min(remaining.len().saturating_sub(1));
+                    self.ui_state.connection_list.state.select(Some(current));
+                }
             }
 
-            Action::SelectConnection(_idx) => {
-                // handled by auto-update in UI for now
+            Action::FocusConnection(id) => {
+                self.focus_connection(id);
             }
 
             Action::Connect(id) => {
@@ -258,9 +289,17 @@ impl App {
             }
 
             Action::Disconnect(id) => {
+                let was_focus = self
+                    .app_state
+                    .connection_manager
+                    .get_active_id()
+                    .map(|active| active == id)
+                    .unwrap_or(false);
                 let _ = self.app_state.connection_manager.disconnect(&id).await;
-                if self.app_state.connection_manager.get_active_id().is_none() {
+                if was_focus {
                     self.app_state.reset_pagination();
+                    self.ui_state.key_browser.select(None);
+                    self.ui_state.active_panel = Panel::Keys;
                 }
             }
 
@@ -269,6 +308,10 @@ impl App {
                     .connection_manager
                     .register_connection(&id, backend);
                 self.app_state.error_message = None;
+                if let Ok(ids) = userdata::record_recent_connection_id(&id) {
+                    self.ui_state.recent_connection_ids = ids;
+                }
+                self.ui_state.active_panel = Panel::Keys;
                 let _ = self.action_tx.send(Action::LoadKeys);
             }
 
@@ -400,9 +443,15 @@ impl App {
                 reset,
                 center,
             } => {
-                if reset && let Some(count) = total_count {
-                    self.app_state.total_key_count = Some(count);
-                    self.app_state.keys = vec![None; count as usize];
+                if reset {
+                    if let Some(count) = total_count {
+                        self.app_state.total_key_count = Some(count);
+                        self.app_state.keys = vec![None; count as usize];
+                    } else {
+                        // If total_count is unknown, initialize with the keys we got
+                        self.app_state.total_key_count = None;
+                        self.app_state.keys = vec![None; keys.len()];
+                    }
                 }
 
                 self.app_state.keys_cursor = cursor;
@@ -414,6 +463,9 @@ impl App {
                     for (i, k) in keys.into_iter().enumerate() {
                         if i < self.app_state.keys.len() {
                             self.app_state.keys[i] = Some(k);
+                        } else if self.app_state.total_key_count.is_none() {
+                            // If total is unknown, grow the vector as needed
+                            self.app_state.keys.push(Some(k));
                         }
                     }
                 } else if let Some(c) = center {
@@ -494,6 +546,99 @@ impl App {
             return;
         }
 
+        if self.ui_state.show_connection_palette {
+            let configs = self.app_state.connection_manager.get_configs();
+
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                match key.code {
+                    KeyCode::Char('p') => {
+                        let _ = self.action_tx.send(Action::CloseConnectionPalette);
+                    }
+                    KeyCode::Char('n') => {
+                        let _ = self.action_tx.send(Action::CloseConnectionPalette);
+                        let _ = self.action_tx.send(Action::OpenConnectionForm);
+                    }
+                    KeyCode::Tab => {
+                        let _ = self.action_tx.send(Action::NextConnectionTab);
+                    }
+                    KeyCode::BackTab => {
+                        let _ = self.action_tx.send(Action::PrevConnectionTab);
+                    }
+                    _ => {}
+                }
+                return;
+            }
+
+            match key.code {
+                KeyCode::Esc => {
+                    let _ = self.action_tx.send(Action::CloseConnectionPalette);
+                }
+                KeyCode::Enter => {
+                    if let Some(idx) = self.ui_state.connection_list.state.selected()
+                        && let Some(config) = configs.get(idx)
+                    {
+                        let _ = self
+                            .action_tx
+                            .send(Action::FocusConnection(config.id.clone()));
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if !configs.is_empty() {
+                        self.ui_state.connection_list.next(configs.len());
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if !configs.is_empty() {
+                        self.ui_state.connection_list.prev(configs.len());
+                    }
+                }
+                KeyCode::Char('d') => {
+                    if let Some(idx) = self.ui_state.connection_list.state.selected()
+                        && let Some(config) = configs.get(idx)
+                    {
+                        let _ = self
+                            .action_tx
+                            .send(Action::DeleteConnection(config.id.clone()));
+                    }
+                }
+                KeyCode::Char('q') => {
+                    let _ = self.action_tx.send(Action::Quit);
+                }
+                KeyCode::Char('?') => {
+                    let _ = self.action_tx.send(Action::ToggleHelp);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('p') => {
+                    let action = if self.ui_state.show_connection_palette {
+                        Action::CloseConnectionPalette
+                    } else {
+                        Action::OpenConnectionPalette
+                    };
+                    let _ = self.action_tx.send(action);
+                    return;
+                }
+                KeyCode::Char('n') => {
+                    let _ = self.action_tx.send(Action::OpenConnectionForm);
+                    return;
+                }
+                KeyCode::Char('f') => {
+                    let _ = self.action_tx.send(Action::NextConnectionTab);
+                    return;
+                }
+                KeyCode::Char('b') => {
+                    let _ = self.action_tx.send(Action::PrevConnectionTab);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         match key.code {
             KeyCode::Char('q') => {
                 let _ = self.action_tx.send(Action::Quit);
@@ -519,19 +664,6 @@ impl App {
             KeyCode::Esc => {
                 let _ = self.action_tx.send(Action::Quit);
             }
-
-            KeyCode::Char('n') if self.ui_state.active_panel == Panel::Connections => {
-                let _ = self.action_tx.send(Action::OpenConnectionForm);
-            }
-            KeyCode::Char('d') if self.ui_state.active_panel == Panel::Connections => {
-                if let Some(idx) = self.ui_state.connection_list.state.selected()
-                    && let Some(config) = self.app_state.connection_manager.get_configs().get(idx)
-                {
-                    let _ = self
-                        .action_tx
-                        .send(Action::DeleteConnection(config.id.clone()));
-                }
-            }
             _ => {}
         }
     }
@@ -556,19 +688,39 @@ impl App {
     }
 
     fn handle_left_click(&mut self, column: u16, row: u16) {
-        if let Some(area) = self.ui_state.last_connection_area
-            && Self::point_in_rect(area, column, row)
-        {
-            self.ui_state.active_panel = Panel::Connections;
-            let total = self.app_state.connection_manager.get_configs().len();
-            if let Some(idx) = self
-                .ui_state
-                .connection_list
-                .index_at_position(area, column, row, total)
+        if self.ui_state.show_connection_palette {
+            if let Some(area) = self.ui_state.connection_palette_area
+                && Self::point_in_rect(area, column, row)
             {
-                self.ui_state.connection_list.state.select(Some(idx));
-                let _ = self.action_tx.send(Action::SelectConnection(idx));
+                let total = self.app_state.connection_manager.get_configs().len();
+                if total > 0
+                    && let Some(idx) = self
+                        .ui_state
+                        .connection_list
+                        .index_at_position(area, column, row, total)
+                {
+                    self.ui_state.connection_list.state.select(Some(idx));
+                    if let Some(config) = self.app_state.connection_manager.get_configs().get(idx) {
+                        let _ = self
+                            .action_tx
+                            .send(Action::FocusConnection(config.id.clone()));
+                    }
+                }
+            } else {
+                let _ = self.action_tx.send(Action::CloseConnectionPalette);
             }
+            return;
+        }
+
+        if let Some(region) = self
+            .ui_state
+            .tab_regions
+            .iter()
+            .find(|region| Self::point_in_rect(region.area, column, row))
+        {
+            let _ = self
+                .action_tx
+                .send(Action::FocusConnection(region.id.clone()));
             return;
         }
 
@@ -603,7 +755,69 @@ impl App {
         });
     }
 
+    fn focus_connection(&mut self, id: String) {
+        if !self.app_state.connection_manager.set_active(&id) {
+            return;
+        }
+
+        self.ui_state.close_connection_palette();
+        self.ui_state.active_panel = Panel::Keys;
+        self.ui_state.key_browser.select(None);
+        self.app_state.reset_pagination();
+        self.app_state.error_message = None;
+
+        if self.app_state.connection_manager.is_connected(&id) {
+            if let Ok(ids) = userdata::record_recent_connection_id(&id) {
+                self.ui_state.recent_connection_ids = ids;
+            }
+            let _ = self.action_tx.send(Action::LoadKeys);
+        } else {
+            let _ = self.action_tx.send(Action::Connect(id));
+        }
+    }
+
+    fn cycle_connection_tab(&mut self, forward: bool) {
+        let target_id = {
+            let configs = self.app_state.connection_manager.get_configs();
+            if configs.is_empty() {
+                return;
+            }
+            let len = configs.len();
+            let current_idx = self
+                .app_state
+                .connection_manager
+                .get_active_id()
+                .and_then(|active| configs.iter().position(|cfg| cfg.id == active));
+            let idx = if forward {
+                current_idx.map(|i| (i + 1) % len).unwrap_or(0)
+            } else {
+                current_idx
+                    .map(|i| if i == 0 { len - 1 } else { i - 1 })
+                    .unwrap_or(len.saturating_sub(1))
+            };
+            configs[idx].id.clone()
+        };
+
+        self.focus_connection(target_id);
+    }
+
     fn handle_scroll(&mut self, column: u16, row: u16, upward: bool) {
+        if self.ui_state.show_connection_palette {
+            if let Some(area) = self.ui_state.connection_palette_area
+                && Self::point_in_rect(area, column, row)
+            {
+                let len = self.app_state.connection_manager.get_configs().len();
+                if len > 0 {
+                    if upward {
+                        self.ui_state.connection_list.prev(len);
+                    } else {
+                        self.ui_state.connection_list.next(len);
+                    }
+                }
+            }
+            return;
+        }
+
         let action = if upward {
             Action::PrevItem
         } else {
@@ -614,10 +828,6 @@ impl App {
             && Self::point_in_rect(area, column, row)
         {
             Some(Panel::Keys)
-        } else if let Some(area) = self.ui_state.last_connection_area
-            && Self::point_in_rect(area, column, row)
-        {
-            Some(Panel::Connections)
         } else {
             None
         };
@@ -633,10 +843,10 @@ impl App {
 
     fn consume_scroll_slot(&mut self) -> bool {
         let now = Instant::now();
-        if let Some(last) = self.last_scroll_event {
-            if now.duration_since(last) < Duration::from_millis(SCROLL_EVENT_MIN_INTERVAL_MS) {
-                return false;
-            }
+        if let Some(last) = self.last_scroll_event
+            && now.duration_since(last) < Duration::from_millis(SCROLL_EVENT_MIN_INTERVAL_MS)
+        {
+            return false;
         }
         self.last_scroll_event = Some(now);
         true

@@ -39,14 +39,18 @@ impl ConnectionManager {
         self.configs.insert(id, config);
     }
 
-    /// Get all connection configs
+    /// Get all connection configs sorted by name for stable UI ordering
     pub fn get_configs(&self) -> Vec<&ConnectionConfig> {
-        self.configs.values().collect()
+        let mut configs: Vec<_> = self.configs.values().collect();
+        configs.sort_by(|a, b| a.name.cmp(&b.name));
+        configs
     }
 
     /// Get all connection configs as a Vec (for saving)
     pub fn get_all_configs(&self) -> Vec<ConnectionConfig> {
-        self.configs.values().cloned().collect()
+        let mut configs: Vec<_> = self.configs.values().cloned().collect();
+        configs.sort_by(|a, b| a.name.cmp(&b.name));
+        configs
     }
 
     /// Load connections from a list
@@ -90,10 +94,6 @@ impl ConnectionManager {
         self.statuses
             .insert(id.to_string(), ConnectionStatus::Disconnected);
 
-        if self.active_id.as_deref() == Some(id) {
-            self.active_id = None;
-        }
-
         Ok(())
     }
 
@@ -112,7 +112,7 @@ impl ConnectionManager {
 
     /// Set the active connection
     pub fn set_active(&mut self, id: &str) -> bool {
-        if self.connections.contains_key(id) {
+        if self.configs.contains_key(id) {
             self.active_id = Some(id.to_string());
             true
         } else {

@@ -347,8 +347,20 @@ impl Backend for MemcachedBackend {
         // Get metadata for keys
         let mut key_metadata = Vec::new();
         for key in all_keys.into_iter().take(limit) {
-            if let Ok(metadata) = self.key_info(&key).await {
-                key_metadata.push(metadata);
+            match self.key_info(&key).await {
+                Ok(metadata) => key_metadata.push(metadata),
+                Err(_) => {
+                    // Key might have been evicted, but we still want to show it
+                    // Create basic metadata without fetching the value
+                    key_metadata.push(KeyMetadata {
+                        name: key.clone(),
+                        value_type: ValueType::String, // Default assumption
+                        size_bytes: 0,
+                        ttl: None,
+                        last_accessed: None,
+                        encoding: None,
+                    });
+                }
             }
         }
 

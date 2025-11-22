@@ -405,12 +405,12 @@ impl App {
                 if self.app_state.value_request_token == token
                     && self.app_state.selected_key_index == Some(index)
                 {
-                    let _ = self.action_tx.send(Action::LoadValue(index));
+                    let _ = self.action_tx.send(Action::LoadValue { index, token });
                 }
             }
 
-            Action::LoadValue(idx) => {
-                if let Some(Some(key)) = self.app_state.keys.get(idx) {
+            Action::LoadValue { index, token } => {
+                if let Some(Some(key)) = self.app_state.keys.get(index) {
                     let key_name = key.name.clone();
                     if let Some(backend) = self
                         .app_state
@@ -422,7 +422,7 @@ impl App {
                             let backend = backend.read().await;
                             match backend.get(&key_name).await {
                                 Ok(val) => {
-                                    let _ = tx.send(Action::DidLoadValue(val));
+                                    let _ = tx.send(Action::DidLoadValue { value: val, token });
                                 }
                                 Err(e) => {
                                     let _ = tx.send(Action::DidFailLoadValue(e.to_string()));
@@ -502,8 +502,10 @@ impl App {
                 self.app_state.is_loading_keys = false;
             }
 
-            Action::DidLoadValue(val) => {
-                self.app_state.selected_value = Some(val);
+            Action::DidLoadValue { value, token } => {
+                if self.app_state.value_request_token == token {
+                    self.app_state.selected_value = Some(value);
+                }
             }
 
             Action::DidFailLoadValue(e) => {

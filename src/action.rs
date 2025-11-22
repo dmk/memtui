@@ -50,7 +50,10 @@ pub enum Action {
         index: usize,
         token: u64,
     },
-    LoadValue(usize),
+    LoadValue {
+        index: usize,
+        token: u64,
+    },
 
     // Async Events (Results)
     DidConnect(String, Arc<RwLock<Box<dyn Backend>>>),
@@ -67,7 +70,10 @@ pub enum Action {
     },
     DidFailScanKeys(String),
 
-    DidLoadValue(Value),
+    DidLoadValue {
+        value: Value,
+        token: u64,
+    },
     DidFailLoadValue(String),
 
     Error(String),

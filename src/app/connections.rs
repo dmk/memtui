@@ -1,6 +1,8 @@
-use crate::backend::{Backend, MemcachedBackend, RedisBackend};
-use crate::types::{BackendType, ConnectionConfig};
+use crate::backend::Backend;
+use crate::types::ConnectionConfig;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Connection status for a backend
 #[derive(Debug, Clone, PartialEq)]
@@ -13,7 +15,7 @@ pub enum ConnectionStatus {
 
 /// Manages multiple backend connections
 pub struct ConnectionManager {
-    connections: HashMap<String, Box<dyn Backend>>,
+    connections: HashMap<String, Arc<RwLock<Box<dyn Backend>>>>,
     configs: HashMap<String, ConnectionConfig>,
     statuses: HashMap<String, ConnectionStatus>,
     active_id: Option<String>,
@@ -64,64 +66,24 @@ impl ConnectionManager {
         self.configs.get(id)
     }
 
-    /// Connect to a backend with timeout
-    pub async fn connect(&mut self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        if self.connections.contains_key(id) {
-            self.active_id = Some(id.to_string());
-            self.statuses
-                .insert(id.to_string(), ConnectionStatus::Connected);
-            return Ok(());
-        }
+    /// Set status for a connection
+    pub fn set_status(&mut self, id: &str, status: ConnectionStatus) {
+        self.statuses.insert(id.to_string(), status);
+    }
 
+    /// Register an active, connected backend
+    pub fn register_connection(&mut self, id: &str, backend: Arc<RwLock<Box<dyn Backend>>>) {
+        self.connections.insert(id.to_string(), backend);
+        self.active_id = Some(id.to_string());
         self.statuses
-            .insert(id.to_string(), ConnectionStatus::Connecting);
-
-        let config = self.configs.get(id).ok_or("Connection not found")?.clone();
-
-        // Create backend based on type
-        let mut backend: Box<dyn Backend> = match config.backend_type {
-            BackendType::Redis => Box::new(RedisBackend::new(config)),
-            BackendType::Memcached => Box::new(MemcachedBackend::new(config)),
-            BackendType::Etcd => {
-                self.statuses.insert(
-                    id.to_string(),
-                    ConnectionStatus::Error("Etcd not yet implemented".to_string()),
-                );
-                return Err("Etcd not yet implemented".into());
-            }
-        };
-
-        // Attempt connection with timeout
-        let connect_result =
-            tokio::time::timeout(std::time::Duration::from_secs(5), backend.connect()).await;
-
-        match connect_result {
-            Ok(Ok(_)) => {
-                // Store the connection
-                self.connections.insert(id.to_string(), backend);
-                self.active_id = Some(id.to_string());
-                self.statuses
-                    .insert(id.to_string(), ConnectionStatus::Connected);
-                Ok(())
-            }
-            Ok(Err(e)) => {
-                let err_msg = e.to_string();
-                self.statuses
-                    .insert(id.to_string(), ConnectionStatus::Error(err_msg.clone()));
-                Err(Box::new(e))
-            }
-            Err(_) => {
-                let err_msg = "Connection timeout".to_string();
-                self.statuses
-                    .insert(id.to_string(), ConnectionStatus::Error(err_msg.clone()));
-                Err(err_msg.into())
-            }
-        }
+            .insert(id.to_string(), ConnectionStatus::Connected);
     }
 
     /// Disconnect from a backend
     pub async fn disconnect(&mut self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(mut backend) = self.connections.remove(id) {
+        if let Some(backend_arc) = self.connections.remove(id) {
+            // We need to acquire write lock to disconnect
+            let mut backend = backend_arc.write().await;
             backend.disconnect().await?;
         }
 
@@ -135,19 +97,12 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Get the active backend
-    pub fn get_active_backend(&self) -> Option<&dyn Backend> {
+    /// Get a handle to the active backend (thread-safe)
+    pub fn get_active_backend_handle(&self) -> Option<Arc<RwLock<Box<dyn Backend>>>> {
         self.active_id
             .as_ref()
             .and_then(|id| self.connections.get(id))
-            .map(|b| b.as_ref())
-    }
-
-    /// Get the active backend mutably
-    pub fn get_active_backend_mut(&mut self) -> Option<&mut Box<dyn Backend>> {
-        self.active_id
-            .as_ref()
-            .and_then(|id| self.connections.get_mut(id))
+            .cloned()
     }
 
     /// Get the active connection ID
@@ -186,6 +141,11 @@ impl ConnectionManager {
             .get(id)
             .cloned()
             .unwrap_or(ConnectionStatus::Disconnected)
+    }
+
+    /// Get all statuses
+    pub fn get_statuses(&self) -> &HashMap<String, ConnectionStatus> {
+        &self.statuses
     }
 
     /// Get the status of the active connection

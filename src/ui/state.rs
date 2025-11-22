@@ -1,7 +1,10 @@
 use super::ConnectionForm;
-use ratatui::widgets::{ListState, ScrollbarState};
+use super::components::connection_list::ConnectionList;
+use super::components::key_browser::KeyBrowser;
+use super::components::value_viewer::ValueViewer;
+use strum::{EnumIter, IntoEnumIterator};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
 pub enum Panel {
     Connections,
     Keys,
@@ -15,26 +18,39 @@ pub struct UiState {
     pub show_connection_form: bool,
     pub connection_form: ConnectionForm,
     pub form_error: Option<String>,
-    pub connection_state: ListState,
-    pub key_state: ListState,
-    pub key_scrollbar_state: ScrollbarState,
+
+    pub connection_list: ConnectionList,
+    pub key_browser: KeyBrowser,
+    pub value_viewer: ValueViewer,
+    // Shortcuts for compatibility with existing main.rs logic
+    // We expose getters/setters or just public fields if we want to keep refactor minimal
+    // But main.rs accesses .connection_state directly.
+    // I will expose them via public fields in the components,
+    // and add proxy methods or update main.rs to access them via components.
 }
 
 impl UiState {
     pub fn new() -> Self {
-        let mut state = Self {
+        Self {
             active_panel: Panel::Connections,
             show_help: false,
             show_connection_form: false,
             connection_form: ConnectionForm::new(),
             form_error: None,
-            connection_state: ListState::default(),
-            key_state: ListState::default(),
-            key_scrollbar_state: ScrollbarState::default(),
-        };
-        // Select first connection by default
-        state.connection_state.select(Some(0));
-        state
+
+            connection_list: ConnectionList::new(),
+            key_browser: KeyBrowser::new(),
+            value_viewer: ValueViewer::new(),
+        }
+    }
+
+    // Helper accessors for main.rs compatibility (temporary until main.rs is fully updated)
+    pub fn connection_state(&mut self) -> &mut ratatui::widgets::ListState {
+        &mut self.connection_list.state
+    }
+
+    pub fn key_state(&mut self) -> &mut ratatui::widgets::ListState {
+        &mut self.key_browser.state
     }
 
     pub fn open_connection_form(&mut self) {
@@ -53,19 +69,21 @@ impl UiState {
     }
 
     pub fn next_panel(&mut self) {
-        self.active_panel = match self.active_panel {
-            Panel::Connections => Panel::Keys,
-            Panel::Keys => Panel::Value,
-            Panel::Value => Panel::Connections,
-        };
+        let mut cycle = Panel::iter().cycle();
+        if let Some(_) = cycle.find(|&p| p == self.active_panel)
+            && let Some(next) = cycle.next()
+        {
+            self.active_panel = next;
+        }
     }
 
     pub fn prev_panel(&mut self) {
-        self.active_panel = match self.active_panel {
-            Panel::Connections => Panel::Value,
-            Panel::Keys => Panel::Connections,
-            Panel::Value => Panel::Keys,
-        };
+        let mut cycle = Panel::iter().rev().cycle();
+        if let Some(_) = cycle.find(|&p| p == self.active_panel)
+            && let Some(next) = cycle.next()
+        {
+            self.active_panel = next;
+        }
     }
 
     pub fn next_item(&mut self, connections_len: usize, keys_len: usize) -> bool {
@@ -74,32 +92,22 @@ impl UiState {
                 if connections_len == 0 {
                     return false;
                 }
-                let i = match self.connection_state.selected() {
-                    Some(i) => {
-                        if i >= connections_len - 1 {
-                            0
-                        } else {
-                            i + 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.connection_state.select(Some(i));
-                true // Need to potentially switch connections
+                self.connection_list.next(connections_len);
+                true
             }
             Panel::Keys => {
-                let i = match self.key_state.selected() {
-                    Some(i) => {
-                        if i >= keys_len.saturating_sub(1) {
-                            0
-                        } else {
-                            i + 1
-                        }
-                    }
-                    None => 0,
+                if keys_len == 0 {
+                    self.key_browser.select(None);
+                    return false;
+                }
+                let current = self.key_browser.state.selected().unwrap_or(0);
+                let next = if current >= keys_len - 1 {
+                    0
+                } else {
+                    current + 1
                 };
-                self.key_state.select(Some(i));
-                true // Need to update value
+                self.key_browser.select(Some(next));
+                true
             }
             Panel::Value => false,
         }
@@ -111,32 +119,22 @@ impl UiState {
                 if connections_len == 0 {
                     return false;
                 }
-                let i = match self.connection_state.selected() {
-                    Some(i) => {
-                        if i == 0 {
-                            connections_len - 1
-                        } else {
-                            i - 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.connection_state.select(Some(i));
-                true // Need to potentially switch connections
+                self.connection_list.prev(connections_len);
+                true
             }
             Panel::Keys => {
-                let i = match self.key_state.selected() {
-                    Some(i) => {
-                        if i == 0 {
-                            keys_len.saturating_sub(1)
-                        } else {
-                            i - 1
-                        }
-                    }
-                    None => 0,
+                if keys_len == 0 {
+                    self.key_browser.select(None);
+                    return false;
+                }
+                let current = self.key_browser.state.selected().unwrap_or(0);
+                let prev = if current == 0 {
+                    keys_len.saturating_sub(1)
+                } else {
+                    current - 1
                 };
-                self.key_state.select(Some(i));
-                true // Need to update value
+                self.key_browser.select(Some(prev));
+                true
             }
             Panel::Value => false,
         }

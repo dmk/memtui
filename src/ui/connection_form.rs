@@ -1,3 +1,4 @@
+use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -5,6 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
+use tui_input::{Input, backend::crossterm::EventHandler};
 
 use crate::types::{Auth, BackendType, ConnectionConfig};
 use std::time::Duration;
@@ -56,11 +58,11 @@ impl FormField {
 }
 
 pub struct ConnectionForm {
-    pub name: String,
-    pub host: String,
-    pub port: String,
-    pub password: String,
-    pub database: String,
+    pub name: Input,
+    pub host: Input,
+    pub port: Input,
+    pub password: Input,
+    pub database: Input,
     pub active_field: FormField,
     pub backend_type: BackendType,
 }
@@ -68,11 +70,11 @@ pub struct ConnectionForm {
 impl ConnectionForm {
     pub fn new() -> Self {
         Self {
-            name: String::new(),
-            host: "localhost".to_string(),
-            port: "6379".to_string(),
-            password: String::new(),
-            database: "0".to_string(),
+            name: Input::default(),
+            host: Input::default().with_value("localhost".into()),
+            port: Input::default().with_value("6379".into()),
+            password: Input::default(),
+            database: Input::default().with_value("0".into()),
             active_field: FormField::BackendType,
             backend_type: BackendType::Redis,
         }
@@ -81,36 +83,42 @@ impl ConnectionForm {
     pub fn toggle_backend_type(&mut self) {
         self.backend_type = match self.backend_type {
             BackendType::Redis => {
-                self.port = "11211".to_string();
+                self.port = Input::default().with_value("11211".into());
                 BackendType::Memcached
             }
             BackendType::Memcached => {
-                self.port = "6379".to_string();
+                self.port = Input::default().with_value("6379".into());
                 BackendType::Redis
             }
             BackendType::Etcd => {
-                self.port = "6379".to_string();
+                self.port = Input::default().with_value("6379".into());
                 BackendType::Redis
             }
         };
     }
 
-    pub fn add_char(&mut self, c: char) {
-        if self.active_field == FormField::BackendType {
-            // Space or Enter toggles backend type
-            if c == ' ' {
-                self.toggle_backend_type();
+    pub fn handle_key_event(&mut self, event: KeyEvent) {
+        match self.active_field {
+            FormField::BackendType => {
+                if event.code == KeyCode::Char(' ') {
+                    self.toggle_backend_type();
+                }
             }
-        } else {
-            let field = self.get_active_field_mut();
-            field.push(c);
-        }
-    }
-
-    pub fn delete_char(&mut self) {
-        if self.active_field != FormField::BackendType {
-            let field = self.get_active_field_mut();
-            field.pop();
+            FormField::Name => {
+                let _ = self.name.handle_event(&CrosstermEvent::Key(event));
+            }
+            FormField::Host => {
+                let _ = self.host.handle_event(&CrosstermEvent::Key(event));
+            }
+            FormField::Port => {
+                let _ = self.port.handle_event(&CrosstermEvent::Key(event));
+            }
+            FormField::Password => {
+                let _ = self.password.handle_event(&CrosstermEvent::Key(event));
+            }
+            FormField::Database => {
+                let _ = self.database.handle_event(&CrosstermEvent::Key(event));
+            }
         }
     }
 
@@ -122,23 +130,12 @@ impl ConnectionForm {
         self.active_field = self.active_field.prev(self.backend_type);
     }
 
-    fn get_active_field_mut(&mut self) -> &mut String {
-        match self.active_field {
-            FormField::BackendType => &mut self.name, // Dummy, won't be used
-            FormField::Name => &mut self.name,
-            FormField::Host => &mut self.host,
-            FormField::Port => &mut self.port,
-            FormField::Password => &mut self.password,
-            FormField::Database => &mut self.database,
-        }
-    }
-
     pub fn to_config(&self) -> Result<ConnectionConfig, String> {
-        let name = self.name.trim();
-        let host = self.host.trim();
-        let port_str = self.port.trim();
-        let password = self.password.trim();
-        let database = self.database.trim();
+        let name = self.name.value().trim();
+        let host = self.host.value().trim();
+        let port_str = self.port.value().trim();
+        let password = self.password.value().trim();
+        let database = self.database.value().trim();
 
         if name.is_empty() {
             return Err("Name is required".to_string());
@@ -191,12 +188,12 @@ impl ConnectionForm {
     }
 
     pub fn clear(&mut self) {
-        self.name.clear();
-        self.host = "localhost".to_string();
+        self.name = Input::default();
+        self.host = Input::default().with_value("localhost".into());
         self.backend_type = BackendType::Redis;
-        self.port = "6379".to_string();
-        self.password.clear();
-        self.database = "0".to_string();
+        self.port = Input::default().with_value("6379".into());
+        self.password = Input::default();
+        self.database = Input::default().with_value("0".into());
         self.active_field = FormField::BackendType;
     }
 }
@@ -300,7 +297,12 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
                 .border_style(backend_type_style),
         );
 
-    let name_field = Paragraph::new(format!(" {}", form.name.as_str()))
+    // Use tui-input for name
+    let name_scroll = form
+        .name
+        .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
+    let name_field = Paragraph::new(form.name.value())
+        .scroll((0, name_scroll as u16))
         .style(Style::default().fg(Color::White))
         .block(
             Block::default()
@@ -309,7 +311,11 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
                 .border_style(name_style),
         );
 
-    let host_field = Paragraph::new(format!(" {}", form.host.as_str()))
+    let host_scroll = form
+        .host
+        .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
+    let host_field = Paragraph::new(form.host.value())
+        .scroll((0, host_scroll as u16))
         .style(Style::default().fg(Color::White))
         .block(
             Block::default()
@@ -318,7 +324,11 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
                 .border_style(host_style),
         );
 
-    let port_field = Paragraph::new(format!(" {}", form.port.as_str()))
+    let port_scroll = form
+        .port
+        .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
+    let port_field = Paragraph::new(form.port.value())
+        .scroll((0, port_scroll as u16))
         .style(Style::default().fg(Color::White))
         .block(
             Block::default()
@@ -327,13 +337,16 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
                 .border_style(port_style),
         );
 
-    let password_display = if form.password.is_empty() {
+    let password_val = form.password.value();
+    let password_display = if password_val.is_empty() {
         String::new()
     } else {
-        "*".repeat(form.password.len())
+        "*".repeat(password_val.len())
     };
-
-    let password_field = Paragraph::new(format!(" {}", password_display))
+    // Password scrolling is tricky with masking, for simplicity we might not scroll perfectly or just show end
+    // But tui-input doesn't support masked value out of box for visual_scroll easily unless we implement it.
+    // For now, just show masked string.
+    let password_field = Paragraph::new(password_display)
         .style(Style::default().fg(Color::White))
         .block(
             Block::default()
@@ -342,7 +355,11 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
                 .border_style(password_style),
         );
 
-    let database_field = Paragraph::new(format!(" {}", form.database.as_str()))
+    let database_scroll = form
+        .database
+        .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
+    let database_field = Paragraph::new(form.database.value())
+        .scroll((0, database_scroll as u16))
         .style(Style::default().fg(Color::White))
         .block(
             Block::default()

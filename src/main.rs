@@ -1,14 +1,518 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
+use std::sync::Arc;
+use tokio::sync::{RwLock, mpsc};
+use tokio::time::Duration;
 
-use memtui::app::AppState;
+use memtui::action::Action;
+use memtui::app::{AppState, ConnectionStatus};
+use memtui::backend::{Backend, MemcachedBackend, RedisBackend};
+use memtui::types::BackendType;
 use memtui::ui::{self, Panel, UiState};
 use memtui::userdata;
+
+pub struct App {
+    pub app_state: AppState,
+    pub ui_state: UiState,
+    pub action_tx: mpsc::UnboundedSender<Action>,
+    pub action_rx: mpsc::UnboundedReceiver<Action>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl App {
+    pub fn new() -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut app_state = AppState::new();
+        let mut ui_state = UiState::new();
+
+        // Load saved connections
+        if let Ok(connections) = userdata::load_connections() {
+            app_state.connection_manager.load_configs(connections);
+        }
+
+        // Select first connection if any exist
+        if !app_state.connection_manager.get_configs().is_empty() {
+            ui_state.connection_list.state.select(Some(0));
+        }
+
+        Self {
+            app_state,
+            ui_state,
+            action_tx: tx,
+            action_rx: rx,
+        }
+    }
+
+    pub async fn run(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> io::Result<()> {
+        let mut interval = tokio::time::interval(Duration::from_millis(250));
+
+        let tx = self.action_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                if event::poll(Duration::from_millis(100)).unwrap_or(false)
+                    && let Ok(event) = event::read()
+                {
+                    match event {
+                        Event::Key(key) => {
+                            let _ = tx.send(Action::Key(key));
+                        }
+                        Event::Resize(w, h) => {
+                            let _ = tx.send(Action::Resize(w, h));
+                        }
+                        _ => {}
+                    }
+                }
+                // Yield to let other tasks run
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+
+        loop {
+            terminal.draw(|f| {
+                ui::render(f, &mut self.app_state, &mut self.ui_state);
+            })?;
+
+            let action = tokio::select! {
+                _ = interval.tick() => Action::Tick,
+                Some(action) = self.action_rx.recv() => action,
+            };
+
+            if let Action::Quit = action {
+                break;
+            }
+
+            self.update(action).await;
+        }
+        Ok(())
+    }
+
+    async fn update(&mut self, action: Action) {
+        match action {
+            Action::Tick => {}
+            Action::Quit => {}
+            Action::Resize(_, _) => {}
+            Action::Key(key) => {
+                self.handle_key(key);
+            }
+            Action::NextPanel => self.ui_state.next_panel(),
+            Action::PrevPanel => self.ui_state.prev_panel(),
+
+            Action::NextItem => {
+                let connections_len = self.app_state.connection_manager.get_configs().len();
+                let keys_len = self
+                    .app_state
+                    .total_key_count
+                    .map(|t| t as usize)
+                    .unwrap_or(self.app_state.keys.len());
+                if self.ui_state.next_item(connections_len, keys_len) {
+                    match self.ui_state.active_panel {
+                        Panel::Connections => {
+                            if let Some(idx) = self.ui_state.connection_list.state.selected() {
+                                let _ = self.action_tx.send(Action::SelectConnection(idx));
+                            }
+                        }
+                        Panel::Keys => {
+                            if let Some(idx) = self.ui_state.key_browser.state.selected() {
+                                let _ = self.action_tx.send(Action::SelectKey(idx));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Action::PrevItem => {
+                let connections_len = self.app_state.connection_manager.get_configs().len();
+                let keys_len = self
+                    .app_state
+                    .total_key_count
+                    .map(|t| t as usize)
+                    .unwrap_or(self.app_state.keys.len());
+                if self.ui_state.previous_item(connections_len, keys_len) {
+                    match self.ui_state.active_panel {
+                        Panel::Connections => {
+                            if let Some(idx) = self.ui_state.connection_list.state.selected() {
+                                let _ = self.action_tx.send(Action::SelectConnection(idx));
+                            }
+                        }
+                        Panel::Keys => {
+                            if let Some(idx) = self.ui_state.key_browser.state.selected() {
+                                let _ = self.action_tx.send(Action::SelectKey(idx));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            Action::OpenConnectionForm => self.ui_state.open_connection_form(),
+            Action::CloseConnectionForm => self.ui_state.close_connection_form(),
+            Action::ToggleHelp => self.ui_state.show_help = !self.ui_state.show_help,
+
+            Action::ConnectionFormNextField => self.ui_state.connection_form.next_field(),
+            Action::ConnectionFormPrevField => self.ui_state.connection_form.prev_field(),
+
+            Action::Enter => {
+                if self.ui_state.show_connection_form {
+                    match self.ui_state.connection_form.to_config() {
+                        Ok(config) => {
+                            let _ = self.action_tx.send(Action::SubmitConnectionForm(config));
+                        }
+                        Err(e) => self.ui_state.set_form_error(e),
+                    }
+                } else if self.ui_state.active_panel == Panel::Connections
+                    && let Some(idx) = self.ui_state.connection_list.state.selected()
+                    && let Some(config) = self.app_state.connection_manager.get_configs().get(idx)
+                {
+                    let id = config.id.clone();
+                    if self.app_state.connection_manager.is_connected(&id) {
+                        let _ = self.action_tx.send(Action::Disconnect(id));
+                    } else {
+                        let _ = self.action_tx.send(Action::Connect(id));
+                    }
+                } else if self.ui_state.active_panel == Panel::Connections {
+                    self.ui_state.active_panel = Panel::Keys;
+                }
+            }
+
+            Action::SubmitConnectionForm(config) => {
+                self.app_state
+                    .connection_manager
+                    .add_connection(config.clone());
+                let all_configs = self.app_state.connection_manager.get_all_configs();
+                let _ = userdata::save_connections(&all_configs);
+                let _ = self.action_tx.send(Action::Connect(config.id.clone()));
+                self.ui_state.close_connection_form();
+            }
+
+            Action::DeleteConnection(id) => {
+                self.app_state.connection_manager.remove_config(&id);
+                let all_configs = self.app_state.connection_manager.get_all_configs();
+                let _ = userdata::save_connections(&all_configs);
+                self.ui_state.connection_list.state.select(None);
+            }
+
+            Action::SelectConnection(_idx) => {
+                // handled by auto-update in UI for now
+            }
+
+            Action::Connect(id) => {
+                if let Some(config) = self.app_state.connection_manager.get_config(&id).cloned() {
+                    self.app_state
+                        .connection_manager
+                        .set_status(&id, ConnectionStatus::Connecting);
+                    let tx = self.action_tx.clone();
+
+                    tokio::spawn(async move {
+                        let mut backend: Box<dyn Backend> = match config.backend_type {
+                            BackendType::Redis => Box::new(RedisBackend::new(config.clone())),
+                            BackendType::Memcached => {
+                                Box::new(MemcachedBackend::new(config.clone()))
+                            }
+                            BackendType::Etcd => {
+                                let _ = tx.send(Action::DidFailConnect(
+                                    config.id,
+                                    "Etcd not implemented".into(),
+                                ));
+                                return;
+                            }
+                        };
+
+                        match backend.connect().await {
+                            Ok(_) => {
+                                let backend_arc = Arc::new(RwLock::new(backend));
+                                let _ = tx.send(Action::DidConnect(config.id, backend_arc));
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Action::DidFailConnect(config.id, e.to_string()));
+                            }
+                        }
+                    });
+                }
+            }
+
+            Action::Disconnect(id) => {
+                let _ = self.app_state.connection_manager.disconnect(&id).await;
+                if self.app_state.connection_manager.get_active_id().is_none() {
+                    self.app_state.reset_pagination();
+                }
+            }
+
+            Action::DidConnect(id, backend) => {
+                self.app_state
+                    .connection_manager
+                    .register_connection(&id, backend);
+                self.app_state.error_message = None;
+                let _ = self.action_tx.send(Action::LoadKeys);
+            }
+
+            Action::DidFailConnect(id, error) => {
+                self.app_state
+                    .connection_manager
+                    .set_status(&id, ConnectionStatus::Error(error.clone()));
+                self.app_state.error_message = Some(format!("Failed to connect: {}", error));
+            }
+
+            Action::LoadKeys => {
+                self.app_state.is_loading_keys = true;
+                self.app_state.reset_pagination();
+
+                if let Some(backend) = self
+                    .app_state
+                    .connection_manager
+                    .get_active_backend_handle()
+                {
+                    let tx = self.action_tx.clone();
+                    let chunk_size = self.app_state.keys_per_chunk;
+
+                    tokio::spawn(async move {
+                        let backend = backend.read().await;
+                        let total = backend.key_count(None).await.ok();
+
+                        match backend.scan_keys(None, None, chunk_size).await {
+                            Ok(result) => {
+                                let _ = tx.send(Action::DidScanKeys {
+                                    keys: result.keys,
+                                    cursor: result.cursor,
+                                    has_more: result.has_more,
+                                    total_count: total,
+                                    reset: true,
+                                    center: None,
+                                });
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Action::DidFailScanKeys(e.to_string()));
+                            }
+                        }
+                    });
+                }
+            }
+
+            Action::LoadMoreKeys(center) => {
+                if self.app_state.is_loading_keys || !self.app_state.has_more_keys {
+                    return;
+                }
+                self.app_state.is_loading_keys = true;
+
+                if let Some(backend) = self
+                    .app_state
+                    .connection_manager
+                    .get_active_backend_handle()
+                {
+                    let tx = self.action_tx.clone();
+                    let chunk_size = self.app_state.keys_per_chunk;
+                    let cursor = self.app_state.keys_cursor.clone();
+
+                    tokio::spawn(async move {
+                        let backend = backend.read().await;
+                        match backend.scan_keys(None, cursor, chunk_size).await {
+                            Ok(result) => {
+                                let _ = tx.send(Action::DidScanKeys {
+                                    keys: result.keys,
+                                    cursor: result.cursor,
+                                    has_more: result.has_more,
+                                    total_count: None, // don't update total on paged load
+                                    reset: false,
+                                    center: Some(center),
+                                });
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Action::DidFailScanKeys(e.to_string()));
+                            }
+                        }
+                    });
+                }
+            }
+
+            Action::SelectKey(idx) => {
+                if self.app_state.needs_loading_around(idx) {
+                    let _ = self.action_tx.send(Action::LoadMoreKeys(idx));
+                }
+                let _ = self.action_tx.send(Action::LoadValue(idx));
+            }
+
+            Action::LoadValue(idx) => {
+                if let Some(Some(key)) = self.app_state.keys.get(idx) {
+                    let key_name = key.name.clone();
+                    if let Some(backend) = self
+                        .app_state
+                        .connection_manager
+                        .get_active_backend_handle()
+                    {
+                        let tx = self.action_tx.clone();
+                        tokio::spawn(async move {
+                            let backend = backend.read().await;
+                            match backend.get(&key_name).await {
+                                Ok(val) => {
+                                    let _ = tx.send(Action::DidLoadValue(val));
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Action::DidFailLoadValue(e.to_string()));
+                                }
+                            }
+                        });
+                    }
+                } else {
+                    self.app_state.selected_value = None;
+                }
+            }
+
+            Action::DidScanKeys {
+                keys,
+                cursor,
+                has_more,
+                total_count,
+                reset,
+                center,
+            } => {
+                if reset && let Some(count) = total_count {
+                    self.app_state.total_key_count = Some(count);
+                    self.app_state.keys = vec![None; count as usize];
+                }
+
+                self.app_state.keys_cursor = cursor;
+                self.app_state.has_more_keys = has_more;
+                self.app_state.is_loading_keys = false;
+
+                if reset {
+                    // Simple fill from start
+                    for (i, k) in keys.into_iter().enumerate() {
+                        if i < self.app_state.keys.len() {
+                            self.app_state.keys[i] = Some(k);
+                        }
+                    }
+                } else if let Some(c) = center {
+                    // Smart fill around center
+                    let preferred = self
+                        .app_state
+                        .get_preferred_indices_for_filling(c, keys.len());
+                    let mut keys_iter = keys.into_iter();
+
+                    // Fill preferred slots
+                    for idx in preferred {
+                        if let Some(key) = keys_iter.next() {
+                            if idx < self.app_state.keys.len() {
+                                self.app_state.keys[idx] = Some(key);
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Fill any other empty slots with remaining keys
+                    for key in keys_iter {
+                        if let Some(empty_idx) =
+                            self.app_state.keys.iter().position(|k| k.is_none())
+                        {
+                            self.app_state.keys[empty_idx] = Some(key);
+                        }
+                    }
+                }
+            }
+
+            Action::DidFailScanKeys(e) => {
+                self.app_state.error_message = Some(e);
+                self.app_state.is_loading_keys = false;
+            }
+
+            Action::DidLoadValue(val) => {
+                self.app_state.selected_value = Some(val);
+            }
+
+            Action::DidFailLoadValue(e) => {
+                self.app_state.error_message = Some(format!("Error loading value: {}", e));
+                self.app_state.selected_value = None;
+            }
+
+            Action::Error(e) => {
+                self.app_state.error_message = Some(e);
+            }
+
+            _ => {}
+        }
+    }
+
+    fn handle_key(&mut self, key: event::KeyEvent) {
+        // Global keys
+        if self.ui_state.show_connection_form {
+            self.ui_state.connection_form.handle_key_event(key);
+            match key.code {
+                KeyCode::Enter => {
+                    let _ = self.action_tx.send(Action::Enter);
+                }
+                KeyCode::Esc => {
+                    let _ = self.action_tx.send(Action::CloseConnectionForm);
+                }
+                KeyCode::Tab => {
+                    let _ = self.action_tx.send(Action::ConnectionFormNextField);
+                }
+                KeyCode::BackTab => {
+                    let _ = self.action_tx.send(Action::ConnectionFormPrevField);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        if self.ui_state.show_help {
+            let _ = self.action_tx.send(Action::ToggleHelp);
+            return;
+        }
+
+        match key.code {
+            KeyCode::Char('q') => {
+                let _ = self.action_tx.send(Action::Quit);
+            }
+            KeyCode::Char('?') => {
+                let _ = self.action_tx.send(Action::ToggleHelp);
+            }
+            KeyCode::Tab => {
+                let _ = self.action_tx.send(Action::NextPanel);
+            }
+            KeyCode::BackTab => {
+                let _ = self.action_tx.send(Action::PrevPanel);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let _ = self.action_tx.send(Action::NextItem);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                let _ = self.action_tx.send(Action::PrevItem);
+            }
+            KeyCode::Enter => {
+                let _ = self.action_tx.send(Action::Enter);
+            }
+            KeyCode::Esc => {
+                let _ = self.action_tx.send(Action::Quit);
+            }
+
+            KeyCode::Char('n') if self.ui_state.active_panel == Panel::Connections => {
+                let _ = self.action_tx.send(Action::OpenConnectionForm);
+            }
+            KeyCode::Char('d') if self.ui_state.active_panel == Panel::Connections => {
+                if let Some(idx) = self.ui_state.connection_list.state.selected()
+                    && let Some(config) = self.app_state.connection_manager.get_configs().get(idx)
+                {
+                    let _ = self
+                        .action_tx
+                        .send(Action::DeleteConnection(config.id.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
@@ -19,27 +523,8 @@ async fn main() -> Result<(), io::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Create app state (with connection manager)
-    let mut app_state = AppState::new();
-
-    // Load saved connections
-    if let Ok(connections) = userdata::load_connections() {
-        app_state.connection_manager.load_configs(connections);
-    }
-
-    // Create UI state (display + navigation)
-    let mut ui_state = UiState::new();
-
-    // Select first connection if any exist (but don't connect yet - will happen in background)
-    let has_connections = !app_state.connection_manager.get_configs().is_empty();
-    if has_connections {
-        ui_state.connection_state.select(Some(0));
-    } else {
-        ui_state.connection_state.select(None);
-    }
-
-    // Run app
-    let res = run_app(&mut terminal, &mut app_state, &mut ui_state).await;
+    let mut app = App::new();
+    let res = app.run(&mut terminal).await;
 
     // Restore terminal
     disable_raw_mode()?;
@@ -55,216 +540,4 @@ async fn main() -> Result<(), io::Error> {
     }
 
     Ok(())
-}
-
-async fn run_app<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    app_state: &mut AppState,
-    ui_state: &mut UiState,
-) -> io::Result<()> {
-    let mut initial_connection_pending = ui_state.connection_state.selected().is_some();
-
-    loop {
-        // Draw UI first
-        terminal.draw(|f| {
-            ui::render(f, app_state, ui_state);
-        })?;
-
-        // Handle initial connection after first render
-        if initial_connection_pending {
-            initial_connection_pending = false;
-            activate_selected_connection(app_state, ui_state).await;
-            // Force a redraw after connection attempt
-            continue;
-        }
-
-        // Handle input
-        if event::poll(std::time::Duration::from_millis(100))?
-            && let Event::Key(key) = event::read()?
-        {
-            // Connection form is open
-            if ui_state.show_connection_form {
-                match key.code {
-                    KeyCode::Esc => {
-                        ui_state.close_connection_form();
-                    }
-                    KeyCode::Enter => {
-                        // Try to save the connection
-                        match ui_state.connection_form.to_config() {
-                            Ok(config) => {
-                                let new_id = config.id.clone();
-                                app_state.connection_manager.add_connection(config);
-
-                                // Save connections to disk
-                                let all_configs = app_state.connection_manager.get_all_configs();
-                                let _ = userdata::save_connections(&all_configs);
-
-                                if let Some(idx) = app_state
-                                    .connection_manager
-                                    .get_configs()
-                                    .iter()
-                                    .position(|c| c.id == new_id)
-                                {
-                                    ui_state.connection_state.select(Some(idx));
-                                }
-                                ui_state.close_connection_form();
-                                activate_selected_connection(app_state, ui_state).await;
-                            }
-                            Err(e) => {
-                                ui_state.set_form_error(e);
-                            }
-                        }
-                    }
-                    KeyCode::Tab => {
-                        ui_state.connection_form.next_field();
-                        ui_state.form_error = None;
-                    }
-                    KeyCode::BackTab => {
-                        ui_state.connection_form.prev_field();
-                        ui_state.form_error = None;
-                    }
-                    KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        ui_state.connection_form.add_char(c);
-                        ui_state.form_error = None;
-                    }
-                    KeyCode::Backspace => {
-                        ui_state.connection_form.delete_char();
-                        ui_state.form_error = None;
-                    }
-                    _ => {}
-                }
-            }
-            // Help is open
-            else if ui_state.show_help {
-                // Close help on any key
-                ui_state.show_help = false;
-            }
-            // Normal navigation
-            else {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                    KeyCode::Char('?') => ui_state.show_help = true,
-                    KeyCode::Char('n') if ui_state.active_panel == Panel::Connections => {
-                        ui_state.open_connection_form();
-                    }
-                    KeyCode::Char('d') if ui_state.active_panel == Panel::Connections => {
-                        // Delete selected connection
-                        if let Some(idx) = ui_state.connection_state.selected() {
-                            let configs: Vec<_> = app_state
-                                .connection_manager
-                                .get_configs()
-                                .iter()
-                                .map(|c| c.id.clone())
-                                .collect();
-                            if let Some(id) = configs.get(idx) {
-                                app_state.connection_manager.remove_config(id);
-
-                                // Save connections to disk
-                                let all_configs = app_state.connection_manager.get_all_configs();
-                                let _ = userdata::save_connections(&all_configs);
-
-                                let remaining = app_state.connection_manager.get_configs();
-                                if !remaining.is_empty() {
-                                    let new_idx = idx.min(remaining.len() - 1);
-                                    ui_state.connection_state.select(Some(new_idx));
-                                    activate_selected_connection(app_state, ui_state).await;
-                                } else {
-                                    ui_state.connection_state.select(None);
-                                }
-                            }
-                        }
-                    }
-                    KeyCode::Enter if ui_state.active_panel == Panel::Connections => {
-                        ui_state.active_panel = Panel::Keys;
-                    }
-                    KeyCode::Tab => ui_state.next_panel(),
-                    KeyCode::BackTab => ui_state.prev_panel(),
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        let connections_len = app_state.connection_manager.get_configs().len();
-                        let keys_len = app_state
-                            .total_key_count
-                            .map(|t| t as usize)
-                            .unwrap_or_else(|| app_state.keys.len());
-
-                        if ui_state.next_item(connections_len, keys_len) {
-                            match ui_state.active_panel {
-                                Panel::Connections => {
-                                    activate_selected_connection(app_state, ui_state).await;
-                                }
-                                Panel::Keys => {
-                                    // Ensure region around selection is loaded (handles wrap)
-                                    if let Some(idx) = ui_state.key_state.selected()
-                                        && app_state.needs_loading_around(idx)
-                                    {
-                                        app_state.load_until_filled_around(idx, 10).await;
-                                    }
-
-                                    app_state.update_value(ui_state.key_state.selected()).await;
-                                }
-                                Panel::Value => {}
-                            }
-                        }
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        let connections_len = app_state.connection_manager.get_configs().len();
-                        let keys_len = app_state
-                            .total_key_count
-                            .map(|t| t as usize)
-                            .unwrap_or_else(|| app_state.keys.len());
-
-                        if ui_state.previous_item(connections_len, keys_len) {
-                            match ui_state.active_panel {
-                                Panel::Connections => {
-                                    activate_selected_connection(app_state, ui_state).await;
-                                }
-                                Panel::Keys => {
-                                    // Ensure region around selection is loaded (handles wrap)
-                                    if let Some(idx) = ui_state.key_state.selected()
-                                        && app_state.needs_loading_around(idx)
-                                    {
-                                        app_state.load_until_filled_around(idx, 10).await;
-                                    }
-
-                                    app_state.update_value(ui_state.key_state.selected()).await;
-                                }
-                                Panel::Value => {}
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-}
-
-async fn activate_selected_connection(app_state: &mut AppState, ui_state: &mut UiState) {
-    let configs = app_state.connection_manager.get_configs();
-    if configs.is_empty() {
-        return;
-    }
-
-    let mut idx = ui_state.connection_state.selected().unwrap_or(0);
-    if idx >= configs.len() {
-        idx = configs.len() - 1;
-        ui_state.connection_state.select(Some(idx));
-    }
-
-    let connection_id = configs[idx].id.clone();
-
-    if app_state.connection_manager.get_active_id() == Some(connection_id.as_str())
-        && !app_state.keys.is_empty()
-    {
-        return;
-    }
-
-    if app_state.connect_to(&connection_id).await.is_ok() {
-        if !app_state.keys.is_empty() {
-            ui_state.key_state.select(Some(0));
-            app_state.update_value(ui_state.key_state.selected()).await;
-        } else {
-            ui_state.key_state.select(None);
-            app_state.selected_value = None;
-        }
-    }
 }

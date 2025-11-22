@@ -42,6 +42,10 @@ pub enum Action {
     LoadKeys,
     LoadMoreKeys(usize), // index to load around
     SelectKey(usize),
+    LoadValueDebounced {
+        index: usize,
+        token: u64,
+    },
     LoadValue(usize),
 
     // Async Events (Results)

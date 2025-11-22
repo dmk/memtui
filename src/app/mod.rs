@@ -11,6 +11,7 @@ pub struct AppState {
     pub keys: Vec<Option<KeyMetadata>>, // Sparse array - None = not loaded yet
     pub selected_value: Option<Value>,
     pub selected_key_index: Option<usize>,
+    pub value_request_token: u64,
     pub text_formatter: TextFormatter,
     pub json_formatter: JsonFormatter,
     pub error_message: Option<String>,
@@ -30,6 +31,7 @@ impl AppState {
             keys: Vec::new(),
             selected_value: None,
             selected_key_index: None,
+            value_request_token: 0,
             text_formatter: TextFormatter,
             json_formatter: JsonFormatter::new(JsonColorConfig::default()),
             error_message: None,

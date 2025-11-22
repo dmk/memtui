@@ -8,8 +8,7 @@ use crossterm::{
 };
 use ratatui::layout::Rect;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use std::io;
-use std::sync::Arc;
+use std::{io, sync::Arc, time::Instant};
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::Duration;
 
@@ -20,11 +19,15 @@ use memtui::types::BackendType;
 use memtui::ui::{self, Panel, UiState};
 use memtui::userdata;
 
+const VALUE_LOAD_DEBOUNCE_MS: u64 = 120;
+const SCROLL_EVENT_MIN_INTERVAL_MS: u64 = 50;
+
 pub struct App {
     pub app_state: AppState,
     pub ui_state: UiState,
     pub action_tx: mpsc::UnboundedSender<Action>,
     pub action_rx: mpsc::UnboundedReceiver<Action>,
+    last_scroll_event: Option<Instant>,
 }
 
 impl Default for App {
@@ -54,6 +57,7 @@ impl App {
             ui_state,
             action_tx: tx,
             action_rx: rx,
+            last_scroll_event: None,
         }
     }
 
@@ -352,7 +356,14 @@ impl App {
                 if self.app_state.needs_loading_around(idx) {
                     let _ = self.action_tx.send(Action::LoadMoreKeys(idx));
                 }
-                let _ = self.action_tx.send(Action::LoadValue(idx));
+                self.schedule_value_load(idx);
+            }
+            Action::LoadValueDebounced { index, token } => {
+                if self.app_state.value_request_token == token
+                    && self.app_state.selected_key_index == Some(index)
+                {
+                    let _ = self.action_tx.send(Action::LoadValue(index));
+                }
             }
 
             Action::LoadValue(idx) => {
@@ -581,6 +592,17 @@ impl App {
         }
     }
 
+    fn schedule_value_load(&mut self, idx: usize) {
+        self.app_state.value_request_token = self.app_state.value_request_token.wrapping_add(1);
+        let token = self.app_state.value_request_token;
+        let tx = self.action_tx.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(VALUE_LOAD_DEBOUNCE_MS)).await;
+            let _ = tx.send(Action::LoadValueDebounced { index: idx, token });
+        });
+    }
+
     fn handle_scroll(&mut self, column: u16, row: u16, upward: bool) {
         let action = if upward {
             Action::PrevItem
@@ -588,20 +610,36 @@ impl App {
             Action::NextItem
         };
 
-        if let Some(area) = self.ui_state.last_key_area
+        let target_panel = if let Some(area) = self.ui_state.last_key_area
             && Self::point_in_rect(area, column, row)
         {
-            self.ui_state.active_panel = Panel::Keys;
-            let _ = self.action_tx.send(action);
-            return;
-        }
+            Some(Panel::Keys)
+        } else if let Some(area) = self.ui_state.last_connection_area
+            && Self::point_in_rect(area, column, row)
+        {
+            Some(Panel::Connections)
+        } else {
+            None
+        };
 
-        if let Some(area) = self.ui_state.last_connection_area
-            && Self::point_in_rect(area, column, row)
-        {
-            self.ui_state.active_panel = Panel::Connections;
+        if let Some(panel) = target_panel {
+            if !self.consume_scroll_slot() {
+                return;
+            }
+            self.ui_state.active_panel = panel;
             let _ = self.action_tx.send(action);
         }
+    }
+
+    fn consume_scroll_slot(&mut self) -> bool {
+        let now = Instant::now();
+        if let Some(last) = self.last_scroll_event {
+            if now.duration_since(last) < Duration::from_millis(SCROLL_EVENT_MIN_INTERVAL_MS) {
+                return false;
+            }
+        }
+        self.last_scroll_event = Some(now);
+        true
     }
 
     fn key_index_from_position(&self, column: u16, row: u16) -> Option<usize> {

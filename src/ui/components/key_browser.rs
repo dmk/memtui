@@ -25,19 +25,26 @@ pub struct KeyBrowser {
     pub state: ListState,
     pub scrollbar_state: ScrollbarState,
     pub viewport_height: usize,
+    scroll_top: usize,
 }
 
 impl KeyBrowser {
+    const EDGE_SCROLL_GUARD: usize = 3;
+
     pub fn new() -> Self {
         Self {
             state: ListState::default(),
             scrollbar_state: ScrollbarState::default(),
             viewport_height: 20,
+            scroll_top: 0,
         }
     }
 
     pub fn select(&mut self, index: Option<usize>) {
         self.state.select(index);
+        if index.is_none() {
+            self.scroll_top = 0;
+        }
     }
 
     pub fn selected_index(&self) -> Option<usize> {
@@ -58,20 +65,8 @@ impl KeyBrowser {
             return None;
         }
 
-        let selected_abs = self
-            .state
-            .selected()
-            .unwrap_or(0)
-            .min(total_count.saturating_sub(1));
-        let scroll_offset = visible_len / 2;
         let max_start = total_count.saturating_sub(visible_len);
-
-        let start_index = if total_count == 0 || visible_len == 0 {
-            0
-        } else {
-            let ideal_start = selected_abs.saturating_sub(scroll_offset);
-            ideal_start.min(max_start).max(0)
-        };
+        let start_index = self.scroll_top.min(max_start);
 
         Some((start_index, visible_len))
     }
@@ -102,21 +97,7 @@ impl Component for KeyBrowser {
             .selected()
             .unwrap_or(0)
             .min(total_count.saturating_sub(1));
-        let visible_len = self.viewport_height.min(total_count.max(1));
-
-        // Calculate viewport start to keep selection visible and scroll smoothly
-        // Strategy: keep selection at a fixed position in the viewport (1/2 from top)
-        let scroll_offset = visible_len / 2;
-        let max_start = total_count.saturating_sub(visible_len);
-
-        let start_index = if total_count == 0 || visible_len == 0 {
-            0
-        } else {
-            // Calculate start_index so that selected_abs appears at scroll_offset position
-            let ideal_start = selected_abs.saturating_sub(scroll_offset);
-            // Clamp to valid range [0, max_start]
-            ideal_start.min(max_start).max(0)
-        };
+        let (start_index, visible_len) = self.compute_view_window(selected_abs, total_count);
 
         let content_width = area.width.saturating_sub(4) as usize;
         let mut key_items: Vec<ListItem> = Vec::with_capacity(visible_len);
@@ -264,6 +245,53 @@ impl Component for KeyBrowser {
 }
 
 impl KeyBrowser {
+    fn compute_view_window(&mut self, selected_abs: usize, total_count: usize) -> (usize, usize) {
+        let visible_len = self.viewport_height.min(total_count.max(1));
+        if visible_len == 0 {
+            self.scroll_top = 0;
+            return (0, 0);
+        }
+
+        let max_start = total_count.saturating_sub(visible_len);
+        self.scroll_top = self.scroll_top.min(max_start);
+
+        if selected_abs < self.scroll_top {
+            self.scroll_top = selected_abs;
+        } else {
+            let last_visible = self
+                .scroll_top
+                .saturating_add(visible_len.saturating_sub(1));
+            if selected_abs > last_visible {
+                self.scroll_top = selected_abs.saturating_sub(visible_len.saturating_sub(1));
+            }
+        }
+
+        let guard = Self::edge_guard_for(visible_len);
+        if guard > 0 {
+            let top_threshold = self.scroll_top.saturating_add(guard);
+            let bottom_anchor = visible_len.saturating_sub(guard + 1);
+            let bottom_threshold = self.scroll_top.saturating_add(bottom_anchor);
+
+            if selected_abs < top_threshold {
+                let new_top = selected_abs.saturating_sub(guard);
+                self.scroll_top = new_top.min(max_start);
+            } else if selected_abs > bottom_threshold {
+                let new_top = selected_abs.saturating_sub(bottom_anchor);
+                self.scroll_top = new_top.min(max_start);
+            }
+        }
+
+        (self.scroll_top, visible_len)
+    }
+
+    fn edge_guard_for(visible_len: usize) -> usize {
+        if visible_len <= 1 {
+            return 0;
+        }
+        let max_guard = (visible_len - 1) / 2;
+        Self::EDGE_SCROLL_GUARD.min(max_guard)
+    }
+
     /// Check if we need to load the region around a specific index
     /// Logic copied from AppState to keep component self-contained for rendering/input decisions
     fn needs_loading_around(

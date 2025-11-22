@@ -337,6 +337,8 @@ impl App {
             }
 
             Action::SelectKey(idx) => {
+                self.app_state.selected_key_index = Some(idx);
+                self.app_state.selected_value = None;
                 if self.app_state.needs_loading_around(idx) {
                     let _ = self.action_tx.send(Action::LoadMoreKeys(idx));
                 }

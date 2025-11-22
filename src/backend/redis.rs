@@ -441,7 +441,7 @@ impl Backend for RedisBackend {
 
             Ok(Value {
                 data: serialized.into_bytes(),
-                value_type: ValueType::Json,
+                value_type,
                 encoding: Some("utf8".to_string()),
             })
         }

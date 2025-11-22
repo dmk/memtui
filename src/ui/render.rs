@@ -77,8 +77,15 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, 
 }
 
 fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, area: Rect) {
+    let selected_key_type = app_state
+        .selected_key_index
+        .and_then(|idx| app_state.keys.get(idx))
+        .and_then(|k| k.as_ref())
+        .map(|k| k.value_type);
+
     let props = ValueViewerProps {
         selected_value: app_state.selected_value.as_ref(),
+        selected_key_type,
         error_message: app_state.error_message.as_ref(),
         json_formatter: &app_state.json_formatter,
         text_formatter: &app_state.text_formatter,

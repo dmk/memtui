@@ -3,7 +3,7 @@ use ratatui::{
     Frame,
     layout::{Margin, Rect},
     style::{Color, Modifier, Style},
-    text::Span,
+    text::{Line, Span},
     widgets::{
         Block, Borders, List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState,
     },
@@ -90,11 +90,12 @@ impl Component for KeyBrowser {
             ideal_start.min(max_start).max(0)
         };
 
+        let content_width = area.width.saturating_sub(4) as usize;
         let mut key_items: Vec<ListItem> = Vec::with_capacity(visible_len);
         for offset in 0..visible_len {
             let abs = start_index + offset;
             if let Some(Some(k)) = props.keys.get(abs) {
-                key_items.push(ListItem::new(k.name.as_str()));
+                key_items.push(Self::build_key_item(k, content_width));
             } else {
                 key_items.push(ListItem::new(Span::styled(
                     "...",
@@ -279,5 +280,47 @@ impl KeyBrowser {
         }
 
         false
+    }
+
+    fn build_key_item(key: &KeyMetadata, content_width: usize) -> ListItem<'static> {
+        let type_label = key.value_type.to_string();
+        let type_width = type_label.chars().count();
+        let min_gap = if content_width > type_width { 1 } else { 0 };
+        let available_for_name = content_width.saturating_sub(type_width + min_gap);
+        let name_display = Self::truncate_to_fit(&key.name, available_for_name);
+        let name_width = name_display.chars().count();
+        let spacer_width = content_width.saturating_sub(name_width + type_width);
+        let spacer = if spacer_width > 0 {
+            " ".repeat(spacer_width)
+        } else {
+            String::new()
+        };
+
+        let line = Line::from(vec![
+            Span::raw(name_display),
+            Span::raw(spacer),
+            Span::styled(type_label, Style::default().fg(Color::DarkGray)),
+        ]);
+
+        ListItem::new(line)
+    }
+
+    fn truncate_to_fit(text: &str, max_chars: usize) -> String {
+        if max_chars == 0 {
+            return String::new();
+        }
+
+        let char_count = text.chars().count();
+        if char_count <= max_chars {
+            return text.to_string();
+        }
+
+        if max_chars <= 3 {
+            return text.chars().take(max_chars).collect();
+        }
+
+        let mut truncated: String = text.chars().take(max_chars - 3).collect();
+        truncated.push_str("...");
+        truncated
     }
 }

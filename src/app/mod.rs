@@ -10,6 +10,7 @@ pub struct AppState {
     pub connection_manager: ConnectionManager,
     pub keys: Vec<Option<KeyMetadata>>, // Sparse array - None = not loaded yet
     pub selected_value: Option<Value>,
+    pub selected_key_index: Option<usize>,
     pub text_formatter: TextFormatter,
     pub json_formatter: JsonFormatter,
     pub error_message: Option<String>,
@@ -28,6 +29,7 @@ impl AppState {
             connection_manager: ConnectionManager::new(),
             keys: Vec::new(),
             selected_value: None,
+            selected_key_index: None,
             text_formatter: TextFormatter,
             json_formatter: JsonFormatter::new(JsonColorConfig::default()),
             error_message: None,
@@ -52,6 +54,7 @@ impl AppState {
         self.is_loading_keys = false;
         self.keys.clear();
         self.selected_value = None;
+        self.selected_key_index = None;
     }
 
     /// Calculate which indices in the sparse array are empty and should be filled

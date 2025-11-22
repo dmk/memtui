@@ -61,6 +61,36 @@ impl ConnectionList {
         };
         self.state.select(Some(i));
     }
+
+    pub fn index_at_position(
+        &self,
+        area: Rect,
+        column: u16,
+        row: u16,
+        total: usize,
+    ) -> Option<usize> {
+        if total == 0 || area.height <= 2 || area.width <= 2 {
+            return None;
+        }
+
+        let inner_left = area.x.saturating_add(1);
+        let inner_right = area.x.saturating_add(area.width.saturating_sub(1));
+        if column < inner_left || column >= inner_right {
+            return None;
+        }
+
+        let inner_top = area.y.saturating_add(1);
+        let inner_bottom = area.y.saturating_add(area.height.saturating_sub(1));
+        if row < inner_top || row >= inner_bottom {
+            return None;
+        }
+
+        let rel = (row - inner_top) as usize;
+        if rel >= total {
+            return None;
+        }
+        Some(rel)
+    }
 }
 
 impl Default for ConnectionList {

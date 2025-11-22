@@ -1,8 +1,12 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, MouseButton, MouseEvent,
+        MouseEventKind,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use ratatui::layout::Rect;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::sync::Arc;
@@ -69,6 +73,9 @@ impl App {
                         Event::Key(key) => {
                             let _ = tx.send(Action::Key(key));
                         }
+                        Event::Mouse(mouse) => {
+                            let _ = tx.send(Action::Mouse(mouse));
+                        }
                         Event::Resize(w, h) => {
                             let _ = tx.send(Action::Resize(w, h));
                         }
@@ -106,6 +113,9 @@ impl App {
             Action::Resize(_, _) => {}
             Action::Key(key) => {
                 self.handle_key(key);
+            }
+            Action::Mouse(mouse) => {
+                self.handle_mouse(mouse);
             }
             Action::NextPanel => self.ui_state.next_panel(),
             Action::PrevPanel => self.ui_state.prev_panel(),
@@ -513,6 +523,132 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent) {
+        if self.ui_state.show_connection_form || self.ui_state.show_help {
+            return;
+        }
+
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.handle_left_click(event.column, event.row);
+            }
+            MouseEventKind::ScrollUp => {
+                self.handle_scroll(event.column, event.row, true);
+            }
+            MouseEventKind::ScrollDown => {
+                self.handle_scroll(event.column, event.row, false);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_left_click(&mut self, column: u16, row: u16) {
+        if let Some(area) = self.ui_state.last_connection_area
+            && Self::point_in_rect(area, column, row)
+        {
+            self.ui_state.active_panel = Panel::Connections;
+            let total = self.app_state.connection_manager.get_configs().len();
+            if let Some(idx) = self
+                .ui_state
+                .connection_list
+                .index_at_position(area, column, row, total)
+            {
+                self.ui_state.connection_list.state.select(Some(idx));
+                let _ = self.action_tx.send(Action::SelectConnection(idx));
+            }
+            return;
+        }
+
+        if let Some(area) = self.ui_state.last_key_area
+            && Self::point_in_rect(area, column, row)
+        {
+            self.ui_state.active_panel = Panel::Keys;
+            if let Some(index) = self.key_index_from_position(column, row) {
+                self.ui_state.key_browser.select(Some(index));
+                self.app_state.selected_key_index = Some(index);
+                self.app_state.selected_value = None;
+                let _ = self.action_tx.send(Action::SelectKey(index));
+            }
+            return;
+        }
+
+        if let Some(area) = self.ui_state.last_value_area
+            && Self::point_in_rect(area, column, row)
+        {
+            self.ui_state.active_panel = Panel::Value;
+        }
+    }
+
+    fn handle_scroll(&mut self, column: u16, row: u16, upward: bool) {
+        let action = if upward {
+            Action::PrevItem
+        } else {
+            Action::NextItem
+        };
+
+        if let Some(area) = self.ui_state.last_key_area
+            && Self::point_in_rect(area, column, row)
+        {
+            self.ui_state.active_panel = Panel::Keys;
+            let _ = self.action_tx.send(action);
+            return;
+        }
+
+        if let Some(area) = self.ui_state.last_connection_area
+            && Self::point_in_rect(area, column, row)
+        {
+            self.ui_state.active_panel = Panel::Connections;
+            let _ = self.action_tx.send(action);
+        }
+    }
+
+    fn key_index_from_position(&self, column: u16, row: u16) -> Option<usize> {
+        let area = self.ui_state.last_key_area?;
+        if area.height <= 2 || area.width <= 2 {
+            return None;
+        }
+
+        let inner_left = area.x.saturating_add(1);
+        let inner_right = area.x.saturating_add(area.width.saturating_sub(1));
+        if column < inner_left || column >= inner_right {
+            return None;
+        }
+
+        let inner_top = area.y.saturating_add(1);
+        let inner_bottom = area.y.saturating_add(area.height.saturating_sub(1));
+        if row < inner_top || row >= inner_bottom {
+            return None;
+        }
+
+        let total_count = self
+            .app_state
+            .total_key_count
+            .map(|t| t as usize)
+            .unwrap_or_else(|| self.app_state.keys.len());
+        if total_count == 0 {
+            return None;
+        }
+
+        let (start_index, visible_len) = self.ui_state.key_browser.view_bounds(total_count)?;
+        let rel = (row - inner_top) as usize;
+        if rel >= visible_len {
+            return None;
+        }
+
+        let index = start_index + rel;
+        if index >= total_count {
+            return None;
+        }
+
+        Some(index)
+    }
+
+    fn point_in_rect(area: Rect, column: u16, row: u16) -> bool {
+        let within_x = column >= area.x && column < area.x.saturating_add(area.width);
+        let within_y = row >= area.y && row < area.y.saturating_add(area.height);
+        within_x && within_y
     }
 }
 

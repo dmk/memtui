@@ -29,6 +29,10 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
         ])
         .split(main_chunks[0]);
 
+    ui_state.last_connection_area = Some(chunks[0]);
+    ui_state.last_key_area = Some(chunks[1]);
+    ui_state.last_value_area = Some(chunks[2]);
+
     // Left panel: Connections
     render_connections(f, app_state, ui_state, chunks[0]);
 

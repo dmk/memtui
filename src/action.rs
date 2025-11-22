@@ -1,6 +1,6 @@
 use crate::backend::Backend;
 use crate::types::{ConnectionConfig, KeyMetadata, Value};
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyEvent, MouseEvent};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -12,6 +12,7 @@ pub enum Action {
 
     // User Inputs
     Key(KeyEvent),
+    Mouse(MouseEvent),
 
     // Navigation
     NextPanel,

@@ -2,6 +2,7 @@ use super::ConnectionForm;
 use super::components::connection_list::ConnectionList;
 use super::components::key_browser::KeyBrowser;
 use super::components::value_viewer::ValueViewer;
+use ratatui::layout::Rect;
 use strum::{EnumIter, IntoEnumIterator};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
@@ -22,6 +23,9 @@ pub struct UiState {
     pub connection_list: ConnectionList,
     pub key_browser: KeyBrowser,
     pub value_viewer: ValueViewer,
+    pub last_connection_area: Option<Rect>,
+    pub last_key_area: Option<Rect>,
+    pub last_value_area: Option<Rect>,
     // Shortcuts for compatibility with existing main.rs logic
     // We expose getters/setters or just public fields if we want to keep refactor minimal
     // But main.rs accesses .connection_state directly.
@@ -41,6 +45,9 @@ impl UiState {
             connection_list: ConnectionList::new(),
             key_browser: KeyBrowser::new(),
             value_viewer: ValueViewer::new(),
+            last_connection_area: None,
+            last_key_area: None,
+            last_value_area: None,
         }
     }
 

@@ -47,6 +47,34 @@ impl KeyBrowser {
     pub fn viewport_height(&self) -> usize {
         self.viewport_height
     }
+
+    pub fn view_bounds(&self, total_count: usize) -> Option<(usize, usize)> {
+        if total_count == 0 {
+            return None;
+        }
+
+        let visible_len = self.viewport_height.min(total_count.max(1));
+        if visible_len == 0 {
+            return None;
+        }
+
+        let selected_abs = self
+            .state
+            .selected()
+            .unwrap_or(0)
+            .min(total_count.saturating_sub(1));
+        let scroll_offset = visible_len / 2;
+        let max_start = total_count.saturating_sub(visible_len);
+
+        let start_index = if total_count == 0 || visible_len == 0 {
+            0
+        } else {
+            let ideal_start = selected_abs.saturating_sub(scroll_offset);
+            ideal_start.min(max_start).max(0)
+        };
+
+        Some((start_index, visible_len))
+    }
 }
 
 impl Default for KeyBrowser {

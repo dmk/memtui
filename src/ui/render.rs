@@ -3,12 +3,12 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
 use super::components::{
     Component, connection_list::ConnectionListProps, key_browser::KeyBrowserProps,
-    value_viewer::ValueViewerProps,
+    value_viewer::ValueViewerProps, welcome::WelcomeScreenProps,
 };
 use super::render_connection_form;
 use super::state::{Panel, TabRegion, UiState};
@@ -16,10 +16,21 @@ use crate::app::{AppState, ConnectionStatus};
 
 /// Main UI rendering function
 pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
+    let configs = app_state.connection_manager.get_configs();
+    let open_configs: Vec<_> = configs
+        .iter()
+        .filter(|c| {
+            let status = app_state.connection_manager.get_status(&c.id);
+            !matches!(status, ConnectionStatus::Disconnected)
+        })
+        .collect();
+
+    let show_tabs = open_configs.len() > 1;
+
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(if show_tabs { 3 } else { 0 }),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
@@ -29,7 +40,9 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
     let body_area = root[1];
     let status_area = root[2];
 
-    render_tabs(f, app_state, ui_state, tab_area);
+    if show_tabs {
+        render_tabs(f, app_state, ui_state, tab_area);
+    }
 
     if app_state.connection_manager.get_active_id().is_some() {
         render_body(f, app_state, ui_state, body_area);
@@ -59,22 +72,27 @@ fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area
     let mut spans = Vec::new();
     let mut cursor_x = area.x;
     let max_x = area.x.saturating_add(area.width);
+
     let configs = app_state.connection_manager.get_configs();
+    let open_configs: Vec<_> = configs
+        .iter()
+        .filter(|c| {
+            let status = app_state.connection_manager.get_status(&c.id);
+            !matches!(status, ConnectionStatus::Disconnected)
+        })
+        .collect();
 
     let block = Block::default()
         .borders(Borders::BOTTOM)
         .border_style(Style::default().fg(Color::DarkGray));
     f.render_widget(block, area);
 
-    if configs.is_empty() {
-        let placeholder = Paragraph::new("No connections yet — press Ctrl+N to add one")
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::DarkGray));
-        f.render_widget(placeholder, area);
+    if open_configs.is_empty() {
+        // If we are somehow here (maybe active is None but show_tabs was somehow called?), return
         return;
     }
 
-    for config in configs {
+    for config in open_configs {
         let status = app_state.connection_manager.get_status(&config.id);
         let (icon, tone) = match status {
             ConnectionStatus::Connected => ("●", Color::Green),
@@ -172,67 +190,16 @@ fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, are
     ui_state.value_viewer.render(f, area, props);
 }
 
-fn render_welcome(f: &mut Frame, app_state: &AppState, ui_state: &UiState, area: Rect) {
-    let card_area = centered_rect(70, 70, area);
-
-    let mut lines = vec![
-        Line::from(Span::styled(
-            "Welcome to memtui",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from("Browse keys once you connect to a datastore."),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Recent connections",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-    ];
-
+fn render_welcome(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area: Rect) {
     let configs = app_state.connection_manager.get_configs();
-    let mut displayed = 0;
-    for id in &ui_state.recent_connection_ids {
-        if let Some(config) = configs.iter().find(|c| c.id == *id) {
-            lines.push(Line::from(format!(
-                "{}  {}:{} ({})",
-                config.name, config.host, config.port, config.backend_type
-            )));
-            displayed += 1;
-            if displayed >= 5 {
-                break;
-            }
-        }
-    }
+    let recent_configs = ui_state
+        .recent_connection_ids
+        .iter()
+        .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
+        .collect();
 
-    if displayed == 0 {
-        lines.push(Line::from(Span::styled(
-            "No recent connections yet.",
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled("Ctrl+P", Style::default().fg(Color::Yellow)),
-        Span::raw(" open connections   "),
-        Span::styled("Ctrl+N", Style::default().fg(Color::Yellow)),
-        Span::raw(" new connection"),
-    ]));
-
-    let card = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Cyan)),
-        )
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: false });
-
-    f.render_widget(card, card_area);
+    let props = WelcomeScreenProps { recent_configs };
+    ui_state.welcome_screen.render(f, area, props);
 }
 
 fn render_connection_palette(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState) {

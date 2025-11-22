@@ -2,6 +2,7 @@ pub mod connection_list;
 pub mod key_browser;
 pub mod status_bar;
 pub mod value_viewer;
+pub mod welcome;
 
 use crossterm::event::KeyEvent;
 use ratatui::{Frame, layout::Rect};

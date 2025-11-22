@@ -2,6 +2,7 @@ use super::ConnectionForm;
 use super::components::connection_list::ConnectionList;
 use super::components::key_browser::KeyBrowser;
 use super::components::value_viewer::ValueViewer;
+use super::components::welcome::WelcomeScreen;
 use ratatui::layout::Rect;
 use strum::{EnumIter, IntoEnumIterator};
 
@@ -28,6 +29,7 @@ pub struct UiState {
     pub connection_list: ConnectionList,
     pub key_browser: KeyBrowser,
     pub value_viewer: ValueViewer,
+    pub welcome_screen: WelcomeScreen,
     pub last_key_area: Option<Rect>,
     pub last_value_area: Option<Rect>,
     pub tab_regions: Vec<TabRegion>,
@@ -49,6 +51,7 @@ impl UiState {
             connection_list: ConnectionList::new(),
             key_browser: KeyBrowser::new(),
             value_viewer: ValueViewer::new(),
+            welcome_screen: WelcomeScreen::new(),
             last_key_area: None,
             last_value_area: None,
             tab_regions: Vec::new(),

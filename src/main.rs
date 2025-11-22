@@ -15,7 +15,7 @@ use tokio::time::Duration;
 use memtui::action::Action;
 use memtui::app::{AppState, ConnectionStatus};
 use memtui::backend::{Backend, MemcachedBackend, RedisBackend};
-use memtui::types::BackendType;
+use memtui::types::{BackendType, ConnectionConfig};
 use memtui::ui::{self, Panel, UiState};
 use memtui::userdata;
 
@@ -544,6 +544,43 @@ impl App {
         if self.ui_state.show_help {
             let _ = self.action_tx.send(Action::ToggleHelp);
             return;
+        }
+
+        // Handle welcome screen navigation
+        if self.app_state.connection_manager.get_active_id().is_none()
+            && !self.ui_state.show_connection_palette
+        {
+            let configs = self.app_state.connection_manager.get_configs();
+            let recent_configs: Vec<&ConnectionConfig> = self
+                .ui_state
+                .recent_connection_ids
+                .iter()
+                .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
+                .collect();
+
+            if !recent_configs.is_empty() {
+                match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        self.ui_state.welcome_screen.next(recent_configs.len());
+                        return;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.ui_state.welcome_screen.prev(recent_configs.len());
+                        return;
+                    }
+                    KeyCode::Enter => {
+                        if let Some(idx) = self.ui_state.welcome_screen.state.selected()
+                            && let Some(config) = recent_configs.get(idx)
+                        {
+                            let _ = self
+                                .action_tx
+                                .send(Action::FocusConnection(config.id.clone()));
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
+            }
         }
 
         if self.ui_state.show_connection_palette {

@@ -2,6 +2,13 @@
 name = "memtui"
 version = "0.1.0"
 edition = "2024"
+authors = ["Dmytro Koval <contact@dkoval.pro>"]
+description = "An interactive TUI (Terminal User Interface) for browsing and inspecting key-value stores (Redis, Memcached, etc.)"
+license = "Apache-2.0"
+repository = "https://github.com/dmk/memtui"
+homepage = "https://github.com/dmk/memtui"
+keywords = ["tui", "redis", "memcached", "key-value", "cli"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 ratatui = "0.28"

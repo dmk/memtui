@@ -60,20 +60,47 @@ impl JsonFormatter {
                 message: format!("Invalid JSON: {}", e),
             })?;
 
-        // Format with indentation
-        let pretty = serde_json::to_string_pretty(&parsed).map_err(|e| FormatError {
+        // Format with indentation (serde_json uses 2 spaces by default)
+        let mut pretty = serde_json::to_string_pretty(&parsed).map_err(|e| FormatError {
             message: format!("Failed to format JSON: {}", e),
         })?;
+
+        // Apply configured indent
+        pretty = self.apply_indent(&pretty);
 
         // Colorize the formatted JSON
         Ok(self.colorize_json(&pretty))
     }
 
+    /// Apply configured indentation to a JSON string
+    /// This converts serde_json's default 2-space indent to the configured indent
+    fn apply_indent(&self, json: &str) -> String {
+        if self.config.indent == 2 {
+            return json.to_string();
+        }
+
+        let lines: Vec<&str> = json.lines().collect();
+        let mut result = Vec::new();
+
+        for line in lines {
+            // Count leading spaces (serde_json uses 2 spaces per indent level)
+            let leading_spaces = line.chars().take_while(|&c| c == ' ').count();
+            let indent_level = leading_spaces / 2;
+            let new_indent = " ".repeat(indent_level * self.config.indent);
+            let content = &line[leading_spaces..];
+            result.push(format!("{}{}", new_indent, content));
+        }
+
+        result.join("\n")
+    }
+
     /// Colorize JSON string into styled lines
     pub fn colorize_json(&self, json: &str) -> Vec<Line<'static>> {
+        // Apply configured indent before colorizing
+        let json_with_indent = self.apply_indent(json);
         let mut lines = Vec::new();
 
-        for line in json.lines() {
+        for line in json_with_indent.lines() {
             let spans = self.colorize_line(line);
             lines.push(Line::from(spans));
         }
@@ -259,9 +286,15 @@ impl Formatter for JsonFormatter {
                 message: format!("Invalid JSON: {}", e),
             })?;
 
-        serde_json::to_string_pretty(&parsed).map_err(|e| FormatError {
+        // Format with indentation (serde_json uses 2 spaces by default)
+        let mut pretty = serde_json::to_string_pretty(&parsed).map_err(|e| FormatError {
             message: format!("Failed to format JSON: {}", e),
-        })
+        })?;
+
+        // Apply configured indent
+        pretty = self.apply_indent(&pretty);
+
+        Ok(pretty)
     }
 }
 
@@ -335,5 +368,44 @@ mod tests {
         assert!(result.is_ok());
         let lines = result.unwrap();
         assert!(!lines.is_empty());
+    }
+
+    #[test]
+    fn test_json_formatter_indent() {
+        use crate::types::ValueType;
+
+        // Test with 4-space indent
+        let mut config = JsonColorConfig::default();
+        config.indent = 4;
+        let formatter = JsonFormatter::new(config);
+
+        let json_value = Value {
+            data: br#"{"key":"value","nested":{"inner":123}}"#.to_vec(),
+            value_type: ValueType::Json,
+            encoding: None,
+        };
+
+        let result = formatter.format(&json_value).unwrap();
+        let lines: Vec<&str> = result.lines().collect();
+
+        // Check that nested objects use 4-space indent
+        // First line should be "{"
+        // Second line should have 4 spaces before "key"
+        // Third line should have 4 spaces before "nested"
+        // Fourth line should have 8 spaces before "inner" (2 levels * 4 spaces)
+
+        assert!(lines.len() > 3);
+        let key_line = lines.iter().find(|l| l.contains("\"key\"")).unwrap();
+        let nested_line = lines.iter().find(|l| l.contains("\"nested\"")).unwrap();
+        let inner_line = lines.iter().find(|l| l.contains("\"inner\"")).unwrap();
+
+        // Check leading spaces
+        let key_indent = key_line.chars().take_while(|c| *c == ' ').count();
+        let nested_indent = nested_line.chars().take_while(|c| *c == ' ').count();
+        let inner_indent = inner_line.chars().take_while(|c| *c == ' ').count();
+
+        assert_eq!(key_indent, 4, "Key should have 4-space indent, got {}", key_indent);
+        assert_eq!(nested_indent, 4, "Nested should have 4-space indent, got {}", nested_indent);
+        assert_eq!(inner_indent, 8, "Inner should have 8-space indent (2 levels), got {}", inner_indent);
     }
 }

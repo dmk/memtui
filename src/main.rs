@@ -12,22 +12,21 @@ use std::io;
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{RwLock, mpsc};
-use tokio::time::Duration;
 
 use memtui::action::Action;
 use memtui::app::{AppState, ConnectionStatus};
 use memtui::backend::{Backend, MemcachedBackend, RedisBackend};
+use memtui::config::Config;
 use memtui::types::{BackendType, ConnectionConfig};
 use memtui::ui::{self, Panel, UiState};
 use memtui::userdata;
-
-const VALUE_LOAD_DEBOUNCE_MS: u64 = 120;
 
 pub struct App {
     pub app_state: AppState,
     pub ui_state: UiState,
     pub action_tx: mpsc::UnboundedSender<Action>,
     pub action_rx: mpsc::UnboundedReceiver<Action>,
+    pub config: Config,
     needs_render: bool,
 }
 
@@ -40,7 +39,11 @@ impl Default for App {
 impl App {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
-        let mut app_state = AppState::new();
+
+        // Load configuration
+        let config = userdata::load_config();
+
+        let mut app_state = AppState::new_with_config(&config);
         let mut ui_state = UiState::new();
 
         // Load saved connections
@@ -62,6 +65,7 @@ impl App {
             ui_state,
             action_tx: tx,
             action_rx: rx,
+            config,
             needs_render: true, // Render on first loop iteration
         }
     }
@@ -70,7 +74,11 @@ impl App {
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     ) -> io::Result<()> {
-        let mut interval = tokio::time::interval(Duration::from_millis(250));
+        let tick_interval = self.config.performance.tick_interval;
+        let event_poll_timeout = self.config.performance.event_poll_timeout;
+        let event_loop_sleep = self.config.performance.event_loop_sleep;
+
+        let mut interval = tokio::time::interval(tick_interval);
 
         // Shared state for scroll handling
         let scroll_accumulator = Arc::new(AtomicIsize::new(0));
@@ -82,7 +90,7 @@ impl App {
 
         tokio::spawn(async move {
             loop {
-                if event::poll(Duration::from_millis(100)).unwrap_or(false)
+                if event::poll(event_poll_timeout).unwrap_or(false)
                     && let Ok(event) = event::read()
                 {
                     match event {
@@ -115,7 +123,7 @@ impl App {
                     }
                 }
                 // Yield to let other tasks run
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::time::sleep(event_loop_sleep).await;
             }
         });
 
@@ -275,7 +283,7 @@ impl App {
 
             Action::Enter => {
                 if self.ui_state.show_connection_form {
-                    match self.ui_state.connection_form.to_config() {
+                    match self.ui_state.connection_form.to_config(self.config.connection.default_timeout) {
                         Ok(config) => {
                             let _ = self.action_tx.send(Action::SubmitConnectionForm(config));
                         }
@@ -395,7 +403,7 @@ impl App {
                     .connection_manager
                     .register_connection(&id, backend);
                 self.app_state.error_message = None;
-                if let Ok(ids) = userdata::record_recent_connection_id(&id) {
+                if let Ok(ids) = userdata::record_recent_connection_id_with_config(&id, &self.config) {
                     self.ui_state.recent_connection_ids = ids;
                 }
                 self.ui_state.active_panel = Panel::Keys;
@@ -898,9 +906,10 @@ impl App {
         self.app_state.value_request_token = self.app_state.value_request_token.wrapping_add(1);
         let token = self.app_state.value_request_token;
         let tx = self.action_tx.clone();
+        let debounce = self.config.data.value_load_debounce;
 
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(VALUE_LOAD_DEBOUNCE_MS)).await;
+            tokio::time::sleep(debounce).await;
             let _ = tx.send(Action::LoadValueDebounced { index: idx, token });
         });
     }
@@ -917,7 +926,7 @@ impl App {
         self.app_state.error_message = None;
 
         if self.app_state.connection_manager.is_connected(&id) {
-            if let Ok(ids) = userdata::record_recent_connection_id(&id) {
+            if let Ok(ids) = userdata::record_recent_connection_id_with_config(&id, &self.config) {
                 self.ui_state.recent_connection_ids = ids;
             }
             let _ = self.action_tx.send(Action::LoadKeys);

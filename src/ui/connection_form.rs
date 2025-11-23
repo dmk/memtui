@@ -130,7 +130,7 @@ impl ConnectionForm {
         self.active_field = self.active_field.prev(self.backend_type);
     }
 
-    pub fn to_config(&self) -> Result<ConnectionConfig, String> {
+    pub fn to_config(&self, default_timeout: Duration) -> Result<ConnectionConfig, String> {
         let name = self.name.value().trim();
         let host = self.host.value().trim();
         let port_str = self.port.value().trim();
@@ -182,7 +182,7 @@ impl ConnectionForm {
             auth,
             database,
             tls: None,
-            timeout: Duration::from_secs(5),
+            timeout: default_timeout,
             read_only: false,
         })
     }

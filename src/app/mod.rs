@@ -2,6 +2,7 @@ mod connections;
 
 pub use connections::{ConnectionManager, ConnectionStatus};
 
+use crate::config::Config;
 use crate::formatter::{JsonColorConfig, JsonFormatter, TextFormatter};
 use crate::types::{KeyMetadata, Value};
 
@@ -26,6 +27,23 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
+        Self::new_with_config(&Config::default())
+    }
+
+    pub fn new_with_config(config: &Config) -> Self {
+        let json_color_config = JsonColorConfig {
+            indent: config.json.indent,
+            key_color: config.json_key_color(),
+            string_color: config.json_string_color(),
+            number_color: config.json_number_color(),
+            boolean_color: config.json_boolean_color(),
+            null_color: config.json_null_color(),
+            brace_color: config.json_brace_color(),
+            bracket_color: config.json_bracket_color(),
+            comma_color: config.json_comma_color(),
+            colon_color: config.json_colon_color(),
+        };
+
         Self {
             connection_manager: ConnectionManager::new(),
             keys: Vec::new(),
@@ -33,14 +51,14 @@ impl AppState {
             selected_key_index: None,
             value_request_token: 0,
             text_formatter: TextFormatter,
-            json_formatter: JsonFormatter::new(JsonColorConfig::default()),
+            json_formatter: JsonFormatter::new(json_color_config),
             error_message: None,
             keys_cursor: None,
             has_more_keys: false,
             total_key_count: None,
             is_loading_keys: false,
-            keys_per_chunk: 200, // Reasonable chunk size for lazy loading
-            viewport_height: 20, // Will be updated based on actual terminal size
+            keys_per_chunk: config.data.keys_per_chunk,
+            viewport_height: config.ui.viewport_height,
         }
     }
 

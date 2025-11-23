@@ -4,41 +4,41 @@
 
 ### Core Backend Features
 
-- [ ] Redis connection & basic ops (get, scan, info)
-- [ ] Memcached connection & basic ops
-- [ ] etcd connection & basic ops
-- [ ] Connection profiles (save/load connections)
-- [ ] Authentication (password)
+- [x] Redis connection & basic read ops (get, scan, info)
+- [x] Memcached connection & basic read ops
+- [ ] etcd connection & basic ops (not implemented - shows error message)
+- [x] Connection profiles (save/load connections)
+- [x] Authentication (password)
 
 ### Key Browsing & Navigation
 
-- [ ] List all keys (with pagination)
-- [ ] Pattern-based key filtering (glob/regex)
+- [x] List all keys (with pagination)
+- [x] Pattern-based key filtering (glob/regex)
 - [ ] Fuzzy search for keys
 - [ ] Key sorting (name, size, TTL, type)
-- [ ] Key type indicators (string, list, hash, etc.)
-- [ ] Key size display (human-readable)
-- [ ] TTL display with countdown
+- [x] Key type indicators (string, list, hash, etc.)
+- [x] Key size display (human-readable)
+- [ ] TTL display with countdown (TTL is stored but not displayed in UI)
 
 ### Value Display
 
-- [ ] View key values (read-only)
-- [ ] Large value truncation/pagination
+- [x] View key values (read-only)
+- [x] Large value truncation/pagination
 
 ### Monitoring & Stats
 
-- [ ] Server info display (version, uptime, memory)
+- [x] Server info display (version, uptime, memory)
 - [ ] Key count by pattern
 
 ### UI & UX
 
-- [ ] Three-panel layout (connections | keys | value)
-- [ ] Mouse support (click to select)
-- [ ] Help modal (show all keybindings)
+- [x] Two-panel layout (keys | value) with connection list
+- [x] Mouse support (click to select, scroll)
+- [x] Help modal (show all keybindings)
 
 ### Configuration & Persistence
 
-- [ ] Connection history
+- [x] Connection history (recent connections)
 
 ---
 
@@ -46,21 +46,21 @@
 
 ### Core Backend Features
 
-- [ ] Multi-connection support (connect to multiple DBs simultaneously)
-- [ ] TLS/SSL support
+- [x] Multi-connection support (connect to multiple DBs simultaneously)
+- [x] TLS/SSL support
 - [ ] Authentication (token, cert)
-- [ ] Connection health check / ping
+- [x] Connection health check / ping
 - [ ] Auto-reconnect on disconnect
 
 ### Key Browsing & Navigation
 
 - [ ] Tree view for hierarchical keys (e.g., user:123:session)
-- [ ] Key metadata view (last accessed, encoding, etc.)
+- [x] Key metadata view (last accessed, encoding, etc. - stored in KeyMetadata but not displayed in UI)
 - [ ] Bookmark/favorite keys
 
 ### Value Display
 
-- [x] Auto-detect value format (JSON, msgpack, text, binary)
+- [x] Auto-detect value format (JSON, text, binary)
 - [x] JSON syntax highlighting & pretty-print
 - [ ] Binary hex dump display
 - [ ] Copy value to clipboard
@@ -70,22 +70,23 @@
 
 ### Write Operations (Opt-in, disabled by default)
 
-- [ ] Set/update key value
-- [ ] Delete single key
+- [ ] Set/update key value (set method exists in Backend trait, but UI not implemented)
+- [ ] Delete single key (delete method exists in Backend trait, but UI not implemented)
 - [ ] Bulk delete keys (with confirmation)
-- [ ] Set TTL on key
+- [ ] Set TTL on key (set method supports TTL parameter, but UI not implemented)
 - [ ] Rename key
 - [ ] Copy key to another connection
-- [ ] Write protection (require confirmation for dangerous ops)
+- [~] Write protection (read_only flag in ConnectionConfig) - no write mode at all yet
 
 ### Raw Command Mode
 
-- [ ] Execute raw backend commands (Redis: INFO, etcd: etcdctl equivalents)
+- [~] Execute raw backend commands (execute_raw method exists in Backend trait)
 - [ ] Command history (navigate with up/down)
 - [ ] Command auto-completion
 - [ ] Syntax highlighting for commands
 - [ ] Save command as snippet
 - [ ] Multi-line command input
+- [ ] UI for raw command mode
 
 ### Monitoring & Stats
 
@@ -97,13 +98,13 @@
 
 ### UI & UX
 
-- [ ] Vim-style keybindings
+- [~] Vim-style keybindings (j/k for navigation)
 - [ ] Emacs-style keybindings
 - [ ] Color themes (dark, light, custom)
 - [ ] Customizable keybindings
-- [ ] Search modal with preview
-- [ ] Status bar (show current mode, connection status)
-- [ ] Tab/workspace switching (multiple views)
+- [ ] Search modal with preview (pattern filtering exists but no UI modal)
+- [x] Status bar (show current mode, connection status)
+- [x] Tab/workspace switching (multiple connection tabs)
 - [ ] Split panes (view multiple keys simultaneously)
 
 ### Configuration & Persistence
@@ -116,7 +117,7 @@
 
 ### Advanced Features
 
-- [ ] Bulk operations (batch get/delete)
+- [~] Bulk operations (batch get via get_many)
 - [ ] Transaction support (Redis MULTI/EXEC)
 - [ ] Pub/Sub monitoring (Redis)
 - [ ] Cluster mode support (Redis cluster, etcd cluster)

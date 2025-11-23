@@ -157,6 +157,49 @@ impl UiState {
             }
         }
     }
+
+    /// Scroll key browser by a delta amount (positive = down, negative = up)
+    /// More efficient than calling next_item/previous_item in a loop
+    /// Matches the wrapping behavior of next_item/previous_item
+    pub fn scroll_keys_by(&mut self, keys_len: usize, delta: isize) -> bool {
+        if keys_len == 0 {
+            self.key_browser.select(None);
+            return false;
+        }
+
+        let current = self.key_browser.state.selected().unwrap_or(0);
+        let new_index = if delta > 0 {
+            // Scroll down - matches next_item behavior
+            let delta_u = delta as usize;
+            let new = current + delta_u;
+            if new >= keys_len {
+                // Wrap around: for each full cycle, wrap to beginning
+                new % keys_len
+            } else {
+                new
+            }
+        } else {
+            // Scroll up - matches previous_item behavior
+            let delta_u = (-delta) as usize;
+            if delta_u > current {
+                // Need to wrap around from the top
+                // Calculate remainder after wrapping
+                let remainder = (delta_u - current - 1) % keys_len;
+                keys_len - remainder - 1
+            } else {
+                current - delta_u
+            }
+        };
+
+        self.key_browser.select(Some(new_index));
+        true
+    }
+
+    /// Scroll value viewer by a delta amount (positive = down, negative = up)
+    pub fn scroll_value_by(&mut self, delta: isize) -> bool {
+        self.value_viewer.scroll_by(delta);
+        true
+    }
 }
 
 impl Default for UiState {

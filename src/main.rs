@@ -9,8 +9,8 @@ use crossterm::{
 use ratatui::layout::Rect;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
-use std::sync::atomic::{AtomicIsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicIsize, AtomicU16, Ordering};
+use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 
 use memtui::action::Action;
@@ -82,11 +82,13 @@ impl App {
 
         // Shared state for scroll handling
         let scroll_accumulator = Arc::new(AtomicIsize::new(0));
-        let last_mouse_pos = Arc::new(Mutex::new((0, 0)));
+        let last_mouse_x = Arc::new(AtomicU16::new(0));
+        let last_mouse_y = Arc::new(AtomicU16::new(0));
 
         let tx = self.action_tx.clone();
         let scroll_acc = scroll_accumulator.clone();
-        let mouse_pos = last_mouse_pos.clone();
+        let mouse_x = last_mouse_x.clone();
+        let mouse_y = last_mouse_y.clone();
 
         tokio::spawn(async move {
             loop {
@@ -98,10 +100,9 @@ impl App {
                             let _ = tx.send(Action::Key(key));
                         }
                         Event::Mouse(mouse) => {
-                            // Update last known mouse position
-                            if let Ok(mut pos) = mouse_pos.lock() {
-                                *pos = (mouse.column, mouse.row);
-                            }
+                            // Update last known mouse position (lock-free atomic operations)
+                            mouse_x.store(mouse.column, Ordering::Relaxed);
+                            mouse_y.store(mouse.row, Ordering::Relaxed);
 
                             match mouse.kind {
                                 MouseEventKind::ScrollDown => {
@@ -139,7 +140,9 @@ impl App {
             // Process accumulated scroll events
             let scroll_delta = scroll_accumulator.swap(0, Ordering::Relaxed);
             if scroll_delta != 0 {
-                let (col, row) = *last_mouse_pos.lock().unwrap();
+                // Lock-free atomic reads
+                let col = last_mouse_x.load(Ordering::Relaxed);
+                let row = last_mouse_y.load(Ordering::Relaxed);
                 if self.handle_scroll_delta(col, row, scroll_delta) {
                     self.needs_render = true;
                 }
@@ -1008,35 +1011,28 @@ impl App {
             self.ui_state.active_panel = panel;
 
             if panel == Panel::Value {
-                // Optimized scroll for ValueViewer
-                if upward {
-                    for _ in 0..count {
-                        self.ui_state.value_viewer.scroll_up();
-                    }
-                } else {
-                    for _ in 0..count {
-                        self.ui_state.value_viewer.scroll_down();
-                    }
-                }
-                true // Value viewer scroll always changes state
+                // Optimized batch scroll for ValueViewer (no loop needed)
+                let scroll_delta = if upward { -(count as isize) } else { count as isize };
+                self.ui_state.scroll_value_by(scroll_delta)
             } else {
-                // For key list, we still send actions, but maybe we should optimize this too?
-                // Sending 50 actions might flood the channel again.
-                // But usually key lists are small or paginated.
-                // Let's just emit ONE action if it's a large jump?
-                // Or just loop.
-                let action = if upward {
-                    Action::PrevItem
-                } else {
-                    Action::NextItem
-                };
+                // Optimized batch scroll for key list (direct state update, no channel flooding)
+                let keys_len = self
+                    .app_state
+                    .total_key_count
+                    .map(|t| t as usize)
+                    .unwrap_or(self.app_state.keys.len());
 
-                // Send accumulated actions
-                // Limit to a reasonable number to avoid blocking the channel if scroll is huge
-                for _ in 0..count.min(10) {
-                    let _ = self.action_tx.send(action.clone());
+                let scroll_delta = if upward { -(count as isize) } else { count as isize };
+                let changed = self.ui_state.scroll_keys_by(keys_len, scroll_delta);
+
+                // If selection changed, trigger key selection action
+                if changed {
+                    if let Some(idx) = self.ui_state.key_browser.state.selected() {
+                        let _ = self.action_tx.send(Action::SelectKey(idx));
+                    }
                 }
-                true // Actions will trigger renders via update()
+
+                changed
             }
         } else {
             false // No state change if scroll wasn't in a valid area

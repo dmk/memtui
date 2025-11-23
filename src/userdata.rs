@@ -27,9 +27,7 @@ pub fn get_config_dir() -> Result<PathBuf, io::Error> {
     let home = std::env::var("HOME")
         .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "HOME not set"))?;
 
-    let config_dir = PathBuf::from(home)
-        .join(".config")
-        .join("memtui");
+    let config_dir = PathBuf::from(home).join(".config").join("memtui");
 
     // Create directory if it doesn't exist
     if !config_dir.exists() {
@@ -132,17 +130,23 @@ pub fn load_config() -> Config {
     }
 
     match fs::read_to_string(&file_path) {
-        Ok(contents) => {
-            match toml::from_str(&contents) {
-                Ok(config) => config,
-                Err(e) => {
-                    eprintln!("Warning: Invalid config file ({}), using defaults: {}", file_path.display(), e);
-                    Config::default()
-                }
+        Ok(contents) => match toml::from_str(&contents) {
+            Ok(config) => config,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Invalid config file ({}), using defaults: {}",
+                    file_path.display(),
+                    e
+                );
+                Config::default()
             }
-        }
+        },
         Err(e) => {
-            eprintln!("Warning: Could not read config file ({}), using defaults: {}", file_path.display(), e);
+            eprintln!(
+                "Warning: Could not read config file ({}), using defaults: {}",
+                file_path.display(),
+                e
+            );
             Config::default()
         }
     }
@@ -165,9 +169,9 @@ max_recent_connections = 8
 
 # Performance and timing settings
 [performance]
-# Tick interval in milliseconds (how often the UI updates)
-# Lower values = more responsive but higher CPU usage
-tick_interval = 250
+# Tick interval in milliseconds (debounce interval for scroll events)
+# 16ms = ~60 FPS smooth scrolling, 33ms = ~30 FPS, 50ms = ~20 FPS
+tick_interval = 16
 
 # Event polling timeout in milliseconds
 # How long to wait for input events before checking again
@@ -212,7 +216,8 @@ brace_color = "white"
 bracket_color = "white"
 comma_color = "white"
 colon_color = "white"
-"#.to_string()
+"#
+    .to_string()
 }
 
 /// Save configuration to userdata directory
@@ -234,7 +239,10 @@ pub fn save_config(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Record a connection ID as the most recently used and return the updated list
 /// Uses max_recent_connections from config
-pub fn record_recent_connection_id_with_config(id: &str, config: &Config) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+pub fn record_recent_connection_id_with_config(
+    id: &str,
+    config: &Config,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut ids = load_recent_connection_ids().unwrap_or_default();
     ids.retain(|existing| existing != id);
     ids.insert(0, id.to_string());

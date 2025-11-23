@@ -8,10 +8,13 @@ use crossterm::{
 };
 use ratatui::layout::Rect;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use std::io;
+use std::fs::OpenOptions;
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicIsize, AtomicU16, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use tokio::sync::{RwLock, mpsc};
+use tracing::{debug, error, info, trace, warn};
+use tracing_subscriber::EnvFilter;
 
 use memtui::action::Action;
 use memtui::app::{AppState, ConnectionStatus};
@@ -78,6 +81,13 @@ impl App {
         let event_poll_timeout = self.config.performance.event_poll_timeout;
         let event_loop_sleep = self.config.performance.event_loop_sleep;
 
+        info!(
+            tick_interval=?tick_interval,
+            event_poll_timeout=?event_poll_timeout,
+            event_loop_sleep=?event_loop_sleep,
+            "Starting app event loop"
+        );
+
         let mut interval = tokio::time::interval(tick_interval);
 
         // Shared state for scroll handling
@@ -91,6 +101,9 @@ impl App {
         let mouse_y = last_mouse_y.clone();
 
         tokio::spawn(async move {
+            // Rate limit scroll events: cap maximum accumulation
+            const MAX_SCROLL_ACCUMULATION: isize = 50; // ~10 lines max per batch
+
             loop {
                 if event::poll(event_poll_timeout).unwrap_or(false)
                     && let Ok(event) = event::read()
@@ -106,10 +119,18 @@ impl App {
 
                             match mouse.kind {
                                 MouseEventKind::ScrollDown => {
-                                    scroll_acc.fetch_add(1, Ordering::Relaxed);
+                                    // Cap accumulation to prevent pile-up
+                                    let current = scroll_acc.load(Ordering::Relaxed);
+                                    if current < MAX_SCROLL_ACCUMULATION {
+                                        scroll_acc.fetch_add(1, Ordering::Relaxed);
+                                    }
                                 }
                                 MouseEventKind::ScrollUp => {
-                                    scroll_acc.fetch_sub(1, Ordering::Relaxed);
+                                    // Cap accumulation to prevent pile-up
+                                    let current = scroll_acc.load(Ordering::Relaxed);
+                                    if current > -MAX_SCROLL_ACCUMULATION {
+                                        scroll_acc.fetch_sub(1, Ordering::Relaxed);
+                                    }
                                 }
                                 _ => {
                                     // Forward non-scroll mouse events as normal
@@ -137,34 +158,37 @@ impl App {
                 self.needs_render = false;
             }
 
-            // Process accumulated scroll events
-            let scroll_delta = scroll_accumulator.swap(0, Ordering::Relaxed);
-            if scroll_delta != 0 {
-                // Lock-free atomic reads
-                let col = last_mouse_x.load(Ordering::Relaxed);
-                let row = last_mouse_y.load(Ordering::Relaxed);
-                if self.handle_scroll_delta(col, row, scroll_delta) {
-                    self.needs_render = true;
-                }
-            }
-
             let action = tokio::select! {
                 _ = interval.tick() => Action::Tick,
                 Some(action) = self.action_rx.recv() => action,
             };
 
             if let Action::Quit = action {
+                info!("Quit action received, breaking event loop");
                 break;
+            }
+
+            // Debounced scroll processing: only on Tick
+            if matches!(action, Action::Tick) {
+                let scroll_delta = scroll_accumulator.swap(0, Ordering::Relaxed);
+                if scroll_delta != 0 {
+                    let col = last_mouse_x.load(Ordering::Relaxed);
+                    let row = last_mouse_y.load(Ordering::Relaxed);
+                    if self.handle_scroll_delta(col, row, scroll_delta) {
+                        self.needs_render = true;
+                    }
+                }
             }
 
             self.update(action).await;
         }
+        info!("Event loop finished");
         Ok(())
     }
 
     async fn update(&mut self, action: Action) {
         let should_render = match action {
-            Action::Tick => false, // Tick doesn't change state, no need to render
+            Action::Tick => true,  // Tick processes debounced scrolls and maintains FPS
             Action::Quit => false, // Quit is handled separately
             Action::Resize(_, _) => {
                 // Resize always needs render
@@ -286,7 +310,11 @@ impl App {
 
             Action::Enter => {
                 if self.ui_state.show_connection_form {
-                    match self.ui_state.connection_form.to_config(self.config.connection.default_timeout) {
+                    match self
+                        .ui_state
+                        .connection_form
+                        .to_config(self.config.connection.default_timeout)
+                    {
                         Ok(config) => {
                             let _ = self.action_tx.send(Action::SubmitConnectionForm(config));
                         }
@@ -406,7 +434,9 @@ impl App {
                     .connection_manager
                     .register_connection(&id, backend);
                 self.app_state.error_message = None;
-                if let Ok(ids) = userdata::record_recent_connection_id_with_config(&id, &self.config) {
+                if let Ok(ids) =
+                    userdata::record_recent_connection_id_with_config(&id, &self.config)
+                {
                     self.ui_state.recent_connection_ids = ids;
                 }
                 self.ui_state.active_panel = Panel::Keys;
@@ -963,8 +993,10 @@ impl App {
         self.focus_connection(target_id);
     }
 
+    #[tracing::instrument(skip(self), level = "trace")]
     fn handle_scroll_delta(&mut self, column: u16, row: u16, delta: isize) -> bool {
         if delta == 0 {
+            trace!("Scroll delta is zero; ignoring");
             return false;
         }
 
@@ -976,11 +1008,13 @@ impl App {
                 if len > 0 {
                     if delta > 0 {
                         // Scroll Down (next)
+                        trace!(len, "Scrolling connection palette down");
                         for _ in 0..delta {
                             self.ui_state.connection_list.next(len);
                         }
                     } else {
                         // Scroll Up (prev)
+                        trace!(len, "Scrolling connection palette up");
                         for _ in 0..(-delta) {
                             self.ui_state.connection_list.prev(len);
                         }
@@ -1011,8 +1045,23 @@ impl App {
             self.ui_state.active_panel = panel;
 
             if panel == Panel::Value {
-                // Optimized batch scroll for ValueViewer (no loop needed)
-                let scroll_delta = if upward { -(count as isize) } else { count as isize };
+                // Check if we're at a boundary before processing scroll
+                let scroll_delta = if upward {
+                    -(count as isize)
+                } else {
+                    count as isize
+                };
+
+                if let Some(at_bottom) = self.ui_state.value_viewer.is_at_boundary(scroll_delta) {
+                    if at_bottom {
+                        trace!("Already at bottom; dropping scroll events");
+                    } else {
+                        trace!("Already at top; dropping scroll events");
+                    }
+                    return false; // Drop scroll events when at boundary
+                }
+
+                debug!(?panel, scroll_delta, "Scrolling panel");
                 self.ui_state.scroll_value_by(scroll_delta)
             } else {
                 // Optimized batch scroll for key list (direct state update, no channel flooding)
@@ -1022,7 +1071,16 @@ impl App {
                     .map(|t| t as usize)
                     .unwrap_or(self.app_state.keys.len());
 
-                let scroll_delta = if upward { -(count as isize) } else { count as isize };
+                let scroll_delta = if upward {
+                    -(count as isize)
+                } else {
+                    count as isize
+                };
+                if keys_len == 0 {
+                    trace!("No keys loaded yet; ignoring key scroll");
+                    return false;
+                }
+                debug!(?panel, scroll_delta, keys_len, "Scrolling panel");
                 let changed = self.ui_state.scroll_keys_by(keys_len, scroll_delta);
 
                 // If selection changed, trigger key selection action
@@ -1035,6 +1093,7 @@ impl App {
                 changed
             }
         } else {
+            trace!("Scroll ignored because cursor was not over a scrollable area");
             false // No state change if scroll wasn't in a valid area
         }
     }
@@ -1087,8 +1146,51 @@ impl App {
     }
 }
 
+fn init_tracing() {
+    static TRACING: Once = Once::new();
+    TRACING.call_once(|| {
+        let env_filter = EnvFilter::try_from_default_env()
+            .or_else(|_| EnvFilter::try_new("memtui=info,memtui::ui=debug"))
+            .unwrap_or_else(|_| EnvFilter::new("info"));
+
+        // Write logs directly to file
+        if let Ok(file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("memtui.log")
+        {
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_target(true)
+                .with_ansi(false)
+                .with_writer(file)
+                .try_init()
+                .ok();
+        } else {
+            // Fallback to stderr if file can't be opened
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_target(true)
+                .with_ansi(false)
+                .try_init()
+                .ok();
+        }
+    });
+}
+
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
+    init_tracing();
+
+    // Setup panic hook to restore terminal before printing error
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = io::stdout().flush(); // Ensure buffers are flushed
+        original_hook(panic_info);
+    }));
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -1097,6 +1199,7 @@ async fn main() -> Result<(), io::Error> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new();
+    info!("memtui initialized");
     let res = app.run(&mut terminal).await;
 
     // Restore terminal
@@ -1109,7 +1212,10 @@ async fn main() -> Result<(), io::Error> {
     terminal.show_cursor()?;
 
     if let Err(err) = res {
+        error!(?err, "Application exited with error");
         println!("Error: {:?}", err);
+    } else {
+        info!("Application exited cleanly");
     }
 
     Ok(())

@@ -15,6 +15,8 @@ use ratatui::{
 };
 
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
+use tracing::trace;
 use unicode_width::UnicodeWidthChar;
 
 pub struct ValueViewerProps<'a> {
@@ -44,8 +46,11 @@ struct TextCache {
     total_wrapped_lines: usize,
     // Cache wrapped line count per unwrapped line for fast lookups
     wrapped_counts: Vec<usize>,
+    // Cache start index of wrapped lines for each unwrapped line (prefix sums)
+    line_offsets: Vec<usize>,
     // Cache wrapped lines per unwrapped line to avoid re-wrapping on every render
-    wrapped_cache: Vec<Option<Vec<Line<'static>>>>,
+    // Use Arc to avoid expensive cloning on every frame
+    wrapped_cache: Vec<Option<Arc<Vec<Line<'static>>>>>,
 }
 
 impl TextCache {
@@ -58,21 +63,21 @@ impl TextCache {
     ) -> Self {
         let width = wrap_width.max(1) as usize;
 
-        // Pre-calculate wrapped line count per unwrapped line (cheap - just math)
-        // This allows fast lookups without wrapping everything
+        // Pre-calculate wrapped line count per unwrapped line using EXACT wrapping logic
+        // This ensures scrollbar and render loop are perfectly synced
         let wrapped_counts: Vec<usize> = unwrapped_lines
             .iter()
-            .map(|line| {
-                let line_width = line.width();
-                if line_width == 0 {
-                    1
-                } else {
-                    line_width.div_ceil(width)
-                }
-            })
+            .map(|line| ValueViewer::count_wrapped_lines(line, width))
             .collect();
 
         let total_wrapped_lines: usize = wrapped_counts.iter().sum();
+
+        let mut line_offsets = Vec::with_capacity(wrapped_counts.len());
+        let mut current = 0;
+        for &count in &wrapped_counts {
+            line_offsets.push(current);
+            current += count;
+        }
 
         // Pre-allocate cache but don't wrap yet (lazy)
         let wrapped_cache = vec![None; unwrapped_lines.len()];
@@ -86,59 +91,103 @@ impl TextCache {
             paragraph_style,
             total_wrapped_lines,
             wrapped_counts,
+            line_offsets,
             wrapped_cache,
         }
     }
 
-    /// Get wrapped lines for visible range only (lazy wrapping with caching)
-    /// Uses cached wrapped_counts to quickly find which unwrapped lines to process
-    /// Caches wrapped results to avoid re-wrapping on every render
-    fn get_visible_wrapped_lines(
+    /// Render lines directly from cache without intermediate Vec (zero-copy!)
+    fn render_visible_lines(
         &mut self,
+        buf: &mut ratatui::buffer::Buffer,
         start_wrapped_line: usize,
         end_wrapped_line: usize,
-    ) -> Vec<Line<'static>> {
-        let mut result = Vec::new();
-        let mut current_wrapped_index = 0usize;
+        area: Rect,
+        paragraph_style: Style,
+    ) {
+        // Bounds check
+        if start_wrapped_line >= end_wrapped_line || start_wrapped_line >= self.total_wrapped_lines
+        {
+            return;
+        }
 
-        // Use cached counts to quickly find starting unwrapped line
-        for (idx, unwrapped) in self.unwrapped_lines.iter().enumerate() {
+        let end_wrapped_line = end_wrapped_line.min(self.total_wrapped_lines);
+        let mut screen_y = 0u16;
+
+        // Find start index using binary search to avoid iterating all lines
+        let start_idx = match self.line_offsets.binary_search(&start_wrapped_line) {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        };
+
+        let mut current_wrapped_index = self.line_offsets.get(start_idx).copied().unwrap_or(0);
+
+        // Find and render visible lines directly from cache
+        for (idx, unwrapped) in self.unwrapped_lines.iter().enumerate().skip(start_idx) {
             let wrapped_count = self.wrapped_counts.get(idx).copied().unwrap_or(1);
 
-            // Skip unwrapped lines that are before our visible range
+            // Skip lines before visible range (only happens if binary search landed us early)
             if current_wrapped_index + wrapped_count <= start_wrapped_line {
                 current_wrapped_index += wrapped_count;
                 continue;
             }
 
-            // Get wrapped lines from cache or wrap and cache
-            let wrapped = if let Some(cached) = self.wrapped_cache.get_mut(idx).and_then(|c| c.as_ref()) {
-                // Use cached wrapped lines
-                cached.clone()
+            // Get wrapped lines from cache (or wrap and cache)
+            let wrapped = if let Some(cached) = self.wrapped_cache.get(idx).and_then(|c| c.as_ref())
+            {
+                Arc::clone(cached)
             } else {
-                // Wrap and cache
-                let wrapped = ValueViewer::wrap_single_line(unwrapped, self.wrap_width as usize);
+                let wrapped = Arc::new(ValueViewer::wrap_single_line(
+                    unwrapped,
+                    self.wrap_width as usize,
+                ));
                 if let Some(cache_slot) = self.wrapped_cache.get_mut(idx) {
-                    *cache_slot = Some(wrapped.clone());
+                    *cache_slot = Some(Arc::clone(&wrapped));
                 }
                 wrapped
             };
 
-            for wrapped_line in wrapped {
-                if current_wrapped_index >= start_wrapped_line && current_wrapped_index < end_wrapped_line {
-                    result.push(wrapped_line);
+            // Render each wrapped line
+            for line in wrapped.iter() {
+                if current_wrapped_index >= start_wrapped_line
+                    && current_wrapped_index < end_wrapped_line
+                {
+                    let y = area.y.saturating_add(screen_y);
+
+                    // Bounds check for buffer access
+                    if y >= area.y + area.height || y >= buf.area().height {
+                        return;
+                    }
+
+                    let mut x = area.x;
+                    for span in &line.spans {
+                        for ch in span.content.chars() {
+                            // Bounds check before buffer access
+                            if x >= area.x + area.width || x >= buf.area().width {
+                                break;
+                            }
+
+                            // Safe buffer access with bounds check
+                            if let Some(cell) = buf.cell_mut((x, y)) {
+                                cell.set_char(ch);
+                                cell.set_style(paragraph_style.patch(span.style));
+                            }
+                            x = x.saturating_add(1);
+                        }
+                    }
+
+                    screen_y = screen_y.saturating_add(1);
+                    if screen_y >= area.height {
+                        return;
+                    }
                 }
 
                 current_wrapped_index += 1;
-
-                // Stop early if we've passed the end
                 if current_wrapped_index >= end_wrapped_line {
-                    return result;
+                    return;
                 }
             }
         }
-
-        result
     }
 
     fn matches(
@@ -189,11 +238,11 @@ impl ValueViewer {
                 self.table_state.select(Some(i.saturating_add(1)));
             }
         } else {
-            let max_scroll = if self.total_rows > self.viewport_height as usize {
-                (self.total_rows - self.viewport_height as usize) as u16
-            } else {
-                0
-            };
+            // Safe calculation with proper bounds checking to prevent overflow
+            let max_scroll = self
+                .total_rows
+                .saturating_sub(self.viewport_height as usize)
+                .min(u16::MAX as usize) as u16;
 
             if self.scroll_offset < max_scroll {
                 self.scroll_offset = self.scroll_offset.saturating_add(1);
@@ -216,47 +265,97 @@ impl ValueViewer {
     }
 
     /// Scroll by a delta amount (positive = down, negative = up)
-    /// More efficient than calling scroll_up/down in a loop
+    /// Optimized for fast scrolling - minimal arithmetic
+    #[tracing::instrument(skip(self), level = "trace")]
     pub fn scroll_by(&mut self, delta: isize) {
         if delta == 0 {
+            trace!("No-op scroll request");
             return;
         }
 
         // Early return if there's nothing to scroll
         if self.total_rows == 0 || self.viewport_height == 0 {
+            trace!(
+                total_rows = self.total_rows,
+                viewport_height = self.viewport_height,
+                "No rows/viewport height available; ignoring scroll"
+            );
             return;
         }
 
         if self.table_state.selected().is_some() {
             let i = self.table_state.selected().unwrap_or(0);
-            if delta > 0 {
-                let new_i = i.saturating_add(delta as usize).min(self.total_rows.saturating_sub(1));
-                self.table_state.select(Some(new_i));
-            } else {
-                let new_i = i.saturating_sub((-delta) as usize);
-                self.table_state.select(Some(new_i));
-            }
-        } else {
-            // Calculate max scroll - prevent scrolling beyond bounds
-            let max_scroll = if self.total_rows > self.viewport_height as usize {
-                (self.total_rows - self.viewport_height as usize) as u16
-            } else {
-                0 // No scrolling needed if content fits in viewport
-            };
+            let max_index = self.total_rows.saturating_sub(1);
 
-            if max_scroll == 0 {
-                // Nothing to scroll, reset to 0
-                self.scroll_offset = 0;
+            // Early return if already at boundary and trying to scroll further
+            if delta > 0 && i >= max_index {
+                trace!(index = i, max_index, "Already at bottom; ignoring scroll down");
+                return;
+            }
+            if delta < 0 && i == 0 {
+                trace!(index = i, "Already at top; ignoring scroll up");
                 return;
             }
 
             if delta > 0 {
-                let new_offset = self.scroll_offset.saturating_add(delta as u16).min(max_scroll);
-                self.scroll_offset = new_offset;
+                let new_i = i
+                    .saturating_add(delta as usize)
+                    .min(max_index);
+                trace!(old = i, new = new_i, "Scrolling table selection down");
+                self.table_state.select(Some(new_i));
             } else {
-                let new_offset = self.scroll_offset.saturating_sub((-delta) as u16);
-                self.scroll_offset = new_offset; // saturating_sub already handles underflow
+                let new_i = i.saturating_sub((-delta) as usize);
+                trace!(old = i, new = new_i, "Scrolling table selection up");
+                self.table_state.select(Some(new_i));
             }
+        } else {
+            // Fast path: simple arithmetic, no clamping overhead
+            let max_scroll = self
+                .total_rows
+                .saturating_sub(self.viewport_height as usize);
+
+            // Early return if already at boundary and trying to scroll further
+            if delta > 0 && self.scroll_offset >= max_scroll as u16 {
+                trace!(
+                    scroll_offset = self.scroll_offset,
+                    max_scroll,
+                    "Already at bottom; ignoring scroll down"
+                );
+                return;
+            }
+            if delta < 0 && self.scroll_offset == 0 {
+                trace!(
+                    scroll_offset = self.scroll_offset,
+                    "Already at top; ignoring scroll up"
+                );
+                return;
+            }
+
+            // Fast path for typical scroll amounts (avoid 64-bit conversions)
+            let new_offset = if delta > 0 {
+                if delta < i16::MAX as isize {
+                    // Fast: common case, small scroll
+                    self.scroll_offset.saturating_add(delta as u16)
+                } else {
+                    // Rare: huge scroll, saturate to max
+                    max_scroll as u16
+                }
+            } else {
+                if delta > i16::MIN as isize {
+                    // Fast: common case, small scroll
+                    self.scroll_offset.saturating_sub((-delta) as u16)
+                } else {
+                    // Rare: huge scroll, clamp to 0
+                    0
+                }
+            };
+
+            // Clamp to valid range
+            self.scroll_offset = new_offset.min(max_scroll as u16);
+            trace!(
+                scroll_offset = self.scroll_offset,
+                max_scroll, delta, "Updated value viewer scroll offset"
+            );
         }
     }
 
@@ -264,6 +363,36 @@ impl ValueViewer {
         self.scroll_offset = 0;
         self.table_state.select(None);
         self.scrollbar_state = ScrollbarState::default();
+    }
+
+    /// Check if we're at a scroll boundary (top or bottom)
+    /// Returns Some(true) if at bottom, Some(false) if at top, None if not at boundary
+    pub fn is_at_boundary(&self, direction: isize) -> Option<bool> {
+        if self.total_rows == 0 || self.viewport_height == 0 {
+            return None;
+        }
+
+        if self.table_state.selected().is_some() {
+            let i = self.table_state.selected().unwrap_or(0);
+            let max_index = self.total_rows.saturating_sub(1);
+            if direction > 0 && i >= max_index {
+                return Some(true); // At bottom
+            }
+            if direction < 0 && i == 0 {
+                return Some(false); // At top
+            }
+        } else {
+            let max_scroll = self
+                .total_rows
+                .saturating_sub(self.viewport_height as usize);
+            if direction > 0 && self.scroll_offset >= max_scroll as u16 {
+                return Some(true); // At bottom
+            }
+            if direction < 0 && self.scroll_offset == 0 {
+                return Some(false); // At top
+            }
+        }
+        None // Not at boundary
     }
 
     fn clear_text_cache(&mut self) {
@@ -290,11 +419,31 @@ impl ValueViewer {
             return;
         }
 
+        let max_scroll = self.total_rows.saturating_sub(self.viewport_height as usize);
+        let clamped_offset = self.scroll_offset.min(max_scroll as u16) as usize;
+
+        let scrollbar_position = if max_scroll > 0 {
+            let progress = clamped_offset as f64 / max_scroll as f64;
+            (progress * (self.total_rows - 1) as f64) as usize
+        } else {
+            0
+        };
+
+        trace!(
+            scroll_offset = self.scroll_offset,
+            total_rows = self.total_rows,
+            viewport_height = self.viewport_height,
+            max_scroll,
+            clamped_offset,
+            scrollbar_position,
+            "Rendering scrollbar for offset (wrapped lines)"
+        );
+
         self.scrollbar_state = self
             .scrollbar_state
             .content_length(self.total_rows)
             .viewport_content_length(self.viewport_height as usize)
-            .position(self.scroll_offset as usize);
+            .position(scrollbar_position);
 
         f.render_stateful_widget(
             Scrollbar::default()
@@ -398,32 +547,35 @@ impl ValueViewer {
 
         self.total_rows = cache_mut.total_wrapped_lines.max(1);
 
-        // Only wrap visible lines + small buffer (lazy wrapping)
+        // Only wrap visible lines (lazy wrapping)
         // This avoids cloning/wrapping thousands of lines
         let viewport_height = self.viewport_height as usize;
-        let scroll_offset = self.scroll_offset as usize;
+        let scroll_offset =
+            self.scroll_offset
+                .min(cache_mut.total_wrapped_lines.saturating_sub(1) as u16) as usize;
 
-        // Calculate range: visible + buffer above/below for smooth scrolling
-        let buffer = 10; // Small buffer for smooth scrolling
-        let start_wrapped_line = scroll_offset.saturating_sub(buffer);
-        let end_wrapped_line = (scroll_offset + viewport_height + buffer)
-            .min(cache_mut.total_wrapped_lines);
+        // Calculate exact visible range - no buffer needed since we're not using .scroll()
+        let start_wrapped_line = scroll_offset;
+        let end_wrapped_line = (scroll_offset + viewport_height).min(cache_mut.total_wrapped_lines);
 
-        // Get only the visible wrapped lines (lazy wrapping with caching)
-        let visible_wrapped = cache_mut.get_visible_wrapped_lines(start_wrapped_line, end_wrapped_line);
-
-        // Adjust scroll offset for the visible slice
-        let adjusted_scroll = scroll_offset.saturating_sub(start_wrapped_line) as u16;
-
-        // Get style after mutable borrow is done
+        // Get style before borrow
         let paragraph_style = cache_mut.paragraph_style;
 
-        let widget = Paragraph::new(visible_wrapped)
-            .style(paragraph_style)
-            .block(block)
-            .scroll((adjusted_scroll, 0));
+        // Render block first
+        let inner = block.inner(area);
+        f.render_widget(block, area);
 
-        f.render_widget(widget, area);
+        // CRITICAL: Render directly from cache without intermediate Vec
+        // This avoids cloning lines on every frame
+        let buf = f.buffer_mut();
+        cache_mut.render_visible_lines(
+            buf,
+            start_wrapped_line,
+            end_wrapped_line,
+            inner,
+            paragraph_style,
+        );
+
         self.render_scrollbar_for_offset(f, area);
     }
 
@@ -701,6 +853,17 @@ impl ValueViewer {
                     break;
                 }
 
+                // Check for overflow: if char is wider than available and we have content, wrap first!
+                if consumed_width > available && current_width > 0 {
+                    result.push(Self::line_from_spans(
+                        std::mem::take(&mut current_spans),
+                        line.alignment,
+                    ));
+                    current_width = 0;
+                    // Don't advance start, retry loop iteration on new line
+                    continue;
+                }
+
                 let end = start + advance;
                 let slice = content[start..end].to_string();
                 if !slice.is_empty() {
@@ -721,6 +884,61 @@ impl ValueViewer {
         }
 
         result
+    }
+
+    fn count_wrapped_lines(line: &Line<'static>, width: usize) -> usize {
+        if width == 0 {
+            return 1;
+        }
+
+        let mut lines = 0;
+        let mut current_width = 0usize;
+        let mut had_content = false;
+        let mut has_pending_spans = false;
+
+        for span in &line.spans {
+            if span.content.is_empty() {
+                continue;
+            }
+
+            had_content = true;
+            let content = &span.content;
+            let mut start = 0usize;
+
+            while start < content.len() {
+                if current_width >= width {
+                    lines += 1;
+                    current_width = 0;
+                    has_pending_spans = false;
+                }
+
+                let available = width.saturating_sub(current_width).max(1);
+                let (advance, consumed_width) = Self::split_at_width(&content[start..], available);
+                if advance == 0 {
+                    break;
+                }
+
+                // Check for overflow matching wrap_single_line
+                if consumed_width > available && current_width > 0 {
+                    lines += 1;
+                    current_width = 0;
+                    has_pending_spans = false;
+                    continue;
+                }
+
+                current_width += consumed_width;
+                has_pending_spans = true;
+                start += advance;
+            }
+        }
+
+        if has_pending_spans {
+            lines += 1;
+        } else if !had_content {
+            lines += 1;
+        }
+
+        lines
     }
 
     fn line_from_spans(spans: Vec<Span<'static>>, alignment: Option<Alignment>) -> Line<'static> {

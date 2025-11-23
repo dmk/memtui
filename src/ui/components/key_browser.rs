@@ -84,6 +84,10 @@ impl Component for KeyBrowser {
     type Msg = Action;
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
+        // Skip expensive operations if not active (optimization)
+        // Still need to render for TUI, but can skip heavy calculations
+        let is_active = props.is_active;
+
         // Calculate viewport height (subtract borders and title)
         self.viewport_height = area.height.saturating_sub(2) as usize;
 
@@ -98,7 +102,17 @@ impl Component for KeyBrowser {
             .selected()
             .unwrap_or(0)
             .min(total_count.saturating_sub(1));
-        let (start_index, visible_len) = self.compute_view_window(selected_abs, total_count);
+
+        // Only compute view window if active or if selection changed (optimization)
+        let (start_index, visible_len) = if is_active {
+            self.compute_view_window(selected_abs, total_count)
+        } else {
+            // When inactive, use cached scroll_top or simple calculation
+            let visible_len = self.viewport_height.min(total_count.max(1));
+            let max_start = total_count.saturating_sub(visible_len);
+            let start = self.scroll_top.min(max_start);
+            (start, visible_len)
+        };
 
         let content_width = area.width.saturating_sub(4) as usize;
         let mut key_items: Vec<ListItem> = Vec::with_capacity(visible_len);

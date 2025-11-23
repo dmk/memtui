@@ -404,8 +404,20 @@ mod tests {
         let nested_indent = nested_line.chars().take_while(|c| *c == ' ').count();
         let inner_indent = inner_line.chars().take_while(|c| *c == ' ').count();
 
-        assert_eq!(key_indent, 4, "Key should have 4-space indent, got {}", key_indent);
-        assert_eq!(nested_indent, 4, "Nested should have 4-space indent, got {}", nested_indent);
-        assert_eq!(inner_indent, 8, "Inner should have 8-space indent (2 levels), got {}", inner_indent);
+        assert_eq!(
+            key_indent, 4,
+            "Key should have 4-space indent, got {}",
+            key_indent
+        );
+        assert_eq!(
+            nested_indent, 4,
+            "Nested should have 4-space indent, got {}",
+            nested_indent
+        );
+        assert_eq!(
+            inner_indent, 8,
+            "Inner should have 8-space indent (2 levels), got {}",
+            inner_indent
+        );
     }
 }

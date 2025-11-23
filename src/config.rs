@@ -42,17 +42,26 @@ pub struct UiConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceConfig {
     /// Tick interval in milliseconds (how often the UI updates)
-    #[serde(default = "default_tick_interval_ms", deserialize_with = "deserialize_ms_to_duration")]
+    #[serde(
+        default = "default_tick_interval_ms",
+        deserialize_with = "deserialize_ms_to_duration"
+    )]
     #[serde(serialize_with = "serialize_duration_to_ms")]
     pub tick_interval: Duration,
 
     /// Event polling timeout in milliseconds
-    #[serde(default = "default_event_poll_ms", deserialize_with = "deserialize_ms_to_duration")]
+    #[serde(
+        default = "default_event_poll_ms",
+        deserialize_with = "deserialize_ms_to_duration"
+    )]
     #[serde(serialize_with = "serialize_duration_to_ms")]
     pub event_poll_timeout: Duration,
 
     /// Event loop sleep duration in milliseconds (yield time)
-    #[serde(default = "default_event_loop_sleep_ms", deserialize_with = "deserialize_ms_to_duration")]
+    #[serde(
+        default = "default_event_loop_sleep_ms",
+        deserialize_with = "deserialize_ms_to_duration"
+    )]
     #[serde(serialize_with = "serialize_duration_to_ms")]
     pub event_loop_sleep: Duration,
 }
@@ -61,7 +70,10 @@ pub struct PerformanceConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionConfig {
     /// Default connection timeout in seconds
-    #[serde(default = "default_connection_timeout_secs", deserialize_with = "deserialize_secs_to_duration")]
+    #[serde(
+        default = "default_connection_timeout_secs",
+        deserialize_with = "deserialize_secs_to_duration"
+    )]
     #[serde(serialize_with = "serialize_duration_to_secs")]
     pub default_timeout: Duration,
 }
@@ -74,7 +86,10 @@ pub struct DataConfig {
     pub keys_per_chunk: usize,
 
     /// Value load debounce time in milliseconds
-    #[serde(default = "default_value_load_debounce_ms", deserialize_with = "deserialize_ms_to_duration")]
+    #[serde(
+        default = "default_value_load_debounce_ms",
+        deserialize_with = "deserialize_ms_to_duration"
+    )]
     #[serde(serialize_with = "serialize_duration_to_ms")]
     pub value_load_debounce: Duration,
 }
@@ -353,4 +368,3 @@ fn color_from_string(s: &str) -> Color {
         _ => Color::White, // Default fallback
     }
 }
-

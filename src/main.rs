@@ -28,6 +28,7 @@ pub struct App {
     pub ui_state: UiState,
     pub action_tx: mpsc::UnboundedSender<Action>,
     pub action_rx: mpsc::UnboundedReceiver<Action>,
+    needs_render: bool,
 }
 
 impl Default for App {
@@ -61,6 +62,7 @@ impl App {
             ui_state,
             action_tx: tx,
             action_rx: rx,
+            needs_render: true, // Render on first loop iteration
         }
     }
 
@@ -118,15 +120,21 @@ impl App {
         });
 
         loop {
-            terminal.draw(|f| {
-                ui::render(f, &mut self.app_state, &mut self.ui_state);
-            })?;
+            // Only render when state has changed
+            if self.needs_render {
+                terminal.draw(|f| {
+                    ui::render(f, &mut self.app_state, &mut self.ui_state);
+                })?;
+                self.needs_render = false;
+            }
 
             // Process accumulated scroll events
             let scroll_delta = scroll_accumulator.swap(0, Ordering::Relaxed);
             if scroll_delta != 0 {
                 let (col, row) = *last_mouse_pos.lock().unwrap();
-                self.handle_scroll_delta(col, row, scroll_delta);
+                if self.handle_scroll_delta(col, row, scroll_delta) {
+                    self.needs_render = true;
+                }
             }
 
             let action = tokio::select! {
@@ -144,20 +152,37 @@ impl App {
     }
 
     async fn update(&mut self, action: Action) {
-        match action {
-            Action::Tick => {}
-            Action::Quit => {}
-            Action::Resize(_, _) => {}
+        let should_render = match action {
+            Action::Tick => false, // Tick doesn't change state, no need to render
+            Action::Quit => false, // Quit is handled separately
+            Action::Resize(_, _) => {
+                // Resize always needs render
+                true
+            }
             Action::Key(key) => {
                 self.handle_key(key);
+                true
             }
             Action::Mouse(mouse) => {
                 self.handle_mouse(mouse);
+                true
             }
-            Action::NextPanel => self.ui_state.next_panel(),
-            Action::PrevPanel => self.ui_state.prev_panel(),
-            Action::NextConnectionTab => self.cycle_connection_tab(true),
-            Action::PrevConnectionTab => self.cycle_connection_tab(false),
+            Action::NextPanel => {
+                self.ui_state.next_panel();
+                true
+            }
+            Action::PrevPanel => {
+                self.ui_state.prev_panel();
+                true
+            }
+            Action::NextConnectionTab => {
+                self.cycle_connection_tab(true);
+                true
+            }
+            Action::PrevConnectionTab => {
+                self.cycle_connection_tab(false);
+                true
+            }
 
             Action::NextItem => {
                 if self.ui_state.show_connection_palette {
@@ -180,6 +205,7 @@ impl App {
                         let _ = self.action_tx.send(Action::SelectKey(idx));
                     }
                 }
+                true
             }
             Action::PrevItem => {
                 if self.ui_state.show_connection_palette {
@@ -202,11 +228,21 @@ impl App {
                         let _ = self.action_tx.send(Action::SelectKey(idx));
                     }
                 }
+                true
             }
 
-            Action::OpenConnectionForm => self.ui_state.open_connection_form(),
-            Action::CloseConnectionForm => self.ui_state.close_connection_form(),
-            Action::ToggleHelp => self.ui_state.show_help = !self.ui_state.show_help,
+            Action::OpenConnectionForm => {
+                self.ui_state.open_connection_form();
+                true
+            }
+            Action::CloseConnectionForm => {
+                self.ui_state.close_connection_form();
+                true
+            }
+            Action::ToggleHelp => {
+                self.ui_state.show_help = !self.ui_state.show_help;
+                true
+            }
             Action::OpenConnectionPalette => {
                 self.ui_state.open_connection_palette();
                 let configs = self.app_state.connection_manager.get_configs();
@@ -221,11 +257,21 @@ impl App {
                 } else {
                     self.ui_state.connection_list.state.select(Some(0));
                 }
+                true
             }
-            Action::CloseConnectionPalette => self.ui_state.close_connection_palette(),
+            Action::CloseConnectionPalette => {
+                self.ui_state.close_connection_palette();
+                true
+            }
 
-            Action::ConnectionFormNextField => self.ui_state.connection_form.next_field(),
-            Action::ConnectionFormPrevField => self.ui_state.connection_form.prev_field(),
+            Action::ConnectionFormNextField => {
+                self.ui_state.connection_form.next_field();
+                true
+            }
+            Action::ConnectionFormPrevField => {
+                self.ui_state.connection_form.prev_field();
+                true
+            }
 
             Action::Enter => {
                 if self.ui_state.show_connection_form {
@@ -246,6 +292,7 @@ impl App {
                     }
                     self.ui_state.close_connection_palette();
                 }
+                true
             }
 
             Action::SubmitConnectionForm(config) => {
@@ -258,6 +305,7 @@ impl App {
                 let _ = self
                     .action_tx
                     .send(Action::FocusConnection(config.id.clone()));
+                true
             }
 
             Action::DeleteConnection(id) => {
@@ -282,10 +330,12 @@ impl App {
                         .min(remaining.len().saturating_sub(1));
                     self.ui_state.connection_list.state.select(Some(current));
                 }
+                true
             }
 
             Action::FocusConnection(id) => {
                 self.focus_connection(id);
+                true
             }
 
             Action::Connect(id) => {
@@ -321,6 +371,7 @@ impl App {
                         }
                     });
                 }
+                true
             }
 
             Action::Disconnect(id) => {
@@ -336,6 +387,7 @@ impl App {
                     self.ui_state.key_browser.select(None);
                     self.ui_state.active_panel = Panel::Keys;
                 }
+                true
             }
 
             Action::DidConnect(id, backend) => {
@@ -348,6 +400,7 @@ impl App {
                 }
                 self.ui_state.active_panel = Panel::Keys;
                 let _ = self.action_tx.send(Action::LoadKeys);
+                true
             }
 
             Action::DidFailConnect(id, error) => {
@@ -355,6 +408,7 @@ impl App {
                     .connection_manager
                     .set_status(&id, ConnectionStatus::Error(error.clone()));
                 self.app_state.error_message = Some(format!("Failed to connect: {}", error));
+                true
             }
 
             Action::LoadKeys => {
@@ -390,41 +444,44 @@ impl App {
                         }
                     });
                 }
+                true
             }
 
             Action::LoadMoreKeys(center) => {
                 if self.app_state.is_loading_keys || !self.app_state.has_more_keys {
-                    return;
-                }
-                self.app_state.is_loading_keys = true;
+                    false // No state change, no render needed
+                } else {
+                    self.app_state.is_loading_keys = true;
 
-                if let Some(backend) = self
-                    .app_state
-                    .connection_manager
-                    .get_active_backend_handle()
-                {
-                    let tx = self.action_tx.clone();
-                    let chunk_size = self.app_state.keys_per_chunk;
-                    let cursor = self.app_state.keys_cursor.clone();
+                    if let Some(backend) = self
+                        .app_state
+                        .connection_manager
+                        .get_active_backend_handle()
+                    {
+                        let tx = self.action_tx.clone();
+                        let chunk_size = self.app_state.keys_per_chunk;
+                        let cursor = self.app_state.keys_cursor.clone();
 
-                    tokio::spawn(async move {
-                        let backend = backend.read().await;
-                        match backend.scan_keys(None, cursor, chunk_size).await {
-                            Ok(result) => {
-                                let _ = tx.send(Action::DidScanKeys {
-                                    keys: result.keys,
-                                    cursor: result.cursor,
-                                    has_more: result.has_more,
-                                    total_count: None, // don't update total on paged load
-                                    reset: false,
-                                    center: Some(center),
-                                });
+                        tokio::spawn(async move {
+                            let backend = backend.read().await;
+                            match backend.scan_keys(None, cursor, chunk_size).await {
+                                Ok(result) => {
+                                    let _ = tx.send(Action::DidScanKeys {
+                                        keys: result.keys,
+                                        cursor: result.cursor,
+                                        has_more: result.has_more,
+                                        total_count: None, // don't update total on paged load
+                                        reset: false,
+                                        center: Some(center),
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Action::DidFailScanKeys(e.to_string()));
+                                }
                             }
-                            Err(e) => {
-                                let _ = tx.send(Action::DidFailScanKeys(e.to_string()));
-                            }
-                        }
-                    });
+                        });
+                    }
+                    true
                 }
             }
 
@@ -438,6 +495,7 @@ impl App {
                     let _ = self.action_tx.send(Action::LoadMoreKeys(idx));
                 }
                 self.schedule_value_load(idx);
+                true
             }
             Action::LoadValueDebounced { index, token } => {
                 if self.app_state.value_request_token == token
@@ -445,6 +503,7 @@ impl App {
                 {
                     let _ = self.action_tx.send(Action::LoadValue { index, token });
                 }
+                false // Don't render for debounced actions, wait for actual load
             }
 
             Action::LoadValue { index, token } => {
@@ -471,6 +530,7 @@ impl App {
                 } else {
                     self.app_state.selected_value = None;
                 }
+                false // Don't render yet, wait for DidLoadValue
             }
 
             Action::DidScanKeys {
@@ -542,29 +602,41 @@ impl App {
                         }
                     }
                 }
+                true
             }
 
             Action::DidFailScanKeys(e) => {
                 self.app_state.error_message = Some(e);
                 self.app_state.is_loading_keys = false;
+                true
             }
 
             Action::DidLoadValue { value, token } => {
                 if self.app_state.value_request_token == token {
                     self.app_state.selected_value = Some(value);
+                    true
+                } else {
+                    false
                 }
             }
 
             Action::DidFailLoadValue(e) => {
                 self.app_state.error_message = Some(format!("Error loading value: {}", e));
                 self.app_state.selected_value = None;
+                true
             }
 
             Action::Error(e) => {
                 self.app_state.error_message = Some(e);
+                true
             }
 
-            _ => {}
+            _ => true, // Default: render for unknown actions (better safe than sorry)
+        };
+
+        // Set the render flag based on whether this action should trigger a render
+        if should_render {
+            self.needs_render = true;
         }
     }
 
@@ -879,9 +951,9 @@ impl App {
         self.focus_connection(target_id);
     }
 
-    fn handle_scroll_delta(&mut self, column: u16, row: u16, delta: isize) {
+    fn handle_scroll_delta(&mut self, column: u16, row: u16, delta: isize) -> bool {
         if delta == 0 {
-            return;
+            return false;
         }
 
         if self.ui_state.show_connection_palette {
@@ -901,9 +973,10 @@ impl App {
                             self.ui_state.connection_list.prev(len);
                         }
                     }
+                    return true;
                 }
             }
-            return;
+            return false;
         }
 
         let upward = delta < 0;
@@ -936,6 +1009,7 @@ impl App {
                         self.ui_state.value_viewer.scroll_down();
                     }
                 }
+                true // Value viewer scroll always changes state
             } else {
                 // For key list, we still send actions, but maybe we should optimize this too?
                 // Sending 50 actions might flood the channel again.
@@ -953,7 +1027,10 @@ impl App {
                 for _ in 0..count.min(10) {
                     let _ = self.action_tx.send(action.clone());
                 }
+                true // Actions will trigger renders via update()
             }
+        } else {
+            false // No state change if scroll wasn't in a valid area
         }
     }
 

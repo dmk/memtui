@@ -128,7 +128,10 @@ impl UiState {
                 self.key_browser.select(Some(next));
                 true
             }
-            Panel::Value => false,
+            Panel::Value => {
+                self.value_viewer.scroll_down();
+                true
+            }
         }
     }
 
@@ -148,7 +151,10 @@ impl UiState {
                 self.key_browser.select(Some(prev));
                 true
             }
-            Panel::Value => false,
+            Panel::Value => {
+                self.value_viewer.scroll_up();
+                true
+            }
         }
     }
 }

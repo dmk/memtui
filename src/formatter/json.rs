@@ -70,7 +70,7 @@ impl JsonFormatter {
     }
 
     /// Colorize JSON string into styled lines
-    fn colorize_json(&self, json: &str) -> Vec<Line<'static>> {
+    pub fn colorize_json(&self, json: &str) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         for line in json.lines() {

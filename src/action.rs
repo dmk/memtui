@@ -4,6 +4,7 @@ use crossterm::event::{KeyEvent, MouseEvent};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+#[derive(Clone)]
 pub enum Action {
     Tick,
     Render,

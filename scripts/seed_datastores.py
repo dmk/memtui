@@ -381,7 +381,7 @@ class DatastoreSeeder:
         self.log(f"Publishing {Fore.YELLOW}{self.num_documents}{Style.RESET_ALL} knowledge base docs")
         for doc_id in range(1, self.num_documents + 1):
             tags = self.fake.words(nb=3)
-            body = "\n".join(self.fake.paragraphs(nb=2))
+            body = "\n".join(self.fake.paragraphs(nb=50))
             doc_key = f"doc:{doc_id:04d}"
             r.set(doc_key, body)
             r.sadd("doc:index", doc_key)

@@ -8,7 +8,9 @@ use crossterm::{
 };
 use ratatui::layout::Rect;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use std::{io, sync::Arc, time::Instant};
+use std::io;
+use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::Duration;
 
@@ -20,14 +22,12 @@ use memtui::ui::{self, Panel, UiState};
 use memtui::userdata;
 
 const VALUE_LOAD_DEBOUNCE_MS: u64 = 120;
-const SCROLL_EVENT_MIN_INTERVAL_MS: u64 = 50;
 
 pub struct App {
     pub app_state: AppState,
     pub ui_state: UiState,
     pub action_tx: mpsc::UnboundedSender<Action>,
     pub action_rx: mpsc::UnboundedReceiver<Action>,
-    last_scroll_event: Option<Instant>,
 }
 
 impl Default for App {
@@ -61,7 +61,6 @@ impl App {
             ui_state,
             action_tx: tx,
             action_rx: rx,
-            last_scroll_event: None,
         }
     }
 
@@ -71,7 +70,14 @@ impl App {
     ) -> io::Result<()> {
         let mut interval = tokio::time::interval(Duration::from_millis(250));
 
+        // Shared state for scroll handling
+        let scroll_accumulator = Arc::new(AtomicIsize::new(0));
+        let last_mouse_pos = Arc::new(Mutex::new((0, 0)));
+
         let tx = self.action_tx.clone();
+        let scroll_acc = scroll_accumulator.clone();
+        let mouse_pos = last_mouse_pos.clone();
+
         tokio::spawn(async move {
             loop {
                 if event::poll(Duration::from_millis(100)).unwrap_or(false)
@@ -82,7 +88,23 @@ impl App {
                             let _ = tx.send(Action::Key(key));
                         }
                         Event::Mouse(mouse) => {
-                            let _ = tx.send(Action::Mouse(mouse));
+                            // Update last known mouse position
+                            if let Ok(mut pos) = mouse_pos.lock() {
+                                *pos = (mouse.column, mouse.row);
+                            }
+
+                            match mouse.kind {
+                                MouseEventKind::ScrollDown => {
+                                    scroll_acc.fetch_add(1, Ordering::Relaxed);
+                                }
+                                MouseEventKind::ScrollUp => {
+                                    scroll_acc.fetch_sub(1, Ordering::Relaxed);
+                                }
+                                _ => {
+                                    // Forward non-scroll mouse events as normal
+                                    let _ = tx.send(Action::Mouse(mouse));
+                                }
+                            }
                         }
                         Event::Resize(w, h) => {
                             let _ = tx.send(Action::Resize(w, h));
@@ -99,6 +121,13 @@ impl App {
             terminal.draw(|f| {
                 ui::render(f, &mut self.app_state, &mut self.ui_state);
             })?;
+
+            // Process accumulated scroll events
+            let scroll_delta = scroll_accumulator.swap(0, Ordering::Relaxed);
+            if scroll_delta != 0 {
+                let (col, row) = *last_mouse_pos.lock().unwrap();
+                self.handle_scroll_delta(col, row, scroll_delta);
+            }
 
             let action = tokio::select! {
                 _ = interval.tick() => Action::Tick,
@@ -142,7 +171,10 @@ impl App {
                         .total_key_count
                         .map(|t| t as usize)
                         .unwrap_or(self.app_state.keys.len());
+
+                    // Pass true if the key selection actually changed
                     if self.ui_state.next_item(keys_len)
+                        && self.ui_state.active_panel == Panel::Keys // Only reload if we moved in the keys panel
                         && let Some(idx) = self.ui_state.key_browser.state.selected()
                     {
                         let _ = self.action_tx.send(Action::SelectKey(idx));
@@ -161,7 +193,10 @@ impl App {
                         .total_key_count
                         .map(|t| t as usize)
                         .unwrap_or(self.app_state.keys.len());
+
+                    // Pass true if the key selection actually changed
                     if self.ui_state.previous_item(keys_len)
+                        && self.ui_state.active_panel == Panel::Keys // Only reload if we moved in the keys panel
                         && let Some(idx) = self.ui_state.key_browser.state.selected()
                     {
                         let _ = self.action_tx.send(Action::SelectKey(idx));
@@ -396,6 +431,9 @@ impl App {
             Action::SelectKey(idx) => {
                 self.app_state.selected_key_index = Some(idx);
                 self.app_state.selected_value = None;
+                // Reset scroll for value viewer when a new key is selected
+                self.ui_state.value_viewer.reset_scroll();
+
                 if self.app_state.needs_loading_around(idx) {
                     let _ = self.action_tx.send(Action::LoadMoreKeys(idx));
                 }
@@ -467,6 +505,15 @@ impl App {
                             // If total is unknown, grow the vector as needed
                             self.app_state.keys.push(Some(k));
                         }
+                    }
+
+                    // Auto-select first key if none selected
+                    if self.app_state.selected_key_index.is_none()
+                        && !self.app_state.keys.is_empty()
+                        && self.app_state.keys[0].is_some()
+                    {
+                        self.ui_state.key_browser.select(Some(0));
+                        let _ = self.action_tx.send(Action::SelectKey(0));
                     }
                 } else if let Some(c) = center {
                     // Smart fill around center
@@ -712,17 +759,9 @@ impl App {
             return;
         }
 
-        match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                self.handle_left_click(event.column, event.row);
-            }
-            MouseEventKind::ScrollUp => {
-                self.handle_scroll(event.column, event.row, true);
-            }
-            MouseEventKind::ScrollDown => {
-                self.handle_scroll(event.column, event.row, false);
-            }
-            _ => {}
+        // Scroll events are now handled in handle_scroll_delta via the accumulator
+        if let MouseEventKind::Down(MouseButton::Left) = event.kind {
+            self.handle_left_click(event.column, event.row);
         }
     }
 
@@ -840,55 +879,82 @@ impl App {
         self.focus_connection(target_id);
     }
 
-    fn handle_scroll(&mut self, column: u16, row: u16, upward: bool) {
+    fn handle_scroll_delta(&mut self, column: u16, row: u16, delta: isize) {
+        if delta == 0 {
+            return;
+        }
+
         if self.ui_state.show_connection_palette {
             if let Some(area) = self.ui_state.connection_palette_area
                 && Self::point_in_rect(area, column, row)
             {
                 let len = self.app_state.connection_manager.get_configs().len();
                 if len > 0 {
-                    if upward {
-                        self.ui_state.connection_list.prev(len);
+                    if delta > 0 {
+                        // Scroll Down (next)
+                        for _ in 0..delta {
+                            self.ui_state.connection_list.next(len);
+                        }
                     } else {
-                        self.ui_state.connection_list.next(len);
+                        // Scroll Up (prev)
+                        for _ in 0..(-delta) {
+                            self.ui_state.connection_list.prev(len);
+                        }
                     }
                 }
             }
             return;
         }
 
-        let action = if upward {
-            Action::PrevItem
-        } else {
-            Action::NextItem
-        };
+        let upward = delta < 0;
+        // We want magnitude for repeated actions
+        let count = delta.unsigned_abs();
 
         let target_panel = if let Some(area) = self.ui_state.last_key_area
             && Self::point_in_rect(area, column, row)
         {
             Some(Panel::Keys)
+        } else if let Some(area) = self.ui_state.last_value_area
+            && Self::point_in_rect(area, column, row)
+        {
+            Some(Panel::Value)
         } else {
             None
         };
 
         if let Some(panel) = target_panel {
-            if !self.consume_scroll_slot() {
-                return;
-            }
             self.ui_state.active_panel = panel;
-            let _ = self.action_tx.send(action);
-        }
-    }
 
-    fn consume_scroll_slot(&mut self) -> bool {
-        let now = Instant::now();
-        if let Some(last) = self.last_scroll_event
-            && now.duration_since(last) < Duration::from_millis(SCROLL_EVENT_MIN_INTERVAL_MS)
-        {
-            return false;
+            if panel == Panel::Value {
+                // Optimized scroll for ValueViewer
+                if upward {
+                    for _ in 0..count {
+                        self.ui_state.value_viewer.scroll_up();
+                    }
+                } else {
+                    for _ in 0..count {
+                        self.ui_state.value_viewer.scroll_down();
+                    }
+                }
+            } else {
+                // For key list, we still send actions, but maybe we should optimize this too?
+                // Sending 50 actions might flood the channel again.
+                // But usually key lists are small or paginated.
+                // Let's just emit ONE action if it's a large jump?
+                // Or just loop.
+                let action = if upward {
+                    Action::PrevItem
+                } else {
+                    Action::NextItem
+                };
+
+                // Send accumulated actions
+                // Limit to a reasonable number to avoid blocking the channel if scroll is huge
+                for _ in 0..count.min(10) {
+                    let _ = self.action_tx.send(action.clone());
+                }
+            }
         }
-        self.last_scroll_event = Some(now);
-        true
     }
 
     fn key_index_from_position(&self, column: u16, row: u16) -> Option<usize> {

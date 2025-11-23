@@ -626,6 +626,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tui-input",
+ "unicode-width",
 ]
 
 [[package]]

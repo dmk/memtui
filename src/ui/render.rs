@@ -30,7 +30,7 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(if show_tabs { 3 } else { 0 }),
+            Constraint::Length(if show_tabs { 2 } else { 0 }),
             Constraint::Min(0),
             Constraint::Length(1),
         ])

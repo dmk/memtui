@@ -7,12 +7,17 @@ use ratatui::{
 };
 
 use super::components::{
-    Component, connection_list::ConnectionListProps, key_browser::KeyBrowserProps,
-    value_viewer::ValueViewerProps, welcome::WelcomeScreenProps,
+    Component,
+    connection_list::ConnectionListProps,
+    key_browser::KeyBrowserProps,
+    value_viewer::ValueViewerProps,
+    warning_message::{MessageKind, WarningMessage, WarningMessageProps},
+    welcome::WelcomeScreenProps,
 };
 use super::render_connection_form;
 use super::state::{Panel, TabRegion, UiState};
 use crate::app::{AppState, ConnectionStatus};
+use crate::types::BackendType;
 
 /// Main UI rendering function
 pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
@@ -27,21 +32,40 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
 
     let show_tabs = open_configs.len() > 1;
 
+    // Check if we should show warning for memcached
+    let show_memcached_warning = app_state
+        .connection_manager
+        .get_active_id()
+        .and_then(|id| app_state.connection_manager.get_config(id))
+        .map(|config| config.backend_type == BackendType::Memcached)
+        .unwrap_or(false);
+
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(if show_tabs { 2 } else { 0 }),
+            Constraint::Length(if show_memcached_warning { 1 } else { 0 }),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
         .split(f.area());
 
     let tab_area = root[0];
-    let body_area = root[1];
-    let status_area = root[2];
+    let warning_area = root[1];
+    let body_area = root[2];
+    let status_area = root[3];
 
     if show_tabs {
         render_tabs(f, app_state, ui_state, tab_area);
+    }
+
+    if show_memcached_warning {
+        let mut warning_component = WarningMessage::new();
+        let warning_props = WarningMessageProps {
+            kind: MessageKind::Warning,
+            message: "Note: Memcached doesn't provide native key listing. The keys list may not be consistent.",
+        };
+        warning_component.render(f, warning_area, warning_props);
     }
 
     if app_state.connection_manager.get_active_id().is_some() {
@@ -147,7 +171,6 @@ fn render_body(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, 
     let body_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-        .margin(1)
         .split(area);
 
     ui_state.last_key_area = Some(body_chunks[0]);
@@ -160,12 +183,19 @@ fn render_body(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, 
 fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, area: Rect) {
     app_state.viewport_height = area.height.saturating_sub(2) as usize;
 
+    let backend_type = app_state
+        .connection_manager
+        .get_active_id()
+        .and_then(|id| app_state.connection_manager.get_config(id))
+        .map(|config| config.backend_type);
+
     let props = KeyBrowserProps {
         keys: &app_state.keys,
         total_count: app_state.total_key_count,
         is_loading: app_state.is_loading_keys,
         active_search_query: None,
         is_active: ui_state.active_panel == Panel::Keys,
+        backend_type,
     };
 
     ui_state.key_browser.render(f, area, props);
@@ -178,6 +208,12 @@ fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, are
         .and_then(|k| k.as_ref())
         .map(|k| k.value_type);
 
+    let backend_type = app_state
+        .connection_manager
+        .get_active_id()
+        .and_then(|id| app_state.connection_manager.get_config(id))
+        .map(|config| config.backend_type);
+
     let props = ValueViewerProps {
         selected_value: app_state.selected_value.as_ref(),
         selected_key_type,
@@ -185,6 +221,7 @@ fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, are
         json_formatter: &app_state.json_formatter,
         text_formatter: &app_state.text_formatter,
         is_active: ui_state.active_panel == Panel::Value,
+        backend_type,
     };
 
     ui_state.value_viewer.render(f, area, props);

@@ -757,12 +757,6 @@ impl App {
                         let _ = self.action_tx.send(Action::CloseConnectionPalette);
                         let _ = self.action_tx.send(Action::OpenConnectionForm);
                     }
-                    KeyCode::Tab => {
-                        let _ = self.action_tx.send(Action::NextConnectionTab);
-                    }
-                    KeyCode::BackTab => {
-                        let _ = self.action_tx.send(Action::PrevConnectionTab);
-                    }
                     _ => {}
                 }
                 return;
@@ -826,11 +820,11 @@ impl App {
                     let _ = self.action_tx.send(Action::OpenConnectionForm);
                     return;
                 }
-                KeyCode::Char('f') => {
+                KeyCode::Char('l') | KeyCode::Right => {
                     let _ = self.action_tx.send(Action::NextConnectionTab);
                     return;
                 }
-                KeyCode::Char('b') => {
+                KeyCode::Char('h') | KeyCode::Left => {
                     let _ = self.action_tx.send(Action::PrevConnectionTab);
                     return;
                 }
@@ -1084,10 +1078,8 @@ impl App {
                 let changed = self.ui_state.scroll_keys_by(keys_len, scroll_delta);
 
                 // If selection changed, trigger key selection action
-                if changed {
-                    if let Some(idx) = self.ui_state.key_browser.state.selected() {
-                        let _ = self.action_tx.send(Action::SelectKey(idx));
-                    }
+                if changed && let Some(idx) = self.ui_state.key_browser.state.selected() {
+                    let _ = self.action_tx.send(Action::SelectKey(idx));
                 }
 
                 changed

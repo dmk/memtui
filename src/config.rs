@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Application configuration loaded from config file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     /// UI and rendering settings
     #[serde(default)]
@@ -240,18 +240,6 @@ where
     S: serde::Serializer,
 {
     serializer.serialize_u64(duration.as_secs())
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            ui: UiConfig::default(),
-            performance: PerformanceConfig::default(),
-            connection: ConnectionConfig::default(),
-            data: DataConfig::default(),
-            json: JsonConfig::default(),
-        }
-    }
 }
 
 impl Default for UiConfig {

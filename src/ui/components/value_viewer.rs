@@ -26,6 +26,7 @@ pub struct ValueViewerProps<'a> {
     pub json_formatter: &'a JsonFormatter,
     pub text_formatter: &'a TextFormatter,
     pub is_active: bool,
+    pub backend_type: Option<crate::types::BackendType>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -289,7 +290,10 @@ impl ValueViewer {
 
             // Early return if already at boundary and trying to scroll further
             if delta > 0 && i >= max_index {
-                trace!(index = i, max_index, "Already at bottom; ignoring scroll down");
+                trace!(
+                    index = i,
+                    max_index, "Already at bottom; ignoring scroll down"
+                );
                 return;
             }
             if delta < 0 && i == 0 {
@@ -298,9 +302,7 @@ impl ValueViewer {
             }
 
             if delta > 0 {
-                let new_i = i
-                    .saturating_add(delta as usize)
-                    .min(max_index);
+                let new_i = i.saturating_add(delta as usize).min(max_index);
                 trace!(old = i, new = new_i, "Scrolling table selection down");
                 self.table_state.select(Some(new_i));
             } else {
@@ -318,8 +320,7 @@ impl ValueViewer {
             if delta > 0 && self.scroll_offset >= max_scroll as u16 {
                 trace!(
                     scroll_offset = self.scroll_offset,
-                    max_scroll,
-                    "Already at bottom; ignoring scroll down"
+                    max_scroll, "Already at bottom; ignoring scroll down"
                 );
                 return;
             }
@@ -340,14 +341,12 @@ impl ValueViewer {
                     // Rare: huge scroll, saturate to max
                     max_scroll as u16
                 }
+            } else if delta > i16::MIN as isize {
+                // Fast: common case, small scroll
+                self.scroll_offset.saturating_sub((-delta) as u16)
             } else {
-                if delta > i16::MIN as isize {
-                    // Fast: common case, small scroll
-                    self.scroll_offset.saturating_sub((-delta) as u16)
-                } else {
-                    // Rare: huge scroll, clamp to 0
-                    0
-                }
+                // Rare: huge scroll, clamp to 0
+                0
             };
 
             // Clamp to valid range
@@ -419,7 +418,9 @@ impl ValueViewer {
             return;
         }
 
-        let max_scroll = self.total_rows.saturating_sub(self.viewport_height as usize);
+        let max_scroll = self
+            .total_rows
+            .saturating_sub(self.viewport_height as usize);
         let clamped_offset = self.scroll_offset.min(max_scroll as u16) as usize;
 
         let scrollbar_position = if max_scroll > 0 {
@@ -932,9 +933,7 @@ impl ValueViewer {
             }
         }
 
-        if has_pending_spans {
-            lines += 1;
-        } else if !had_content {
+        if has_pending_spans || !had_content {
             lines += 1;
         }
 
@@ -1068,7 +1067,15 @@ impl ValueViewer {
         }
     }
 
-    fn title_for(value_type: Option<ValueType>) -> String {
+    fn title_for(
+        value_type: Option<ValueType>,
+        backend_type: Option<crate::types::BackendType>,
+    ) -> String {
+        // Don't show key type for memcached
+        if let Some(crate::types::BackendType::Memcached) = backend_type {
+            return "Value Viewer".to_string();
+        }
+
         match value_type {
             Some(t) => format!("Value Viewer | {}", t),
             None => "Value Viewer".to_string(),
@@ -1087,7 +1094,7 @@ impl Component for ValueViewer {
     type Msg = Action;
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
-        let base_title = ValueViewer::title_for(props.selected_key_type);
+        let base_title = ValueViewer::title_for(props.selected_key_type, props.backend_type);
 
         if let Some(err) = props.error_message {
             self.clear_text_cache();

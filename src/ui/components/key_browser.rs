@@ -20,6 +20,7 @@ pub struct KeyBrowserProps<'a> {
     pub is_loading: bool,
     pub active_search_query: Option<&'a str>,
     pub is_active: bool,
+    pub backend_type: Option<crate::types::BackendType>,
 }
 
 pub struct KeyBrowser {
@@ -119,7 +120,7 @@ impl Component for KeyBrowser {
         for offset in 0..visible_len {
             let abs = start_index + offset;
             if let Some(Some(k)) = props.keys.get(abs) {
-                key_items.push(Self::build_key_item(k, content_width));
+                key_items.push(Self::build_key_item(k, content_width, props.backend_type));
             } else {
                 key_items.push(ListItem::new(Span::styled(
                     "...",
@@ -131,10 +132,8 @@ impl Component for KeyBrowser {
         // Build title
         let mut title = if let Some(query) = props.active_search_query {
             format!("Keys [Filter: '{}']", query)
-        } else if let Some(total) = props.total_count {
-            format!("Keys [{}]", total)
         } else {
-            format!("Keys [{}]", total_count)
+            "Keys".to_string()
         };
 
         // Add position info
@@ -345,27 +344,41 @@ impl KeyBrowser {
         false
     }
 
-    fn build_key_item(key: &KeyMetadata, content_width: usize) -> ListItem<'static> {
-        let type_label = key.value_type.to_string();
-        let type_width = type_label.chars().count();
-        let min_gap = if content_width > type_width { 1 } else { 0 };
-        let available_for_name = content_width.saturating_sub(type_width + min_gap);
-        let name_display = Self::truncate_to_fit(&key.name, available_for_name);
-        let name_width = name_display.chars().count();
-        let spacer_width = content_width.saturating_sub(name_width + type_width);
-        let spacer = if spacer_width > 0 {
-            " ".repeat(spacer_width)
+    fn build_key_item(
+        key: &KeyMetadata,
+        content_width: usize,
+        backend_type: Option<crate::types::BackendType>,
+    ) -> ListItem<'static> {
+        // Don't show key type for memcached
+        let show_type = !matches!(backend_type, Some(crate::types::BackendType::Memcached));
+
+        if show_type {
+            let type_label = key.value_type.to_string();
+            let type_width = type_label.chars().count();
+            let min_gap = if content_width > type_width { 1 } else { 0 };
+            let available_for_name = content_width.saturating_sub(type_width + min_gap);
+            let name_display = Self::truncate_to_fit(&key.name, available_for_name);
+            let name_width = name_display.chars().count();
+            let spacer_width = content_width.saturating_sub(name_width + type_width);
+            let spacer = if spacer_width > 0 {
+                " ".repeat(spacer_width)
+            } else {
+                String::new()
+            };
+
+            let line = Line::from(vec![
+                Span::raw(name_display),
+                Span::raw(spacer),
+                Span::styled(type_label, Style::default().fg(Color::DarkGray)),
+            ]);
+
+            ListItem::new(line)
         } else {
-            String::new()
-        };
-
-        let line = Line::from(vec![
-            Span::raw(name_display),
-            Span::raw(spacer),
-            Span::styled(type_label, Style::default().fg(Color::DarkGray)),
-        ]);
-
-        ListItem::new(line)
+            // For memcached, just show the key name without type
+            let name_display = Self::truncate_to_fit(&key.name, content_width);
+            let line = Line::from(vec![Span::raw(name_display)]);
+            ListItem::new(line)
+        }
     }
 
     fn truncate_to_fit(text: &str, max_chars: usize) -> String {

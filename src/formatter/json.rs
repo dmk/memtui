@@ -375,8 +375,10 @@ mod tests {
         use crate::types::ValueType;
 
         // Test with 4-space indent
-        let mut config = JsonColorConfig::default();
-        config.indent = 4;
+        let config = JsonColorConfig {
+            indent: 4,
+            ..Default::default()
+        };
         let formatter = JsonFormatter::new(config);
 
         let json_value = Value {

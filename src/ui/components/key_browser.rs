@@ -1,18 +1,16 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    layout::{Alignment, Margin, Rect},
+    layout::{Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, BorderType, Borders, List, ListItem, ListState, Scrollbar, ScrollbarOrientation,
-        ScrollbarState,
-    },
+    widgets::{Block, List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame,
 };
 
 use super::Component;
 use crate::action::Action;
 use crate::types::KeyMetadata;
+use crate::ui::theme::{self, AnimationState};
 
 pub struct KeyBrowserProps<'a> {
     pub keys: &'a [Option<KeyMetadata>],
@@ -30,6 +28,8 @@ pub struct KeyBrowserProps<'a> {
     pub is_server_searching: bool,
     /// Selection index within search results (0-based index into search_results_local)
     pub search_selection_index: Option<usize>,
+    /// Animation state for visual effects
+    pub animation: &'a AnimationState,
 }
 
 pub struct KeyBrowser {
@@ -116,25 +116,30 @@ impl Component for KeyBrowser {
         // Build title
         let title = self.build_title(&props, has_search, display_count);
 
+        // Create the block with theme styling
+        let block = Self::themed_block(&title, is_active, props.animation, props.is_loading);
+
         let keys_list = List::new(key_items)
-            .block(Self::card_block(title, props.is_active))
-            .highlight_style(
-                Style::default()
-                    .bg(Color::Rgb(30, 30, 34))
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol("› ");
+            .block(block)
+            .highlight_style(theme::list_selected().add_modifier(Modifier::BOLD))
+            .highlight_symbol("▸ ");
 
         let mut view_state = ListState::default();
         view_state.select(selected_display_idx);
         f.render_stateful_widget(keys_list, area, &mut view_state);
 
-        // Render scrollbar
+        // Render scrollbar with themed styling
         if display_count > 0 {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓"));
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"))
+                .thumb_symbol("█")
+                .style(Style::default().fg(if is_active {
+                    theme::NEON_CYAN
+                } else {
+                    Color::Rgb(60, 70, 90)
+                }));
 
             let scrollbar_area = area.inner(Margin {
                 vertical: 1,
@@ -228,7 +233,13 @@ impl KeyBrowser {
         let local_key_names: std::collections::HashSet<&str> = props
             .search_results_local
             .iter()
-            .filter_map(|&idx| props.keys.get(idx).and_then(|k| k.as_ref()).map(|k| k.name.as_str()))
+            .filter_map(|&idx| {
+                props
+                    .keys
+                    .get(idx)
+                    .and_then(|k| k.as_ref())
+                    .map(|k| k.name.as_str())
+            })
             .collect();
 
         for server_key in props.search_results_server.iter() {
@@ -245,14 +256,23 @@ impl KeyBrowser {
         // If no results, show a message
         if items.is_empty() {
             if props.is_server_searching {
+                let spinner = theme::spinner(props.animation);
                 items.push(ListItem::new(Span::styled(
-                    "Searching...",
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                    format!("{} Searching...", spinner),
+                    Style::default()
+                        .fg(theme::NEON_AMBER)
+                        .add_modifier(Modifier::ITALIC),
                 )));
-            } else if props.active_search_query.map(|q| !q.is_empty()).unwrap_or(false) {
+            } else if props
+                .active_search_query
+                .map(|q| !q.is_empty())
+                .unwrap_or(false)
+            {
                 items.push(ListItem::new(Span::styled(
-                    "No matches found",
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                    "  No matches found",
+                    Style::default()
+                        .fg(theme::TEXT_DIM)
+                        .add_modifier(Modifier::ITALIC),
                 )));
             }
         }
@@ -261,7 +281,11 @@ impl KeyBrowser {
         let result_count = props.search_results_local.len();
 
         // Use the dedicated search selection index
-        (items, result_count.max(items_len), props.search_selection_index)
+        (
+            items,
+            result_count.max(items_len),
+            props.search_selection_index,
+        )
     }
 
     /// Build the list for normal mode - full virtualized list
@@ -297,9 +321,11 @@ impl KeyBrowser {
             if let Some(Some(k)) = props.keys.get(abs) {
                 key_items.push(Self::build_key_item(k, content_width, props.backend_type));
             } else {
+                // Loading placeholder with themed styling
+                let spinner = theme::spinner_dots(props.animation);
                 key_items.push(ListItem::new(Span::styled(
-                    "...",
-                    Style::default().fg(Color::DarkGray),
+                    format!("  {} loading...", spinner),
+                    Style::default().fg(theme::TEXT_DIM),
                 )));
             }
         }
@@ -314,45 +340,57 @@ impl KeyBrowser {
     }
 
     /// Build the title based on current mode
-    fn build_title(&self, props: &KeyBrowserProps<'_>, has_search: bool, display_count: usize) -> String {
+    fn build_title(
+        &self,
+        props: &KeyBrowserProps<'_>,
+        has_search: bool,
+        display_count: usize,
+    ) -> String {
         if props.is_searching {
             // Active search input mode
             if let Some(query) = props.active_search_query {
                 if query.is_empty() {
-                    "Keys / _".to_string()
+                    "Keys │ ▍".to_string()
                 } else {
-                    let server_indicator = if props.is_server_searching { " ⟳" } else { "" };
-                    format!("Keys / {}_{} ({} found)", query, server_indicator, display_count)
+                    let server_indicator = if props.is_server_searching {
+                        format!(" {}", theme::spinner(props.animation))
+                    } else {
+                        String::new()
+                    };
+                    format!(
+                        "Keys │ {}▍{} ({} found)",
+                        query, server_indicator, display_count
+                    )
                 }
             } else {
-                "Keys / _".to_string()
+                "Keys │ ▍".to_string()
             }
         } else if has_search {
             // Has search filter but not actively typing
             if let Some(query) = props.active_search_query {
-                let position = self
-                    .state
-                    .selected()
-                    .map(|_| format!(" [{} results]", display_count))
-                    .unwrap_or_default();
-                format!("Keys [/{}]{}", query, position)
+                format!("Keys │ /{} ({} results)", query, display_count)
             } else {
                 "Keys".to_string()
             }
         } else {
             // Normal mode
-            let total_count = props.total_count.map(|t| t as usize).unwrap_or(props.keys.len());
-            let mut title = "Keys".to_string();
+            let total_count = props
+                .total_count
+                .map(|t| t as usize)
+                .unwrap_or(props.keys.len());
             let position = self
                 .state
                 .selected()
-                .map(|i| format!(" [{} / {}]", i.saturating_add(1), total_count))
+                .map(|i| format!(" [{}/{}]", i.saturating_add(1), total_count))
                 .unwrap_or_else(|| " [—]".to_string());
-            title.push_str(&position);
-            if props.is_loading {
-                title.push_str(" [Loading...]");
-            }
-            title
+
+            let loading_indicator = if props.is_loading {
+                format!(" {}", theme::spinner(props.animation))
+            } else {
+                String::new()
+            };
+
+            format!("Keys{}{}", position, loading_indicator)
         }
     }
 
@@ -404,7 +442,6 @@ impl KeyBrowser {
     }
 
     /// Check if we need to load the region around a specific index
-    /// Logic copied from AppState to keep component self-contained for rendering/input decisions
     fn needs_loading_around(
         &self,
         index: usize,
@@ -471,17 +508,37 @@ impl KeyBrowser {
                 String::new()
             };
 
+            // Type-specific colors
+            let type_color = match key.value_type {
+                crate::types::ValueType::String => theme::NEON_CYAN,
+                crate::types::ValueType::Hash => theme::NEON_PURPLE,
+                crate::types::ValueType::List => theme::NEON_GREEN,
+                crate::types::ValueType::Set => theme::NEON_AMBER,
+                crate::types::ValueType::SortedSet => theme::NEON_PINK,
+                crate::types::ValueType::Binary => theme::TEXT_SECONDARY,
+                crate::types::ValueType::Json => theme::ELECTRIC_BLUE,
+                crate::types::ValueType::Integer => theme::NEON_GREEN,
+                crate::types::ValueType::Float => theme::NEON_AMBER,
+                crate::types::ValueType::Unknown => theme::TEXT_DIM,
+            };
+
             let line = Line::from(vec![
-                Span::raw(name_display),
+                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY)),
                 Span::raw(spacer),
-                Span::styled(type_label, Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    type_label,
+                    Style::default().fg(type_color).add_modifier(Modifier::DIM),
+                ),
             ]);
 
             ListItem::new(line)
         } else {
             // For memcached, just show the key name without type
             let name_display = Self::truncate_to_fit(&key.name, content_width);
-            let line = Line::from(vec![Span::raw(name_display)]);
+            let line = Line::from(vec![Span::styled(
+                name_display,
+                Style::default().fg(theme::TEXT_PRIMARY),
+            )]);
             ListItem::new(line)
         }
     }
@@ -519,11 +576,11 @@ impl KeyBrowser {
             let line = Line::from(vec![
                 Span::styled(
                     format!("{} ", indicator),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(theme::NEON_AMBER),
                 ),
-                Span::raw(name_display),
+                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY)),
                 Span::raw(spacer),
-                Span::styled(type_label, Style::default().fg(Color::DarkGray)),
+                Span::styled(type_label, Style::default().fg(theme::TEXT_DIM)),
             ]);
 
             ListItem::new(line)
@@ -533,9 +590,9 @@ impl KeyBrowser {
             let line = Line::from(vec![
                 Span::styled(
                     format!("{} ", indicator),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(theme::NEON_AMBER),
                 ),
-                Span::raw(name_display),
+                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY)),
             ]);
             ListItem::new(line)
         }
@@ -560,18 +617,12 @@ impl KeyBrowser {
         truncated
     }
 
-    fn card_block(title: String, is_active: bool) -> Block<'static> {
-        let border_style = if is_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-
-        Block::default()
-            .title(Line::from(title))
-            .title_alignment(Alignment::Left)
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(border_style)
+    fn themed_block(
+        title: &str,
+        is_active: bool,
+        _animation: &AnimationState,
+        _is_loading: bool,
+    ) -> Block<'static> {
+        theme::panel_block(title, is_active)
     }
 }

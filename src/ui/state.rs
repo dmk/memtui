@@ -2,6 +2,7 @@ use super::components::connection_list::ConnectionList;
 use super::components::key_browser::KeyBrowser;
 use super::components::value_viewer::ValueViewer;
 use super::components::welcome::WelcomeScreen;
+use super::theme::{AnimationState, PaneSplit};
 use super::ConnectionForm;
 use ratatui::layout::Rect;
 use strum::{EnumIter, IntoEnumIterator};
@@ -38,6 +39,16 @@ pub struct UiState {
     pub connection_palette_area: Option<Rect>,
     pub recent_connection_ids: Vec<String>,
     pub show_quit_confirmation: bool,
+
+    // 2026 UI Enhancements
+    /// Animation state for time-based effects
+    pub animation: AnimationState,
+    /// Resizable pane split ratio
+    pub pane_split: PaneSplit,
+    /// Is the user currently resizing panes
+    pub is_resizing: bool,
+    /// Last body area for resize calculations
+    pub last_body_area: Option<Rect>,
 }
 
 impl UiState {
@@ -61,7 +72,28 @@ impl UiState {
             connection_palette_area: None,
             recent_connection_ids: Vec::new(),
             show_quit_confirmation: false,
+
+            // 2026 UI
+            animation: AnimationState::new(),
+            pane_split: PaneSplit::default(),
+            is_resizing: false,
+            last_body_area: None,
         }
+    }
+
+    /// Adjust pane split ratio for resizing
+    pub fn resize_panes(&mut self, delta: f32) {
+        self.pane_split.adjust(delta);
+    }
+
+    /// Start pane resize mode
+    pub fn start_resize(&mut self) {
+        self.is_resizing = true;
+    }
+
+    /// End pane resize mode
+    pub fn end_resize(&mut self) {
+        self.is_resizing = false;
     }
 
     pub fn connection_state(&mut self) -> &mut ratatui::widgets::ListState {

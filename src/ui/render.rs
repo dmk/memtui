@@ -16,11 +16,16 @@ use super::components::{
 };
 use super::render_connection_form;
 use super::state::{Panel, TabRegion, UiState};
+use super::theme::{self, AnimationState};
 use crate::app::{AppState, ConnectionStatus};
 use crate::types::BackendType;
 
 /// Main UI rendering function
 pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
+    // Render the deep background
+    let bg_block = Block::default().style(Style::default().bg(theme::BG_DEEP));
+    f.render_widget(bg_block, f.area());
+
     let configs = app_state.connection_manager.get_configs();
     let open_configs: Vec<_> = configs
         .iter()
@@ -43,10 +48,10 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(if show_tabs { 2 } else { 0 }),
+            Constraint::Length(if show_tabs { 3 } else { 0 }), // Tabs with more space
             Constraint::Length(if show_memcached_warning { 1 } else { 0 }),
-            Constraint::Min(0),
-            Constraint::Length(1),
+            Constraint::Min(0),    // Body
+            Constraint::Length(2), // Status bar with more space
         ])
         .split(f.area());
 
@@ -54,6 +59,9 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
     let warning_area = root[1];
     let body_area = root[2];
     let status_area = root[3];
+
+    // Store body area for resize calculations
+    ui_state.last_body_area = Some(body_area);
 
     if show_tabs {
         render_tabs(f, app_state, ui_state, tab_area);
@@ -63,7 +71,7 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
         let mut warning_component = WarningMessage::new();
         let warning_props = WarningMessageProps {
             kind: MessageKind::Warning,
-            message: "Note: Memcached doesn't provide native key listing. The keys list may not be consistent.",
+            message: "Memcached doesn't provide native key listing. Keys may not be consistent.",
         };
         warning_component.render(f, warning_area, warning_props);
     }
@@ -76,7 +84,7 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
         render_welcome(f, app_state, ui_state, body_area);
     }
 
-    render_status_bar(f, app_state, status_area);
+    render_status_bar(f, app_state, ui_state, status_area);
 
     if ui_state.show_connection_palette {
         render_connection_palette(f, app_state, ui_state);
@@ -85,12 +93,12 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
     if ui_state.show_connection_form {
         render_connection_form(f, &ui_state.connection_form, ui_state.form_error.as_deref());
     } else if ui_state.show_help {
-        super::render::render_help(f);
+        render_help(f, &ui_state.animation);
     }
 
     // Quit confirmation should be rendered on top of everything
     if ui_state.show_quit_confirmation {
-        render_quit_confirmation(f);
+        render_quit_confirmation(f, &ui_state.animation);
     }
 }
 
@@ -98,8 +106,15 @@ fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area
     ui_state.tab_regions.clear();
     ui_state.tab_bar_area = Some(area);
 
+    // Background for tab bar
+    let tab_bg = Block::default()
+        .style(Style::default().bg(theme::BG_PANEL))
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(Color::Rgb(40, 50, 70)));
+    f.render_widget(tab_bg, area);
+
     let mut spans = Vec::new();
-    let mut cursor_x = area.x;
+    let mut cursor_x = area.x + 1;
     let max_x = area.x.saturating_add(area.width);
 
     let configs = app_state.connection_manager.get_configs();
@@ -111,23 +126,20 @@ fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area
         })
         .collect();
 
-    let block = Block::default()
-        .borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(Color::DarkGray));
-    f.render_widget(block, area);
-
     if open_configs.is_empty() {
-        // If we are somehow here (maybe active is None but show_tabs was somehow called?), return
         return;
     }
 
     for config in open_configs {
         let status = app_state.connection_manager.get_status(&config.id);
         let (icon, tone) = match status {
-            ConnectionStatus::Connected => ("●", Color::Green),
-            ConnectionStatus::Connecting => ("◐", Color::Yellow),
-            ConnectionStatus::Disconnected => ("○", Color::DarkGray),
-            ConnectionStatus::Error(_) => ("✗", Color::Red),
+            ConnectionStatus::Connected => (theme::INDICATOR_CONNECTED, theme::NEON_GREEN),
+            ConnectionStatus::Connecting => {
+                let spinner = theme::spinner_pulse(&ui_state.animation);
+                (spinner, theme::NEON_AMBER)
+            }
+            ConnectionStatus::Disconnected => (theme::INDICATOR_DISCONNECTED, theme::TEXT_DIM),
+            ConnectionStatus::Error(_) => (theme::INDICATOR_ERROR, theme::NEON_RED),
         };
 
         let is_active = app_state
@@ -138,51 +150,96 @@ fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area
 
         let label = format!(" {} {} ", icon, config.name);
         let width = label.chars().count() as u16;
-        if cursor_x.saturating_add(width) > max_x {
+        if cursor_x.saturating_add(width + 2) > max_x {
             break;
         }
 
-        let style = if is_active {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
+        let (style, bg_style) = if is_active {
+            (
+                Style::default()
+                    .fg(theme::BG_DEEP)
+                    .add_modifier(Modifier::BOLD),
+                Some(theme::ACCENT),
+            )
         } else {
-            Style::default().fg(tone)
+            (Style::default().fg(tone), None)
         };
 
-        let tab_area = Rect::new(cursor_x, area.y, width.max(1), area.height);
+        let tab_area = Rect::new(cursor_x, area.y + 1, width.max(1), 1);
         ui_state.tab_regions.push(TabRegion {
             id: config.id.clone(),
             area: tab_area,
         });
-        spans.push(Span::styled(label, style));
-        spans.push(Span::raw("  "));
-        cursor_x = cursor_x.saturating_add(width + 2);
+
+        if let Some(bg) = bg_style {
+            spans.push(Span::styled(label, style.bg(bg)));
+        } else {
+            // Create a subtle background for inactive tabs
+            spans.push(Span::styled(label, style.bg(theme::BG_SURFACE)));
+        }
+        spans.push(Span::styled(" ", Style::default()));
+        cursor_x = cursor_x.saturating_add(width + 1);
     }
 
     if spans.is_empty() {
         spans.push(Span::styled(
-            "Ctrl+P to open connections",
-            Style::default().fg(Color::DarkGray),
+            "  Ctrl+P to open connections",
+            Style::default().fg(theme::TEXT_DIM),
         ));
     }
 
-    let tabs_line = Paragraph::new(Line::from(spans)).alignment(Alignment::Left);
-    f.render_widget(tabs_line, area);
+    let tabs_line = Paragraph::new(Line::from(spans))
+        .alignment(Alignment::Left)
+        .style(Style::default().bg(theme::BG_PANEL));
+
+    let inner_area = Rect::new(area.x, area.y + 1, area.width, 1);
+    f.render_widget(tabs_line, inner_area);
 }
 
 fn render_body(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, area: Rect) {
+    // Use the resizable pane split ratio
+    let left_percent = ui_state.pane_split.left_percent();
+    let right_percent = ui_state.pane_split.right_percent();
+
     let body_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .constraints([
+            Constraint::Percentage(left_percent),
+            Constraint::Length(1), // Resize handle
+            Constraint::Percentage(right_percent),
+        ])
         .split(area);
 
     ui_state.last_key_area = Some(body_chunks[0]);
-    ui_state.last_value_area = Some(body_chunks[1]);
+    ui_state.last_value_area = Some(body_chunks[2]);
+
+    // Render resize handle
+    render_resize_handle(f, body_chunks[1], ui_state.is_resizing, &ui_state.animation);
 
     render_keys(f, ui_state, app_state, body_chunks[0]);
-    render_value(f, ui_state, app_state, body_chunks[1]);
+    render_value(f, ui_state, app_state, body_chunks[2]);
+}
+
+fn render_resize_handle(f: &mut Frame, area: Rect, is_active: bool, _animation: &AnimationState) {
+    let style = if is_active {
+        Style::default().fg(theme::NEON_CYAN)
+    } else {
+        Style::default().fg(Color::Rgb(50, 60, 80))
+    };
+
+    // Draw vertical separator with handle indicator
+    let mut lines = Vec::new();
+    for i in 0..area.height {
+        let char = if i == area.height / 2 {
+            if is_active { "◀▶" } else { "┃" }
+        } else {
+            "│"
+        };
+        lines.push(Line::from(Span::styled(char, style)));
+    }
+
+    let handle = Paragraph::new(lines).alignment(Alignment::Center);
+    f.render_widget(handle, area);
 }
 
 fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, area: Rect) {
@@ -213,6 +270,7 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, 
         search_results_server: &app_state.search_results_server,
         is_server_searching: app_state.is_server_searching,
         search_selection_index: app_state.search_selection_index,
+        animation: &ui_state.animation,
     };
 
     ui_state.key_browser.render(f, area, props);
@@ -239,6 +297,7 @@ fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, are
         text_formatter: &app_state.text_formatter,
         is_active: ui_state.active_panel == Panel::Value,
         backend_type,
+        animation: &ui_state.animation,
     };
 
     ui_state.value_viewer.render(f, area, props);
@@ -252,7 +311,10 @@ fn render_welcome(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, a
         .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
         .collect();
 
-    let props = WelcomeScreenProps { recent_configs };
+    let props = WelcomeScreenProps {
+        recent_configs,
+        animation: &ui_state.animation,
+    };
     ui_state.welcome_screen.render(f, area, props);
 }
 
@@ -271,183 +333,234 @@ fn render_connection_palette(f: &mut Frame, app_state: &AppState, ui_state: &mut
         active_id: app_state.connection_manager.get_active_id(),
         statuses: app_state.connection_manager.get_statuses(),
         is_active: true,
+        animation: &ui_state.animation,
     };
 
+    // Glass effect background
+    let glass_bg = Block::default()
+        .style(Style::default().bg(Color::Rgb(15, 18, 30)))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(theme::NEON_PURPLE));
+
     f.render_widget(Clear, area);
+    f.render_widget(glass_bg, area);
     ui_state.connection_list.render(f, chunks[0], props);
 
     let instructions = Paragraph::new(Line::from(vec![
-        Span::styled("Enter", Style::default().fg(Color::Yellow)),
-        Span::raw(" connect / focus   "),
-        Span::styled("d", Style::default().fg(Color::Yellow)),
-        Span::raw(" delete   "),
-        Span::styled("Esc", Style::default().fg(Color::Yellow)),
-        Span::raw(" close"),
+        Span::styled(
+            " Enter ",
+            Style::default()
+                .fg(theme::BG_DEEP)
+                .bg(theme::NEON_CYAN)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" connect ", Style::default().fg(theme::TEXT_SECONDARY)),
+        Span::styled(
+            " d ",
+            Style::default()
+                .fg(theme::BG_DEEP)
+                .bg(theme::NEON_AMBER)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" delete ", Style::default().fg(theme::TEXT_SECONDARY)),
+        Span::styled(
+            " Esc ",
+            Style::default()
+                .fg(theme::BG_DEEP)
+                .bg(theme::NEON_PINK)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" close ", Style::default().fg(theme::TEXT_SECONDARY)),
     ]))
-    .alignment(Alignment::Center)
-    .style(Style::default().fg(Color::DarkGray));
+    .alignment(Alignment::Center);
 
     f.render_widget(instructions, chunks[1]);
 }
 
-pub fn render_help(f: &mut Frame) {
-    let area = centered_rect(60, 50, f.area());
+pub fn render_help(f: &mut Frame, _animation: &AnimationState) {
+    let area = centered_rect(65, 55, f.area());
 
-    let help_text = vec![
-        Line::from(Span::styled(
-            "memtui - Help",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
+    let help_sections = vec![
+        (
             "Navigation",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(vec![
-            Span::styled("Tab         ", Style::default().fg(Color::Yellow)),
-            Span::raw("Next panel"),
-        ]),
-        Line::from(vec![
-            Span::styled("Shift+Tab   ", Style::default().fg(Color::Yellow)),
-            Span::raw("Previous panel"),
-        ]),
-        Line::from(vec![
-            Span::styled("↑/k         ", Style::default().fg(Color::Yellow)),
-            Span::raw("Move up"),
-        ]),
-        Line::from(vec![
-            Span::styled("↓/j         ", Style::default().fg(Color::Yellow)),
-            Span::raw("Move down"),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
+            vec![
+                ("Tab / ⇧Tab", "Switch panels"),
+                ("↑/k  ↓/j", "Move up/down"),
+                ("/", "Search keys"),
+            ],
+        ),
+        (
             "Connections",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(vec![
-            Span::styled("Ctrl+P      ", Style::default().fg(Color::Yellow)),
-            Span::raw("Open palette"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl+N      ", Style::default().fg(Color::Yellow)),
-            Span::raw("New connection"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl+Tab    ", Style::default().fg(Color::Yellow)),
-            Span::raw("Next connection tab"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl+BackTab", Style::default().fg(Color::Yellow)),
-            Span::raw("Previous tab"),
-        ]),
-        Line::from(vec![
-            Span::styled("Enter       ", Style::default().fg(Color::Yellow)),
-            Span::raw("Connect / focus"),
-        ]),
-        Line::from(vec![
-            Span::styled("d           ", Style::default().fg(Color::Yellow)),
-            Span::raw("Delete selected"),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
+            vec![
+                ("Ctrl+P", "Connection palette"),
+                ("Ctrl+N", "New connection"),
+                ("Ctrl+← →", "Switch tabs"),
+            ],
+        ),
+        (
+            "Panes",
+            vec![
+                ("Ctrl+H/L", "Resize panes"),
+                ("Mouse drag", "Resize panes"),
+            ],
+        ),
+        (
             "General",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(vec![
-            Span::styled("?           ", Style::default().fg(Color::Yellow)),
-            Span::raw("Toggle help"),
-        ]),
-        Line::from(vec![
-            Span::styled("q/Esc       ", Style::default().fg(Color::Yellow)),
-            Span::raw("Quit"),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Press any key to close",
-            Style::default().fg(Color::DarkGray),
-        )),
+            vec![("?", "Toggle help"), ("q / Esc", "Quit")],
+        ),
     ];
 
-    let help = Paragraph::new(help_text)
-        .block(
-            Block::default()
-                .title("Help")
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Cyan)),
-        )
-        .alignment(Alignment::Left);
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Help",
+            Style::default()
+                .fg(theme::NEON_CYAN)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+
+    for (section_name, bindings) in help_sections {
+        lines.push(Line::from(Span::styled(
+            format!("▸ {}", section_name),
+            Style::default()
+                .fg(theme::NEON_AMBER)
+                .add_modifier(Modifier::BOLD),
+        )));
+
+        for (key, desc) in bindings {
+            lines.push(Line::from(vec![
+                Span::styled("    ", Style::default()),
+                Span::styled(
+                    format!("{:<12}", key),
+                    Style::default().fg(theme::NEON_CYAN),
+                ),
+                Span::styled(desc, Style::default().fg(theme::TEXT_PRIMARY)),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(Span::styled(
+        "Press any key to close",
+        Style::default()
+            .fg(theme::TEXT_DIM)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let help = Paragraph::new(lines)
+        .block(theme::glass_block("Help"))
+        .alignment(Alignment::Center)
+        .style(Style::default().bg(Color::Rgb(12, 15, 25)));
 
     f.render_widget(Clear, area);
     f.render_widget(help, area);
 }
 
-fn render_status_bar(f: &mut Frame, app_state: &AppState, area: Rect) {
-    let status_text = if let Some(status) = app_state.connection_manager.get_active_status() {
-        match status {
-            ConnectionStatus::Connected => {
-                if let Some(id) = app_state.connection_manager.get_active_id() {
-                    if let Some(config) = app_state.connection_manager.get_config(id) {
-                        format!(
-                            "Connected to {} ({}:{})",
-                            config.name, config.host, config.port
-                        )
-                    } else {
-                        "Connected".to_string()
-                    }
-                } else {
-                    "Connected".to_string()
-                }
-            }
-            ConnectionStatus::Connecting => "Connecting...".to_string(),
-            ConnectionStatus::Disconnected => "Not connected".to_string(),
-            ConnectionStatus::Error(ref msg) => format!("Error: {}", msg),
-        }
-    } else {
-        "No connection selected".to_string()
-    };
+fn render_status_bar(
+    f: &mut Frame,
+    app_state: &AppState,
+    ui_state: &UiState,
+    area: Rect,
+) {
+    // Background
+    let bg = Block::default()
+        .style(Style::default().bg(theme::BG_PANEL))
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::Rgb(40, 50, 70)));
+    f.render_widget(bg, area);
 
-    let (style, status_label) =
+    let inner_area = Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), 1);
+
+    // Left side: connection status
+    let (status_text, status_style, status_icon) =
         if let Some(status) = app_state.connection_manager.get_active_status() {
             match status {
-                ConnectionStatus::Connected => (Style::default().fg(Color::Green), "● "),
-                ConnectionStatus::Connecting => (Style::default().fg(Color::Yellow), "◐ "),
-                ConnectionStatus::Disconnected => (Style::default().fg(Color::DarkGray), "○ "),
-                ConnectionStatus::Error(_) => (Style::default().fg(Color::Red), "✗ "),
+                ConnectionStatus::Connected => {
+                    let config_info = app_state
+                        .connection_manager
+                        .get_active_id()
+                        .and_then(|id| app_state.connection_manager.get_config(id))
+                        .map(|config| format!("{} ({}:{})", config.name, config.host, config.port))
+                        .unwrap_or_else(|| "Connected".to_string());
+                    (
+                        config_info,
+                        theme::status_connected(),
+                        theme::INDICATOR_CONNECTED,
+                    )
+                }
+                ConnectionStatus::Connecting => (
+                    "Connecting...".to_string(),
+                    theme::status_connecting(&ui_state.animation),
+                    theme::spinner_pulse(&ui_state.animation),
+                ),
+                ConnectionStatus::Disconnected => (
+                    "Not connected".to_string(),
+                    theme::status_disconnected(),
+                    theme::INDICATOR_DISCONNECTED,
+                ),
+                ConnectionStatus::Error(ref msg) => (
+                    format!("Error: {}", msg),
+                    theme::status_error(),
+                    theme::INDICATOR_ERROR,
+                ),
             }
         } else {
-            (Style::default().fg(Color::DarkGray), "○ ")
+            (
+                "No connection".to_string(),
+                theme::status_disconnected(),
+                theme::INDICATOR_DISCONNECTED,
+            )
         };
 
-    let status_line = Line::from(vec![
-        Span::styled(status_label, style),
-        Span::raw(status_text),
-        Span::raw("  |  Ctrl+Tab next tab  |  Ctrl+P palette  |  Ctrl+N new  |  ? help  |  q quit"),
-    ]);
+    // Right side: keybindings
+    let keybinds: &[(&str, &str)] = &[
+        ("^Tab", "tabs"),
+        ("^P", "palette"),
+        ("^N", "new"),
+        ("?", "help"),
+        ("q", "quit"),
+    ];
 
-    let status_bar = Paragraph::new(status_line).style(Style::default().bg(Color::Black));
-    f.render_widget(status_bar, area);
+    let mut right_spans: Vec<Span> = Vec::new();
+    for (key, desc) in keybinds.iter() {
+        right_spans.push(Span::styled(*key, Style::default().fg(theme::NEON_CYAN)));
+        right_spans.push(Span::styled(
+            format!(" {}  ", desc),
+            Style::default().fg(theme::TEXT_DIM),
+        ));
+    }
+
+    // Calculate spacing
+    let left_content = format!("{} {}", status_icon, status_text);
+    let right_content_len: usize = keybinds
+        .iter()
+        .map(|(k, d)| k.len() + d.len() + 3)
+        .sum();
+    let padding = inner_area
+        .width
+        .saturating_sub(left_content.chars().count() as u16 + right_content_len as u16);
+
+    let mut spans = vec![
+        Span::styled(format!("{} ", status_icon), status_style),
+        Span::styled(status_text, Style::default().fg(theme::TEXT_PRIMARY)),
+        Span::raw(" ".repeat(padding as usize)),
+    ];
+    spans.extend(right_spans);
+
+    let status_line = Paragraph::new(Line::from(spans));
+    f.render_widget(status_line, inner_area);
 }
 
-fn render_quit_confirmation(f: &mut Frame) {
-    // Small centered dialog
-    let area = centered_rect(40, 20, f.area());
-    // Clamp to reasonable size
+fn render_quit_confirmation(f: &mut Frame, _animation: &AnimationState) {
+    let area = centered_rect(45, 25, f.area());
     let area = Rect {
         x: area.x,
         y: area.y,
-        width: area.width.min(50).max(30),
-        height: area.height.min(7).max(5),
+        width: area.width.min(55).max(35),
+        height: area.height.min(8).max(6),
     };
-    // Re-center with clamped size
     let area = Rect {
         x: (f.area().width.saturating_sub(area.width)) / 2,
         y: (f.area().height.saturating_sub(area.height)) / 2,
@@ -459,26 +572,50 @@ fn render_quit_confirmation(f: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled(
             "Are you sure you want to quit?",
-            Style::default().fg(Color::White),
+            Style::default()
+                .fg(theme::TEXT_BRIGHT)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  y", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::raw(" yes  "),
-            Span::styled("n", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-            Span::raw(" no  "),
+            Span::styled(
+                " y ",
+                Style::default()
+                    .fg(theme::BG_DEEP)
+                    .bg(theme::NEON_GREEN)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" yes  ", Style::default().fg(theme::TEXT_SECONDARY)),
+            Span::styled(
+                " n ",
+                Style::default()
+                    .fg(theme::BG_DEEP)
+                    .bg(theme::NEON_RED)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" no ", Style::default().fg(theme::TEXT_SECONDARY)),
         ]),
     ];
 
     let dialog = Paragraph::new(text)
         .block(
             Block::default()
-                .title(" Quit ")
+                .title(Line::from(vec![
+                    Span::styled(" ", Style::default()),
+                    Span::styled(
+                        "Quit",
+                        Style::default()
+                            .fg(theme::NEON_AMBER)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" ", Style::default()),
+                ]))
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Yellow)),
+                .border_style(Style::default().fg(theme::NEON_AMBER)),
         )
-        .alignment(Alignment::Center);
+        .alignment(Alignment::Center)
+        .style(Style::default().bg(theme::BG_SURFACE));
 
     f.render_widget(Clear, area);
     f.render_widget(dialog, area);

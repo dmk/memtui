@@ -12,6 +12,7 @@ categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 ratatui = "0.28"
+# tachyonfx = "0.20" # Disabled due to ratatui version incompatibility
 crossterm = "0.27"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }

@@ -2,13 +2,14 @@ use super::Component;
 use crate::action::Action;
 use crate::formatter::{Formatter, JsonFormatter, TextFormatter};
 use crate::types::{Value, ValueType};
+use crate::ui::theme::{self, AnimationState};
 use crossterm::event::KeyEvent;
 use ratatui::{
     layout::{Alignment, Constraint, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+        Block, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation,
         ScrollbarState, Table, TableState, Wrap,
     },
     Frame,
@@ -27,6 +28,7 @@ pub struct ValueViewerProps<'a> {
     pub text_formatter: &'a TextFormatter,
     pub is_active: bool,
     pub backend_type: Option<crate::types::BackendType>,
+    pub animation: &'a AnimationState,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -402,19 +404,12 @@ impl ValueViewer {
         self.text_cache = None;
     }
 
-    fn viewer_block(is_active: bool, title: impl Into<String>) -> Block<'static> {
-        let border_style = if is_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-
-        Block::default()
-            .title(Line::from(title.into()))
-            .title_alignment(Alignment::Left)
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(border_style)
+    fn viewer_block(
+        is_active: bool,
+        title: impl Into<String>,
+        _animation: &AnimationState,
+    ) -> Block<'static> {
+        theme::panel_block(title, is_active)
     }
 
     fn render_scrollbar_for_offset(&mut self, f: &mut Frame, area: Rect) {
@@ -468,8 +463,9 @@ impl ValueViewer {
         title: &str,
         lines: Vec<Line<'static>>,
         style: Style,
+        animation: &AnimationState,
     ) {
-        let block = Self::viewer_block(is_active, title);
+        let block = Self::viewer_block(is_active, title, animation);
         let inner = block.inner(area);
 
         // Update dimensions for scroll handling
@@ -521,6 +517,7 @@ impl ValueViewer {
             value,
             TextContentKind::Plain,
             paragraph_style,
+            props.animation,
             move || ValueViewer::plain_text_to_lines(&text),
         );
     }
@@ -535,11 +532,12 @@ impl ValueViewer {
         value: &Value,
         kind: TextContentKind,
         paragraph_style: Style,
+        animation: &AnimationState,
         lines_builder: F,
     ) where
         F: FnOnce() -> Vec<Line<'static>>,
     {
-        let block = Self::viewer_block(is_active, title);
+        let block = Self::viewer_block(is_active, title, animation);
         let inner = block.inner(area);
         let content_width = inner.width.max(1);
 
@@ -635,6 +633,7 @@ impl ValueViewer {
                     value,
                     TextContentKind::Json,
                     Style::default(),
+                    props.animation,
                     move || lines,
                 );
                 true
@@ -656,13 +655,14 @@ impl ValueViewer {
         headers: Vec<&str>,
         rows_data: Vec<Vec<String>>,
         json_formatter: &JsonFormatter,
+        animation: &AnimationState,
     ) {
         // Update total rows and viewport for scroll handling
         self.total_rows = rows_data.len();
         self.viewport_height = area.height.saturating_sub(2);
 
         let header_style = Style::default()
-            .fg(Color::Cyan)
+            .fg(theme::NEON_CYAN)
             .add_modifier(Modifier::BOLD);
 
         let entry_count = rows_data.len();
@@ -725,19 +725,19 @@ impl ValueViewer {
                     .enumerate()
                     .map(|(i, lines)| {
                         let style = if i == 0 && headers.len() == 2 {
-                            Style::default().fg(Color::Yellow)
+                            Style::default().fg(theme::NEON_AMBER)
                         } else {
-                            Style::default()
+                            Style::default().fg(theme::TEXT_PRIMARY)
                         };
                         Cell::from(lines).style(style)
                     })
                     .collect();
 
-                // Alternate row colors, but don't highlight unless active
+                // Alternate row colors with themed styling
                 let row_style = if idx % 2 == 0 {
-                    Style::default()
+                    Style::default().bg(theme::BG_PANEL)
                 } else {
-                    Style::default().bg(Color::Rgb(20, 20, 20))
+                    Style::default().bg(theme::BG_SURFACE)
                 };
 
                 Row::new(cells).style(row_style).height(height)
@@ -756,10 +756,7 @@ impl ValueViewer {
         }
 
         let highlight_style = if is_active {
-            Style::default()
-                .bg(Color::Rgb(60, 60, 60))
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
+            theme::list_selected().add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
@@ -767,7 +764,7 @@ impl ValueViewer {
         let mut table = Table::new(rows, constraints)
             .column_spacing(2)
             .highlight_style(highlight_style)
-            .block(Self::viewer_block(is_active, table_title));
+            .block(Self::viewer_block(is_active, table_title, animation));
 
         if !headers.is_empty() {
             let header_cells: Vec<Cell> = headers
@@ -1073,18 +1070,11 @@ impl ValueViewer {
     }
 
     fn title_for(
-        value_type: Option<ValueType>,
-        backend_type: Option<crate::types::BackendType>,
+        _value_type: Option<ValueType>,
+        _backend_type: Option<crate::types::BackendType>,
     ) -> String {
-        // Don't show key type for memcached
-        if let Some(crate::types::BackendType::Memcached) = backend_type {
-            return "Value Viewer".to_string();
-        }
-
-        match value_type {
-            Some(t) => format!("Value Viewer | {}", t),
-            None => "Value Viewer".to_string(),
-        }
+        // Keep it simple - type info is already shown in the key list
+        "Value".to_string()
     }
 }
 
@@ -1100,6 +1090,7 @@ impl Component for ValueViewer {
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         let base_title = ValueViewer::title_for(props.selected_key_type, props.backend_type);
+        let animation = props.animation;
 
         if let Some(err) = props.error_message {
             self.clear_text_cache();
@@ -1108,8 +1099,12 @@ impl Component for ValueViewer {
                 area,
                 props.is_active,
                 &base_title,
-                vec![Line::from(format!("Error: {}", err))],
-                Style::default().fg(Color::Red),
+                vec![Line::from(Span::styled(
+                    format!("✕ Error: {}", err),
+                    Style::default().fg(theme::NEON_RED),
+                ))],
+                Style::default(),
+                animation,
             );
             return;
         }
@@ -1128,6 +1123,7 @@ impl Component for ValueViewer {
                                 vec!["Field", "Value"],
                                 rows,
                                 props.json_formatter,
+                                animation,
                             );
                             return;
                         }
@@ -1138,7 +1134,8 @@ impl Component for ValueViewer {
                                 props.is_active,
                                 &base_title,
                                 vec![Line::from(format!("Parse error: {}", e))],
-                                Style::default().fg(Color::Red),
+                                Style::default().fg(theme::NEON_RED),
+                                animation,
                             );
                             return;
                         }
@@ -1156,6 +1153,7 @@ impl Component for ValueViewer {
                                 vec!["Index", "Value"],
                                 rows,
                                 props.json_formatter,
+                                animation,
                             );
                             return;
                         }
@@ -1166,7 +1164,8 @@ impl Component for ValueViewer {
                                 props.is_active,
                                 &base_title,
                                 vec![Line::from(format!("Parse error: {}", e))],
-                                Style::default().fg(Color::Red),
+                                Style::default().fg(theme::NEON_RED),
+                                animation,
                             );
                             return;
                         }
@@ -1184,6 +1183,7 @@ impl Component for ValueViewer {
                                 vec![],
                                 rows,
                                 props.json_formatter,
+                                animation,
                             );
                             return;
                         }
@@ -1194,7 +1194,8 @@ impl Component for ValueViewer {
                                 props.is_active,
                                 &base_title,
                                 vec![Line::from(format!("Parse error: {}", e))],
-                                Style::default().fg(Color::Red),
+                                Style::default().fg(theme::NEON_RED),
+                                animation,
                             );
                             return;
                         }
@@ -1212,6 +1213,7 @@ impl Component for ValueViewer {
                                 vec!["Score", "Member"],
                                 rows,
                                 props.json_formatter,
+                                animation,
                             );
                             return;
                         }
@@ -1222,7 +1224,8 @@ impl Component for ValueViewer {
                                 props.is_active,
                                 &base_title,
                                 vec![Line::from(format!("Parse error: {}", e))],
-                                Style::default().fg(Color::Red),
+                                Style::default().fg(theme::NEON_RED),
+                                animation,
                             );
                             return;
                         }
@@ -1255,8 +1258,12 @@ impl Component for ValueViewer {
             area,
             props.is_active,
             &base_title,
-            vec![Line::from("Select a key to view its value")],
-            Style::default().fg(Color::DarkGray),
+            vec![Line::from(Span::styled(
+                "Select a key to view its value",
+                Style::default().fg(theme::TEXT_DIM),
+            ))],
+            Style::default(),
+            animation,
         );
     }
 

@@ -1017,12 +1017,24 @@ impl App {
                     let _ = self.action_tx.send(Action::OpenConnectionForm);
                     return;
                 }
-                KeyCode::Char('l') | KeyCode::Right => {
+                // Ctrl+Arrow keys for connection tab switching
+                KeyCode::Right => {
                     let _ = self.action_tx.send(Action::NextConnectionTab);
                     return;
                 }
-                KeyCode::Char('h') | KeyCode::Left => {
+                KeyCode::Left => {
                     let _ = self.action_tx.send(Action::PrevConnectionTab);
+                    return;
+                }
+                // Ctrl+H/L for pane resizing
+                KeyCode::Char('l') => {
+                    // Expand right pane (shrink left)
+                    self.ui_state.resize_panes(-0.05);
+                    return;
+                }
+                KeyCode::Char('h') => {
+                    // Expand left pane (shrink right)
+                    self.ui_state.resize_panes(0.05);
                     return;
                 }
                 _ => {}
@@ -1071,9 +1083,38 @@ impl App {
             return;
         }
 
-        // Scroll events are now handled in handle_scroll_delta via the accumulator
-        if let MouseEventKind::Down(MouseButton::Left) = event.kind {
-            self.handle_left_click(event.column, event.row);
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Check if clicking on resize handle
+                if let Some(body_area) = self.ui_state.last_body_area {
+                    if self.ui_state.pane_split.is_on_handle(body_area, event.column)
+                        && event.row >= body_area.y
+                        && event.row < body_area.y + body_area.height
+                    {
+                        self.ui_state.start_resize();
+                        return;
+                    }
+                }
+                self.handle_left_click(event.column, event.row);
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.ui_state.end_resize();
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.ui_state.is_resizing {
+                    if let Some(body_area) = self.ui_state.last_body_area {
+                        // Calculate new ratio based on mouse position
+                        let relative_x = event.column.saturating_sub(body_area.x) as f32;
+                        let new_ratio = relative_x / body_area.width as f32;
+                        let clamped = new_ratio.clamp(
+                            self.ui_state.pane_split.min,
+                            self.ui_state.pane_split.max,
+                        );
+                        self.ui_state.pane_split.ratio = clamped;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

@@ -5,7 +5,7 @@ use super::{
 use crate::types::{
     Auth, BackendType, ConnectionConfig, KeyMetadata, KeyScanResult, Value, ValueType,
 };
-use redis::{AsyncCommands, RedisError, aio::ConnectionManager};
+use redis::{aio::ConnectionManager, AsyncCommands, RedisError};
 use std::time::{Duration, SystemTime};
 
 /// Redis backend implementation
@@ -116,10 +116,10 @@ impl RedisBackend {
                     }
                     _ if key.starts_with("db") => {
                         // Parse db0:keys=123,expires=45
-                        if let Some(keys_part) = value.split(',').next()
-                            && let Some(count) = keys_part.strip_prefix("keys=")
-                        {
-                            keys_total += count.parse::<u64>().unwrap_or(0);
+                        if let Some(keys_part) = value.split(',').next() {
+                            if let Some(count) = keys_part.strip_prefix("keys=") {
+                                keys_total += count.parse::<u64>().unwrap_or(0);
+                            }
                         }
                     }
                     _ => {}

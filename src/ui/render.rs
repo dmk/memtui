@@ -1,18 +1,18 @@
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
+    Frame,
 };
 
 use super::components::{
-    Component,
     connection_list::ConnectionListProps,
     key_browser::KeyBrowserProps,
     value_viewer::ValueViewerProps,
     warning_message::{MessageKind, WarningMessage, WarningMessageProps},
     welcome::WelcomeScreenProps,
+    Component,
 };
 use super::render_connection_form;
 use super::state::{Panel, TabRegion, UiState};

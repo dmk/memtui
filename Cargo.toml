@@ -1,7 +1,7 @@
 [package]
 name = "memtui"
 version = "0.1.2"
-edition = "2024"
+edition = "2021"
 authors = ["Dmytro Koval <contact@dkoval.pro>"]
 description = "An interactive TUI (Terminal User Interface) for browsing and inspecting key-value stores (Redis, Memcached, etc.)"
 license = "Apache-2.0"

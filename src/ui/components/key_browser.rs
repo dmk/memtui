@@ -1,6 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    Frame,
     layout::{Alignment, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -8,6 +7,7 @@ use ratatui::{
         Block, BorderType, Borders, List, ListItem, ListState, Scrollbar, ScrollbarOrientation,
         ScrollbarState,
     },
+    Frame,
 };
 
 use super::Component;

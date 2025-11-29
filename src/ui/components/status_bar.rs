@@ -1,10 +1,10 @@
 use crossterm::event::KeyEvent;
 use ratatui::{
-    Frame,
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
     widgets::Paragraph,
+    Frame,
 };
 
 use super::Component;

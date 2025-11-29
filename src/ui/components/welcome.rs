@@ -3,11 +3,11 @@ use crate::action::Action;
 use crate::types::ConnectionConfig;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
+    Frame,
 };
 
 pub struct WelcomeScreenProps<'a> {
@@ -225,10 +225,10 @@ impl Component for WelcomeScreen {
                 None
             }
             KeyCode::Enter => {
-                if let Some(idx) = self.state.selected()
-                    && let Some(config) = props.recent_configs.get(idx)
-                {
-                    return Some(Action::FocusConnection(config.id.clone()));
+                if let Some(idx) = self.state.selected() {
+                    if let Some(config) = props.recent_configs.get(idx) {
+                        return Some(Action::FocusConnection(config.id.clone()));
+                    }
                 }
                 None
             }

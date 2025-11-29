@@ -121,10 +121,10 @@ impl Backend for MockBackend {
         let mut keys = Self::mock_keys();
 
         // Simple pattern matching
-        if let Some(pattern) = pattern
-            && pattern != "*"
-        {
-            keys.retain(|k| k.name.contains(pattern));
+        if let Some(pattern) = pattern {
+            if pattern != "*" {
+                keys.retain(|k| k.name.contains(pattern));
+            }
         }
 
         Ok(KeyScanResult {

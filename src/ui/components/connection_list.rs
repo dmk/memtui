@@ -4,10 +4,10 @@ use crate::app::ConnectionStatus;
 use crate::types::ConnectionConfig;
 use crossterm::event::KeyEvent;
 use ratatui::{
-    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState},
+    Frame,
 };
 
 pub struct ConnectionListProps<'a> {

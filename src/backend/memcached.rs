@@ -69,11 +69,12 @@ impl MemcachedBackend {
             // Parse lines like: STAT 1:chunk_size 96
             if line.starts_with("STAT ") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2
-                    && let Some(slab_part) = parts[1].split(':').next()
-                    && let Ok(slab_id) = slab_part.parse::<u32>()
-                {
-                    slab_ids.insert(slab_id);
+                if parts.len() >= 2 {
+                    if let Some(slab_part) = parts[1].split(':').next() {
+                        if let Ok(slab_id) = slab_part.parse::<u32>() {
+                            slab_ids.insert(slab_id);
+                        }
+                    }
                 }
             }
         }

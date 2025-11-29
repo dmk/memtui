@@ -6,7 +6,7 @@ pub mod warning_message;
 pub mod welcome;
 
 use crossterm::event::KeyEvent;
-use ratatui::{Frame, layout::Rect};
+use ratatui::{layout::Rect, Frame};
 
 /// Base trait for UI components
 pub trait Component {

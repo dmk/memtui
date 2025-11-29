@@ -4,15 +4,15 @@ use crossterm::{
         MouseEvent, MouseEventKind,
     },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::layout::Rect;
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{backend::CrosstermBackend, Terminal};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicIsize, AtomicU16, Ordering};
 use std::sync::{Arc, Once};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -105,43 +105,43 @@ impl App {
             const MAX_SCROLL_ACCUMULATION: isize = 50; // ~10 lines max per batch
 
             loop {
-                if event::poll(event_poll_timeout).unwrap_or(false)
-                    && let Ok(event) = event::read()
-                {
-                    match event {
-                        Event::Key(key) => {
-                            let _ = tx.send(Action::Key(key));
-                        }
-                        Event::Mouse(mouse) => {
-                            // Update last known mouse position (lock-free atomic operations)
-                            mouse_x.store(mouse.column, Ordering::Relaxed);
-                            mouse_y.store(mouse.row, Ordering::Relaxed);
+                if event::poll(event_poll_timeout).unwrap_or(false) {
+                    if let Ok(event) = event::read() {
+                        match event {
+                            Event::Key(key) => {
+                                let _ = tx.send(Action::Key(key));
+                            }
+                            Event::Mouse(mouse) => {
+                                // Update last known mouse position (lock-free atomic operations)
+                                mouse_x.store(mouse.column, Ordering::Relaxed);
+                                mouse_y.store(mouse.row, Ordering::Relaxed);
 
-                            match mouse.kind {
-                                MouseEventKind::ScrollDown => {
-                                    // Cap accumulation to prevent pile-up
-                                    let current = scroll_acc.load(Ordering::Relaxed);
-                                    if current < MAX_SCROLL_ACCUMULATION {
-                                        scroll_acc.fetch_add(1, Ordering::Relaxed);
+                                match mouse.kind {
+                                    MouseEventKind::ScrollDown => {
+                                        // Cap accumulation to prevent pile-up
+                                        let current = scroll_acc.load(Ordering::Relaxed);
+                                        if current < MAX_SCROLL_ACCUMULATION {
+                                            scroll_acc.fetch_add(1, Ordering::Relaxed);
+                                        }
                                     }
-                                }
-                                MouseEventKind::ScrollUp => {
-                                    // Cap accumulation to prevent pile-up
-                                    let current = scroll_acc.load(Ordering::Relaxed);
-                                    if current > -MAX_SCROLL_ACCUMULATION {
-                                        scroll_acc.fetch_sub(1, Ordering::Relaxed);
+                                    MouseEventKind::ScrollUp => {
+                                        // Cap accumulation to prevent pile-up
+                                        let current = scroll_acc.load(Ordering::Relaxed);
+                                        if current > -MAX_SCROLL_ACCUMULATION {
+                                            scroll_acc.fetch_sub(1, Ordering::Relaxed);
+                                        }
                                     }
-                                }
-                                _ => {
-                                    // Forward non-scroll mouse events as normal
-                                    let _ = tx.send(Action::Mouse(mouse));
+                                    _ => {
+                                        // Forward non-scroll mouse events as normal
+                                        let _ = tx.send(Action::Mouse(mouse));
+                                    }
                                 }
                             }
+                            Event::Resize(w, h) => {
+                                let _ = tx.send(Action::Resize(w, h));
+                            }
+                            _ => {}
                         }
-                        Event::Resize(w, h) => {
-                            let _ = tx.send(Action::Resize(w, h));
-                        }
-                        _ => {}
                     }
                 }
                 // Yield to let other tasks run
@@ -234,10 +234,12 @@ impl App {
 
                     // Pass true if the key selection actually changed
                     if self.ui_state.next_item(keys_len)
-                        && self.ui_state.active_panel == Panel::Keys // Only reload if we moved in the keys panel
-                        && let Some(idx) = self.ui_state.key_browser.state.selected()
+                        && self.ui_state.active_panel == Panel::Keys
+                    // Only reload if we moved in the keys panel
                     {
-                        let _ = self.action_tx.send(Action::SelectKey(idx));
+                        if let Some(idx) = self.ui_state.key_browser.state.selected() {
+                            let _ = self.action_tx.send(Action::SelectKey(idx));
+                        }
                     }
                 }
                 true
@@ -257,10 +259,12 @@ impl App {
 
                     // Pass true if the key selection actually changed
                     if self.ui_state.previous_item(keys_len)
-                        && self.ui_state.active_panel == Panel::Keys // Only reload if we moved in the keys panel
-                        && let Some(idx) = self.ui_state.key_browser.state.selected()
+                        && self.ui_state.active_panel == Panel::Keys
+                    // Only reload if we moved in the keys panel
                     {
-                        let _ = self.action_tx.send(Action::SelectKey(idx));
+                        if let Some(idx) = self.ui_state.key_browser.state.selected() {
+                            let _ = self.action_tx.send(Action::SelectKey(idx));
+                        }
                     }
                 }
                 true
@@ -731,12 +735,12 @@ impl App {
                         return;
                     }
                     KeyCode::Enter => {
-                        if let Some(idx) = self.ui_state.welcome_screen.state.selected()
-                            && let Some(config) = recent_configs.get(idx)
-                        {
-                            let _ = self
-                                .action_tx
-                                .send(Action::FocusConnection(config.id.clone()));
+                        if let Some(idx) = self.ui_state.welcome_screen.state.selected() {
+                            if let Some(config) = recent_configs.get(idx) {
+                                let _ = self
+                                    .action_tx
+                                    .send(Action::FocusConnection(config.id.clone()));
+                            }
                         }
                         return;
                     }
@@ -767,12 +771,12 @@ impl App {
                     let _ = self.action_tx.send(Action::CloseConnectionPalette);
                 }
                 KeyCode::Enter => {
-                    if let Some(idx) = self.ui_state.connection_list.state.selected()
-                        && let Some(config) = configs.get(idx)
-                    {
-                        let _ = self
-                            .action_tx
-                            .send(Action::FocusConnection(config.id.clone()));
+                    if let Some(idx) = self.ui_state.connection_list.state.selected() {
+                        if let Some(config) = configs.get(idx) {
+                            let _ = self
+                                .action_tx
+                                .send(Action::FocusConnection(config.id.clone()));
+                        }
                     }
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -786,12 +790,12 @@ impl App {
                     }
                 }
                 KeyCode::Char('d') => {
-                    if let Some(idx) = self.ui_state.connection_list.state.selected()
-                        && let Some(config) = configs.get(idx)
-                    {
-                        let _ = self
-                            .action_tx
-                            .send(Action::DeleteConnection(config.id.clone()));
+                    if let Some(idx) = self.ui_state.connection_list.state.selected() {
+                        if let Some(config) = configs.get(idx) {
+                            let _ = self
+                                .action_tx
+                                .send(Action::DeleteConnection(config.id.clone()));
+                        }
                     }
                 }
                 KeyCode::Char('q') => {
@@ -874,22 +878,27 @@ impl App {
 
     fn handle_left_click(&mut self, column: u16, row: u16) {
         if self.ui_state.show_connection_palette {
-            if let Some(area) = self.ui_state.connection_palette_area
-                && Self::point_in_rect(area, column, row)
-            {
-                let total = self.app_state.connection_manager.get_configs().len();
-                if total > 0
-                    && let Some(idx) = self
-                        .ui_state
-                        .connection_list
-                        .index_at_position(area, column, row, total)
-                {
-                    self.ui_state.connection_list.state.select(Some(idx));
-                    if let Some(config) = self.app_state.connection_manager.get_configs().get(idx) {
-                        let _ = self
-                            .action_tx
-                            .send(Action::FocusConnection(config.id.clone()));
+            if let Some(area) = self.ui_state.connection_palette_area {
+                if Self::point_in_rect(area, column, row) {
+                    let total = self.app_state.connection_manager.get_configs().len();
+                    if total > 0 {
+                        if let Some(idx) = self
+                            .ui_state
+                            .connection_list
+                            .index_at_position(area, column, row, total)
+                        {
+                            self.ui_state.connection_list.state.select(Some(idx));
+                            if let Some(config) =
+                                self.app_state.connection_manager.get_configs().get(idx)
+                            {
+                                let _ = self
+                                    .action_tx
+                                    .send(Action::FocusConnection(config.id.clone()));
+                            }
+                        }
                     }
+                } else {
+                    let _ = self.action_tx.send(Action::CloseConnectionPalette);
                 }
             } else {
                 let _ = self.action_tx.send(Action::CloseConnectionPalette);
@@ -909,23 +918,23 @@ impl App {
             return;
         }
 
-        if let Some(area) = self.ui_state.last_key_area
-            && Self::point_in_rect(area, column, row)
-        {
-            self.ui_state.active_panel = Panel::Keys;
-            if let Some(index) = self.key_index_from_position(column, row) {
-                self.ui_state.key_browser.select(Some(index));
-                self.app_state.selected_key_index = Some(index);
-                self.app_state.selected_value = None;
-                let _ = self.action_tx.send(Action::SelectKey(index));
+        if let Some(area) = self.ui_state.last_key_area {
+            if Self::point_in_rect(area, column, row) {
+                self.ui_state.active_panel = Panel::Keys;
+                if let Some(index) = self.key_index_from_position(column, row) {
+                    self.ui_state.key_browser.select(Some(index));
+                    self.app_state.selected_key_index = Some(index);
+                    self.app_state.selected_value = None;
+                    let _ = self.action_tx.send(Action::SelectKey(index));
+                }
+                return;
             }
-            return;
         }
 
-        if let Some(area) = self.ui_state.last_value_area
-            && Self::point_in_rect(area, column, row)
-        {
-            self.ui_state.active_panel = Panel::Value;
+        if let Some(area) = self.ui_state.last_value_area {
+            if Self::point_in_rect(area, column, row) {
+                self.ui_state.active_panel = Panel::Value;
+            }
         }
     }
 
@@ -995,25 +1004,25 @@ impl App {
         }
 
         if self.ui_state.show_connection_palette {
-            if let Some(area) = self.ui_state.connection_palette_area
-                && Self::point_in_rect(area, column, row)
-            {
-                let len = self.app_state.connection_manager.get_configs().len();
-                if len > 0 {
-                    if delta > 0 {
-                        // Scroll Down (next)
-                        trace!(len, "Scrolling connection palette down");
-                        for _ in 0..delta {
-                            self.ui_state.connection_list.next(len);
+            if let Some(area) = self.ui_state.connection_palette_area {
+                if Self::point_in_rect(area, column, row) {
+                    let len = self.app_state.connection_manager.get_configs().len();
+                    if len > 0 {
+                        if delta > 0 {
+                            // Scroll Down (next)
+                            trace!(len, "Scrolling connection palette down");
+                            for _ in 0..delta {
+                                self.ui_state.connection_list.next(len);
+                            }
+                        } else {
+                            // Scroll Up (prev)
+                            trace!(len, "Scrolling connection palette up");
+                            for _ in 0..(-delta) {
+                                self.ui_state.connection_list.prev(len);
+                            }
                         }
-                    } else {
-                        // Scroll Up (prev)
-                        trace!(len, "Scrolling connection palette up");
-                        for _ in 0..(-delta) {
-                            self.ui_state.connection_list.prev(len);
-                        }
+                        return true;
                     }
-                    return true;
                 }
             }
             return false;
@@ -1023,14 +1032,24 @@ impl App {
         // We want magnitude for repeated actions
         let count = delta.unsigned_abs();
 
-        let target_panel = if let Some(area) = self.ui_state.last_key_area
-            && Self::point_in_rect(area, column, row)
-        {
-            Some(Panel::Keys)
-        } else if let Some(area) = self.ui_state.last_value_area
-            && Self::point_in_rect(area, column, row)
-        {
-            Some(Panel::Value)
+        let target_panel = if let Some(area) = self.ui_state.last_key_area {
+            if Self::point_in_rect(area, column, row) {
+                Some(Panel::Keys)
+            } else if let Some(value_area) = self.ui_state.last_value_area {
+                if Self::point_in_rect(value_area, column, row) {
+                    Some(Panel::Value)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else if let Some(area) = self.ui_state.last_value_area {
+            if Self::point_in_rect(area, column, row) {
+                Some(Panel::Value)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -1078,8 +1097,10 @@ impl App {
                 let changed = self.ui_state.scroll_keys_by(keys_len, scroll_delta);
 
                 // If selection changed, trigger key selection action
-                if changed && let Some(idx) = self.ui_state.key_browser.state.selected() {
-                    let _ = self.action_tx.send(Action::SelectKey(idx));
+                if changed {
+                    if let Some(idx) = self.ui_state.key_browser.state.selected() {
+                        let _ = self.action_tx.send(Action::SelectKey(idx));
+                    }
                 }
 
                 changed

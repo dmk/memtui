@@ -4,7 +4,6 @@ use crate::formatter::{Formatter, JsonFormatter, TextFormatter};
 use crate::types::{Value, ValueType};
 use crossterm::event::KeyEvent;
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -12,6 +11,7 @@ use ratatui::{
         Block, BorderType, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation,
         ScrollbarState, Table, TableState, Wrap,
     },
+    Frame,
 };
 
 use serde_json::Value as JsonValue;
@@ -292,7 +292,8 @@ impl ValueViewer {
             if delta > 0 && i >= max_index {
                 trace!(
                     index = i,
-                    max_index, "Already at bottom; ignoring scroll down"
+                    max_index,
+                    "Already at bottom; ignoring scroll down"
                 );
                 return;
             }
@@ -320,7 +321,8 @@ impl ValueViewer {
             if delta > 0 && self.scroll_offset >= max_scroll as u16 {
                 trace!(
                     scroll_offset = self.scroll_offset,
-                    max_scroll, "Already at bottom; ignoring scroll down"
+                    max_scroll,
+                    "Already at bottom; ignoring scroll down"
                 );
                 return;
             }
@@ -353,7 +355,9 @@ impl ValueViewer {
             self.scroll_offset = new_offset.min(max_scroll as u16);
             trace!(
                 scroll_offset = self.scroll_offset,
-                max_scroll, delta, "Updated value viewer scroll offset"
+                max_scroll,
+                delta,
+                "Updated value viewer scroll offset"
             );
         }
     }
@@ -698,13 +702,14 @@ impl ValueViewer {
                         i == headers.len() - 1
                     };
 
-                    if is_value_column
-                        && let Ok(json) = serde_json::from_str::<JsonValue>(c)
-                        && let Ok(pretty) = serde_json::to_string_pretty(&json)
-                    {
-                        let colored_lines = json_formatter.colorize_json(&pretty);
-                        formatted_cells.push(colored_lines);
-                        continue;
+                    if is_value_column {
+                        if let Ok(json) = serde_json::from_str::<JsonValue>(c) {
+                            if let Ok(pretty) = serde_json::to_string_pretty(&json) {
+                                let colored_lines = json_formatter.colorize_json(&pretty);
+                                formatted_cells.push(colored_lines);
+                                continue;
+                            }
+                        }
                     }
                     formatted_cells.push(vec![Line::from(c.clone())]);
                 }
@@ -744,10 +749,10 @@ impl ValueViewer {
             self.table_state.select(Some(0));
         }
         // Ensure selection is valid
-        if let Some(selected) = self.table_state.selected()
-            && selected >= rows.len()
-        {
-            self.table_state.select(Some(rows.len().saturating_sub(1)));
+        if let Some(selected) = self.table_state.selected() {
+            if selected >= rows.len() {
+                self.table_state.select(Some(rows.len().saturating_sub(1)));
+            }
         }
 
         let highlight_style = if is_active {
@@ -1040,12 +1045,12 @@ impl ValueViewer {
         let entries: Vec<Vec<String>> = arr
             .iter()
             .map(|item| {
-                if let Some(tuple) = item.as_array()
-                    && tuple.len() >= 2
-                {
-                    let member = Self::json_value_to_string(&tuple[0]);
-                    let score = Self::json_value_to_string(&tuple[1]);
-                    return vec![score, member]; // Score first for ZSet display usually? Or Member? Let's do Score | Member
+                if let Some(tuple) = item.as_array() {
+                    if tuple.len() >= 2 {
+                        let member = Self::json_value_to_string(&tuple[0]);
+                        let score = Self::json_value_to_string(&tuple[1]);
+                        return vec![score, member]; // Score first for ZSet display usually? Or Member? Let's do Score | Member
+                    }
                 }
                 vec!["?".to_string(), Self::json_value_to_string(item)]
             })

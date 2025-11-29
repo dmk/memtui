@@ -1,8 +1,8 @@
-use super::ConnectionForm;
 use super::components::connection_list::ConnectionList;
 use super::components::key_browser::KeyBrowser;
 use super::components::value_viewer::ValueViewer;
 use super::components::welcome::WelcomeScreen;
+use super::ConnectionForm;
 use ratatui::layout::Rect;
 use strum::{EnumIter, IntoEnumIterator};
 
@@ -96,19 +96,19 @@ impl UiState {
 
     pub fn next_panel(&mut self) {
         let mut cycle = Panel::iter().cycle();
-        if let Some(_) = cycle.find(|&p| p == self.active_panel)
-            && let Some(next) = cycle.next()
-        {
-            self.active_panel = next;
+        if cycle.any(|p| p == self.active_panel) {
+            if let Some(next) = cycle.next() {
+                self.active_panel = next;
+            }
         }
     }
 
     pub fn prev_panel(&mut self) {
         let mut cycle = Panel::iter().rev().cycle();
-        if let Some(_) = cycle.find(|&p| p == self.active_panel)
-            && let Some(next) = cycle.next()
-        {
-            self.active_panel = next;
+        if cycle.any(|p| p == self.active_panel) {
+            if let Some(next) = cycle.next() {
+                self.active_panel = next;
+            }
         }
     }
 

@@ -194,13 +194,25 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, 
         .and_then(|id| app_state.connection_manager.get_config(id))
         .map(|config| config.backend_type);
 
+    // Search state
+    let active_search_query = if app_state.is_searching || !app_state.search_query.is_empty() {
+        Some(app_state.search_query.as_str())
+    } else {
+        None
+    };
+
     let props = KeyBrowserProps {
         keys: &app_state.keys,
         total_count: app_state.total_key_count,
         is_loading: app_state.is_loading_keys,
-        active_search_query: None,
+        active_search_query,
         is_active: ui_state.active_panel == Panel::Keys,
         backend_type,
+        is_searching: app_state.is_searching,
+        search_results_local: &app_state.search_results_local,
+        search_results_server: &app_state.search_results_server,
+        is_server_searching: app_state.is_server_searching,
+        search_selection_index: app_state.search_selection_index,
     };
 
     ui_state.key_browser.render(f, area, props);

@@ -69,6 +69,7 @@ impl Backend for MockBackend {
             supports_scan: true,
             supports_raw_commands: true,
             supports_batch_get: true,
+            supports_efficient_pattern_search: true, // Mock behaves like Redis
         }
     }
 
@@ -126,6 +127,27 @@ impl Backend for MockBackend {
                 keys.retain(|k| k.name.contains(pattern));
             }
         }
+
+        Ok(KeyScanResult {
+            keys,
+            cursor: None,
+            has_more: false,
+        })
+    }
+
+    async fn search_keys(&self, pattern: &str, limit: usize) -> Result<KeyScanResult, BackendError> {
+        if !self.connected {
+            return Err(BackendError::ConnectionError("Not connected".to_string()));
+        }
+
+        let search_term = pattern.trim_matches('*').to_lowercase();
+        let mut keys: Vec<KeyMetadata> = Self::mock_keys()
+            .into_iter()
+            .filter(|k| k.name.to_lowercase().contains(&search_term))
+            .take(limit)
+            .collect();
+
+        keys.truncate(limit);
 
         Ok(KeyScanResult {
             keys,

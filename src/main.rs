@@ -21,6 +21,7 @@ use memtui::action::Action;
 use memtui::app::{AppState, ConnectionStatus};
 use memtui::backend::{Backend, MemcachedBackend, RedisBackend};
 use memtui::config::Config;
+use memtui::search::fuzzy_search_keys;
 use memtui::types::{BackendType, ConnectionConfig};
 use memtui::ui::{self, Panel, UiState};
 use memtui::userdata;
@@ -722,6 +723,86 @@ impl App {
                 true
             }
 
+            // Search actions
+            Action::StartSearch => {
+                self.app_state.start_search();
+                true
+            }
+
+            Action::ClearSearch => {
+                self.app_state.reset_search();
+                // Reset key browser selection to show all keys
+                if !self.app_state.keys.is_empty() {
+                    self.ui_state.key_browser.select(Some(0));
+                }
+                true
+            }
+
+            Action::SearchAddChar(c) => {
+                if self.app_state.is_searching {
+                    self.app_state.search_query.push(c);
+                    self.trigger_search();
+                    true
+                } else {
+                    false
+                }
+            }
+
+            Action::SearchDeleteChar => {
+                if self.app_state.is_searching {
+                    self.app_state.search_query.pop();
+                    if self.app_state.search_query.is_empty() {
+                        // Clear search results when query is empty
+                        self.app_state.search_results_local.clear();
+                        self.app_state.search_results_server.clear();
+                    } else {
+                        self.trigger_search();
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+
+            Action::UpdateSearchQuery(query) => {
+                if self.app_state.is_searching {
+                    self.app_state.search_query = query;
+                    self.trigger_search();
+                    true
+                } else {
+                    false
+                }
+            }
+
+            Action::DidSearchLocal { indices, token } => {
+                if self.app_state.search_token == token && self.app_state.is_searching {
+                    self.app_state.search_results_local = indices;
+                    // Auto-select first result if any
+                    if !self.app_state.search_results_local.is_empty() {
+                        self.app_state.search_selection_index = Some(0);
+                        // Also load the value for the first result
+                        if let Some(&key_idx) = self.app_state.search_results_local.first() {
+                            let _ = self.action_tx.send(Action::SelectKey(key_idx));
+                        }
+                    } else {
+                        self.app_state.search_selection_index = None;
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+
+            Action::DidSearchServer { result, token } => {
+                if self.app_state.search_token == token {
+                    self.app_state.search_results_server = result.keys;
+                    self.app_state.is_server_searching = false;
+                    true
+                } else {
+                    false
+                }
+            }
+
             Action::Error(e) => {
                 self.app_state.error_message = Some(e);
                 true
@@ -760,6 +841,53 @@ impl App {
 
         if self.ui_state.show_help {
             let _ = self.action_tx.send(Action::ToggleHelp);
+            return;
+        }
+
+        // Handle search mode input
+        if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
+            match key.code {
+                KeyCode::Esc => {
+                    let _ = self.action_tx.send(Action::ClearSearch);
+                }
+                KeyCode::Backspace if self.app_state.is_searching => {
+                    let _ = self.action_tx.send(Action::SearchDeleteChar);
+                }
+                KeyCode::Enter if self.app_state.is_searching => {
+                    // Confirm search and keep results, exit search input mode
+                    self.app_state.is_searching = false;
+                }
+                KeyCode::Char(c) if self.app_state.is_searching => {
+                    let _ = self.action_tx.send(Action::SearchAddChar(c));
+                }
+                KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                    // Navigate through search results (simple index-based)
+                    let results_len = self.app_state.search_results_local.len();
+                    if results_len > 0 {
+                        let current = self.app_state.search_selection_index.unwrap_or(0);
+                        let next = if current + 1 >= results_len { 0 } else { current + 1 };
+                        self.app_state.search_selection_index = Some(next);
+                        // Load value for selected key
+                        if let Some(&key_idx) = self.app_state.search_results_local.get(next) {
+                            let _ = self.action_tx.send(Action::SelectKey(key_idx));
+                        }
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
+                    // Navigate through search results backwards
+                    let results_len = self.app_state.search_results_local.len();
+                    if results_len > 0 {
+                        let current = self.app_state.search_selection_index.unwrap_or(0);
+                        let prev = if current == 0 { results_len - 1 } else { current - 1 };
+                        self.app_state.search_selection_index = Some(prev);
+                        // Load value for selected key
+                        if let Some(&key_idx) = self.app_state.search_results_local.get(prev) {
+                            let _ = self.action_tx.send(Action::SelectKey(key_idx));
+                        }
+                    }
+                }
+                _ => {}
+            }
             return;
         }
 
@@ -908,6 +1036,14 @@ impl App {
             KeyCode::Char('?') => {
                 let _ = self.action_tx.send(Action::ToggleHelp);
             }
+            KeyCode::Char('/') => {
+                // Start search mode when there's an active connection with keys
+                if self.app_state.connection_manager.get_active_id().is_some()
+                    && !self.app_state.keys.is_empty()
+                {
+                    let _ = self.action_tx.send(Action::StartSearch);
+                }
+            }
             KeyCode::Tab => {
                 let _ = self.action_tx.send(Action::NextPanel);
             }
@@ -1013,6 +1149,69 @@ impl App {
             tokio::time::sleep(debounce).await;
             let _ = tx.send(Action::LoadValueDebounced { index: idx, token });
         });
+    }
+
+    /// Trigger search: runs local fuzzy search immediately and schedules background server search
+    fn trigger_search(&mut self) {
+        // Increment token to cancel stale searches
+        self.app_state.search_token = self.app_state.search_token.wrapping_add(1);
+        let token = self.app_state.search_token;
+        let query = self.app_state.search_query.clone();
+
+        if query.is_empty() {
+            self.app_state.search_results_local.clear();
+            self.app_state.search_results_server.clear();
+            self.app_state.is_server_searching = false;
+            return;
+        }
+
+        // 1. Immediate local fuzzy search on loaded keys
+        let keys = &self.app_state.keys;
+        let local_results = fuzzy_search_keys(keys, &query);
+        let tx = self.action_tx.clone();
+        let _ = tx.send(Action::DidSearchLocal {
+            indices: local_results,
+            token,
+        });
+
+        // 2. Background server search (debounced)
+        if let Some(backend) = self
+            .app_state
+            .connection_manager
+            .get_active_backend_handle()
+        {
+            // Mark server search as in progress
+            self.app_state.is_server_searching = true;
+
+            let tx = self.action_tx.clone();
+            let search_query = query.clone();
+
+            tokio::spawn(async move {
+                // Debounce: wait 200ms before sending server request
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+                let backend = backend.read().await;
+                // Build pattern for server search (wrap with wildcards for substring match)
+                let pattern = format!("*{}*", search_query);
+                match backend.search_keys(&pattern, 100).await {
+                    Ok(result) => {
+                        let _ = tx.send(Action::DidSearchServer { result, token });
+                    }
+                    Err(e) => {
+                        debug!("Server search failed: {}", e);
+                        // Send empty results to clear loading state
+                        let _ = tx.send(Action::DidSearchServer {
+                            result: memtui::types::KeyScanResult {
+                                keys: vec![],
+                                cursor: None,
+                                has_more: false,
+                            },
+                            token,
+                        });
+                    }
+                }
+            });
+        }
     }
 
     fn focus_connection(&mut self, id: String) {
@@ -1150,33 +1349,73 @@ impl App {
                 debug!(?panel, scroll_delta, "Scrolling panel");
                 self.ui_state.scroll_value_by(scroll_delta)
             } else {
-                // Optimized batch scroll for key list (direct state update, no channel flooding)
-                let keys_len = self
-                    .app_state
-                    .total_key_count
-                    .map(|t| t as usize)
-                    .unwrap_or(self.app_state.keys.len());
+                // Check if we're in search mode
+                let in_search_mode = !self.app_state.search_query.is_empty();
 
-                let scroll_delta = if upward {
-                    -(count as isize)
-                } else {
-                    count as isize
-                };
-                if keys_len == 0 {
-                    trace!("No keys loaded yet; ignoring key scroll");
-                    return false;
-                }
-                debug!(?panel, scroll_delta, keys_len, "Scrolling panel");
-                let changed = self.ui_state.scroll_keys_by(keys_len, scroll_delta);
-
-                // If selection changed, trigger key selection action
-                if changed {
-                    if let Some(idx) = self.ui_state.key_browser.state.selected() {
-                        let _ = self.action_tx.send(Action::SelectKey(idx));
+                if in_search_mode {
+                    // Scroll through search results
+                    let results_len = self.app_state.search_results_local.len();
+                    if results_len == 0 {
+                        trace!("No search results; ignoring scroll");
+                        return false;
                     }
-                }
 
-                changed
+                    let current = self.app_state.search_selection_index.unwrap_or(0);
+                    let new_index = if upward {
+                        // Scroll up
+                        if current == 0 {
+                            results_len - 1
+                        } else {
+                            current.saturating_sub(count)
+                        }
+                    } else {
+                        // Scroll down
+                        let next = current + count;
+                        if next >= results_len {
+                            0
+                        } else {
+                            next
+                        }
+                    };
+
+                    if new_index != current {
+                        self.app_state.search_selection_index = Some(new_index);
+                        // Load value for selected key
+                        if let Some(&key_idx) = self.app_state.search_results_local.get(new_index) {
+                            let _ = self.action_tx.send(Action::SelectKey(key_idx));
+                        }
+                        return true;
+                    }
+                    false
+                } else {
+                    // Normal mode: scroll through all keys
+                    let keys_len = self
+                        .app_state
+                        .total_key_count
+                        .map(|t| t as usize)
+                        .unwrap_or(self.app_state.keys.len());
+
+                    let scroll_delta = if upward {
+                        -(count as isize)
+                    } else {
+                        count as isize
+                    };
+                    if keys_len == 0 {
+                        trace!("No keys loaded yet; ignoring key scroll");
+                        return false;
+                    }
+                    debug!(?panel, scroll_delta, keys_len, "Scrolling panel");
+                    let changed = self.ui_state.scroll_keys_by(keys_len, scroll_delta);
+
+                    // If selection changed, trigger key selection action
+                    if changed {
+                        if let Some(idx) = self.ui_state.key_browser.state.selected() {
+                            let _ = self.action_tx.send(Action::SelectKey(idx));
+                        }
+                    }
+
+                    changed
+                }
             }
         } else {
             trace!("Scroll ignored because cursor was not over a scrollable area");

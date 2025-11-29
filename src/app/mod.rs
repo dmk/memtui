@@ -23,6 +23,14 @@ pub struct AppState {
     pub is_loading_keys: bool,
     pub keys_per_chunk: usize,
     pub viewport_height: usize, // Number of rows visible at once
+    // Search state
+    pub is_searching: bool,               // Whether search input is active
+    pub search_query: String,             // Current search query
+    pub search_results_local: Vec<usize>, // Indices of fuzzy-matched keys in loaded keys
+    pub search_results_server: Vec<KeyMetadata>, // Keys from server search
+    pub search_token: u64,                // Token to cancel stale searches
+    pub is_server_searching: bool,        // Whether server search is in progress
+    pub search_selection_index: Option<usize>, // Selection index within search results (0-based)
 }
 
 impl AppState {
@@ -59,6 +67,14 @@ impl AppState {
             is_loading_keys: false,
             keys_per_chunk: config.data.keys_per_chunk,
             viewport_height: config.ui.viewport_height,
+            // Search state
+            is_searching: false,
+            search_query: String::new(),
+            search_results_local: Vec::new(),
+            search_results_server: Vec::new(),
+            search_token: 0,
+            is_server_searching: false,
+            search_selection_index: None,
         }
     }
 
@@ -75,6 +91,27 @@ impl AppState {
         self.keys.clear();
         self.selected_value = None;
         self.selected_key_index = None;
+        self.reset_search();
+    }
+
+    pub fn reset_search(&mut self) {
+        self.is_searching = false;
+        self.search_query.clear();
+        self.search_results_local.clear();
+        self.search_results_server.clear();
+        self.search_token = self.search_token.wrapping_add(1);
+        self.is_server_searching = false;
+        self.search_selection_index = None;
+    }
+
+    pub fn start_search(&mut self) {
+        self.is_searching = true;
+        self.search_query.clear();
+        self.search_results_local.clear();
+        self.search_results_server.clear();
+        self.search_token = self.search_token.wrapping_add(1);
+        self.is_server_searching = false;
+        self.search_selection_index = None;
     }
 
     /// Calculate which indices in the sparse array are empty and should be filled

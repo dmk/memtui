@@ -1,5 +1,5 @@
 use crate::backend::Backend;
-use crate::types::{ConnectionConfig, KeyMetadata, Value};
+use crate::types::{ConnectionConfig, KeyMetadata, KeyScanResult, Value};
 use crossterm::event::{KeyEvent, MouseEvent};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -59,6 +59,13 @@ pub enum Action {
         token: u64,
     },
 
+    // Search Actions
+    StartSearch,                   // Open search input
+    UpdateSearchQuery(String),     // User typed in search
+    ClearSearch,                   // Reset to normal view (Esc or empty query)
+    SearchAddChar(char),           // Add character to search input
+    SearchDeleteChar,              // Delete character from search input
+
     // Async Events (Results)
     DidConnect(String, Arc<RwLock<Box<dyn Backend>>>),
     DidDisconnect(String),
@@ -79,6 +86,16 @@ pub enum Action {
         token: u64,
     },
     DidFailLoadValue(String),
+
+    // Search async results
+    DidSearchLocal {
+        indices: Vec<usize>, // Indices of matching keys in loaded keys array
+        token: u64,
+    },
+    DidSearchServer {
+        result: KeyScanResult,
+        token: u64,
+    },
 
     Error(String),
 }

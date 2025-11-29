@@ -3,6 +3,7 @@ pub mod app;
 pub mod backend;
 pub mod config;
 pub mod formatter;
+pub mod search;
 pub mod types;
 pub mod ui;
 pub mod userdata;

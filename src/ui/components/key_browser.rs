@@ -21,6 +21,15 @@ pub struct KeyBrowserProps<'a> {
     pub active_search_query: Option<&'a str>,
     pub is_active: bool,
     pub backend_type: Option<crate::types::BackendType>,
+    pub is_searching: bool,
+    /// Indices of keys matching the local fuzzy search (indices into keys array)
+    pub search_results_local: &'a [usize],
+    /// Keys from server search (may contain keys not in local list)
+    pub search_results_server: &'a [KeyMetadata],
+    /// Whether a server search is in progress
+    pub is_server_searching: bool,
+    /// Selection index within search results (0-based index into search_results_local)
+    pub search_selection_index: Option<usize>,
 }
 
 pub struct KeyBrowser {
@@ -85,70 +94,27 @@ impl Component for KeyBrowser {
     type Msg = Action;
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
-        // Skip expensive operations if not active (optimization)
-        // Still need to render for TUI, but can skip heavy calculations
         let is_active = props.is_active;
-
-        // Calculate viewport height (subtract borders and title)
         self.viewport_height = area.height.saturating_sub(2) as usize;
-
-        // Virtualized: build only the visible window around the selected index
-        let total_count = props
-            .total_count
-            .map(|t| t as usize)
-            .unwrap_or_else(|| props.keys.len());
-
-        let selected_abs = self
-            .state
-            .selected()
-            .unwrap_or(0)
-            .min(total_count.saturating_sub(1));
-
-        // Only compute view window if active or if selection changed (optimization)
-        let (start_index, visible_len) = if is_active {
-            self.compute_view_window(selected_abs, total_count)
-        } else {
-            // When inactive, use cached scroll_top or simple calculation
-            let visible_len = self.viewport_height.min(total_count.max(1));
-            let max_start = total_count.saturating_sub(visible_len);
-            let start = self.scroll_top.min(max_start);
-            (start, visible_len)
-        };
-
         let content_width = area.width.saturating_sub(4) as usize;
-        let mut key_items: Vec<ListItem> = Vec::with_capacity(visible_len);
-        for offset in 0..visible_len {
-            let abs = start_index + offset;
-            if let Some(Some(k)) = props.keys.get(abs) {
-                key_items.push(Self::build_key_item(k, content_width, props.backend_type));
-            } else {
-                key_items.push(ListItem::new(Span::styled(
-                    "...",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        }
+
+        // Check if we're in search mode (has query)
+        let has_search = props
+            .active_search_query
+            .map(|q| !q.is_empty())
+            .unwrap_or(false);
+
+        // Build the display list - either filtered or full
+        let (key_items, display_count, selected_display_idx) = if has_search {
+            // SEARCH MODE: Show only matching keys
+            self.build_search_results_list(&props, content_width)
+        } else {
+            // NORMAL MODE: Show full key list with virtualization
+            self.build_normal_list(&props, content_width, is_active)
+        };
 
         // Build title
-        let mut title = if let Some(query) = props.active_search_query {
-            format!("Keys [Filter: '{}']", query)
-        } else {
-            "Keys".to_string()
-        };
-
-        // Add position info
-        let position = self
-            .state
-            .selected()
-            .map(|i| format!(" [{} / {}]", i.saturating_add(1), total_count))
-            .unwrap_or_else(|| " [—]".to_string());
-
-        title.push_str(&position);
-
-        // Add loading indicator if loading
-        if props.is_loading {
-            title.push_str(" [Loading...]");
-        }
+        let title = self.build_title(&props, has_search, display_count);
 
         let keys_list = List::new(key_items)
             .block(Self::card_block(title, props.is_active))
@@ -160,18 +126,12 @@ impl Component for KeyBrowser {
             )
             .highlight_symbol("› ");
 
-        // Use a local state with relative selection for the visible window
-        let mut view_state = self.state.clone();
-        if total_count > 0 {
-            let rel = selected_abs.saturating_sub(start_index);
-            view_state.select(Some(rel));
-        } else {
-            view_state.select(None);
-        }
+        let mut view_state = ListState::default();
+        view_state.select(selected_display_idx);
         f.render_stateful_widget(keys_list, area, &mut view_state);
 
-        // Render scrollbar - represents full list
-        if total_count > 0 {
+        // Render scrollbar
+        if display_count > 0 {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
                 .end_symbol(Some("↓"));
@@ -181,12 +141,10 @@ impl Component for KeyBrowser {
                 horizontal: 0,
             });
 
-            let current_position = selected_abs;
-
             self.scrollbar_state = self
                 .scrollbar_state
-                .content_length(total_count)
-                .position(current_position);
+                .content_length(display_count)
+                .position(selected_display_idx.unwrap_or(0));
 
             f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.scrollbar_state);
         }
@@ -251,6 +209,153 @@ impl Component for KeyBrowser {
 }
 
 impl KeyBrowser {
+    /// Build the list for search mode - shows only matching keys
+    fn build_search_results_list(
+        &self,
+        props: &KeyBrowserProps<'_>,
+        content_width: usize,
+    ) -> (Vec<ListItem<'static>>, usize, Option<usize>) {
+        let mut items: Vec<ListItem<'static>> = Vec::new();
+
+        // First add local matches (keys we already have loaded)
+        for &key_idx in props.search_results_local.iter() {
+            if let Some(Some(key)) = props.keys.get(key_idx) {
+                items.push(Self::build_key_item(key, content_width, props.backend_type));
+            }
+        }
+
+        // Then add server results that aren't already in local results
+        let local_key_names: std::collections::HashSet<&str> = props
+            .search_results_local
+            .iter()
+            .filter_map(|&idx| props.keys.get(idx).and_then(|k| k.as_ref()).map(|k| k.name.as_str()))
+            .collect();
+
+        for server_key in props.search_results_server.iter() {
+            if !local_key_names.contains(server_key.name.as_str()) {
+                items.push(Self::build_key_item_with_indicator(
+                    server_key,
+                    content_width,
+                    props.backend_type,
+                    "◦", // indicator that this is from server search
+                ));
+            }
+        }
+
+        // If no results, show a message
+        if items.is_empty() {
+            if props.is_server_searching {
+                items.push(ListItem::new(Span::styled(
+                    "Searching...",
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                )));
+            } else if props.active_search_query.map(|q| !q.is_empty()).unwrap_or(false) {
+                items.push(ListItem::new(Span::styled(
+                    "No matches found",
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                )));
+            }
+        }
+
+        let items_len = items.len();
+        let result_count = props.search_results_local.len();
+
+        // Use the dedicated search selection index
+        (items, result_count.max(items_len), props.search_selection_index)
+    }
+
+    /// Build the list for normal mode - full virtualized list
+    fn build_normal_list(
+        &mut self,
+        props: &KeyBrowserProps<'_>,
+        content_width: usize,
+        is_active: bool,
+    ) -> (Vec<ListItem<'static>>, usize, Option<usize>) {
+        let total_count = props
+            .total_count
+            .map(|t| t as usize)
+            .unwrap_or_else(|| props.keys.len());
+
+        let selected_abs = self
+            .state
+            .selected()
+            .unwrap_or(0)
+            .min(total_count.saturating_sub(1));
+
+        let (start_index, visible_len) = if is_active {
+            self.compute_view_window(selected_abs, total_count)
+        } else {
+            let visible_len = self.viewport_height.min(total_count.max(1));
+            let max_start = total_count.saturating_sub(visible_len);
+            let start = self.scroll_top.min(max_start);
+            (start, visible_len)
+        };
+
+        let mut key_items: Vec<ListItem<'static>> = Vec::with_capacity(visible_len);
+        for offset in 0..visible_len {
+            let abs = start_index + offset;
+            if let Some(Some(k)) = props.keys.get(abs) {
+                key_items.push(Self::build_key_item(k, content_width, props.backend_type));
+            } else {
+                key_items.push(ListItem::new(Span::styled(
+                    "...",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+
+        let rel_selection = if total_count > 0 {
+            Some(selected_abs.saturating_sub(start_index))
+        } else {
+            None
+        };
+
+        (key_items, total_count, rel_selection)
+    }
+
+    /// Build the title based on current mode
+    fn build_title(&self, props: &KeyBrowserProps<'_>, has_search: bool, display_count: usize) -> String {
+        if props.is_searching {
+            // Active search input mode
+            if let Some(query) = props.active_search_query {
+                if query.is_empty() {
+                    "Keys / _".to_string()
+                } else {
+                    let server_indicator = if props.is_server_searching { " ⟳" } else { "" };
+                    format!("Keys / {}_{} ({} found)", query, server_indicator, display_count)
+                }
+            } else {
+                "Keys / _".to_string()
+            }
+        } else if has_search {
+            // Has search filter but not actively typing
+            if let Some(query) = props.active_search_query {
+                let position = self
+                    .state
+                    .selected()
+                    .map(|_| format!(" [{} results]", display_count))
+                    .unwrap_or_default();
+                format!("Keys [/{}]{}", query, position)
+            } else {
+                "Keys".to_string()
+            }
+        } else {
+            // Normal mode
+            let total_count = props.total_count.map(|t| t as usize).unwrap_or(props.keys.len());
+            let mut title = "Keys".to_string();
+            let position = self
+                .state
+                .selected()
+                .map(|i| format!(" [{} / {}]", i.saturating_add(1), total_count))
+                .unwrap_or_else(|| " [—]".to_string());
+            title.push_str(&position);
+            if props.is_loading {
+                title.push_str(" [Loading...]");
+            }
+            title
+        }
+    }
+
     fn compute_view_window(&mut self, selected_abs: usize, total_count: usize) -> (usize, usize) {
         let visible_len = self.viewport_height.min(total_count.max(1));
         if visible_len == 0 {
@@ -377,6 +482,61 @@ impl KeyBrowser {
             // For memcached, just show the key name without type
             let name_display = Self::truncate_to_fit(&key.name, content_width);
             let line = Line::from(vec![Span::raw(name_display)]);
+            ListItem::new(line)
+        }
+    }
+
+    /// Build a key item with a leading indicator (for server search results)
+    fn build_key_item_with_indicator(
+        key: &KeyMetadata,
+        content_width: usize,
+        backend_type: Option<crate::types::BackendType>,
+        indicator: &str,
+    ) -> ListItem<'static> {
+        let show_type = !matches!(backend_type, Some(crate::types::BackendType::Memcached));
+        let indicator_width = indicator.chars().count() + 1; // +1 for space
+
+        if show_type {
+            let type_label = key.value_type.to_string();
+            let type_width = type_label.chars().count();
+            let min_gap = if content_width > type_width + indicator_width {
+                1
+            } else {
+                0
+            };
+            let available_for_name =
+                content_width.saturating_sub(type_width + min_gap + indicator_width);
+            let name_display = Self::truncate_to_fit(&key.name, available_for_name);
+            let name_width = name_display.chars().count();
+            let spacer_width =
+                content_width.saturating_sub(name_width + type_width + indicator_width);
+            let spacer = if spacer_width > 0 {
+                " ".repeat(spacer_width)
+            } else {
+                String::new()
+            };
+
+            let line = Line::from(vec![
+                Span::styled(
+                    format!("{} ", indicator),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::raw(name_display),
+                Span::raw(spacer),
+                Span::styled(type_label, Style::default().fg(Color::DarkGray)),
+            ]);
+
+            ListItem::new(line)
+        } else {
+            let available_for_name = content_width.saturating_sub(indicator_width);
+            let name_display = Self::truncate_to_fit(&key.name, available_for_name);
+            let line = Line::from(vec![
+                Span::styled(
+                    format!("{} ", indicator),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::raw(name_display),
+            ]);
             ListItem::new(line)
         }
     }

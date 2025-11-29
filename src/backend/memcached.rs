@@ -143,6 +143,7 @@ impl Backend for MemcachedBackend {
             supports_scan: true,          // Using stats cachedump
             supports_raw_commands: false, // Limited command support
             supports_batch_get: true,
+            supports_efficient_pattern_search: false, // Memcached requires client-side filtering
         }
     }
 
@@ -369,6 +370,79 @@ impl Backend for MemcachedBackend {
             keys: key_metadata,
             cursor: next_slab.map(|id| id.to_string()),
             has_more: next_slab.is_some(),
+        })
+    }
+
+    async fn search_keys(&self, pattern: &str, limit: usize) -> Result<KeyScanResult, BackendError> {
+        // Memcached doesn't support efficient server-side pattern search
+        // We need to scan all slabs and filter client-side
+        let host = self.config.host.clone();
+        let port = self.config.port;
+
+        // Get all slab IDs
+        let slab_ids = self.get_slab_ids(&host, port).await?;
+
+        if slab_ids.is_empty() {
+            return Ok(KeyScanResult {
+                keys: vec![],
+                cursor: None,
+                has_more: false,
+            });
+        }
+
+        // Prepare pattern for matching (strip wildcards for simple contains check)
+        let search_term = pattern.trim_matches('*').to_lowercase();
+
+        // Collect all matching keys from all slabs
+        let mut matching_keys = Vec::new();
+
+        for &slab_id in slab_ids.iter() {
+            // Get a large batch of keys from each slab
+            let keys = self
+                .get_keys_from_slab(&host, port, slab_id, 1000)
+                .await?;
+
+            for key in keys {
+                // Client-side substring match (case-insensitive)
+                if key.to_lowercase().contains(&search_term) {
+                    matching_keys.push(key);
+                    if matching_keys.len() >= limit {
+                        break;
+                    }
+                }
+            }
+
+            if matching_keys.len() >= limit {
+                break;
+            }
+        }
+
+        // Truncate to limit
+        matching_keys.truncate(limit);
+
+        // Get metadata for matching keys
+        let mut key_metadata = Vec::new();
+        for key in matching_keys {
+            match self.key_info(&key).await {
+                Ok(metadata) => key_metadata.push(metadata),
+                Err(_) => {
+                    // Key might have been evicted
+                    key_metadata.push(KeyMetadata {
+                        name: key.clone(),
+                        value_type: ValueType::String,
+                        size_bytes: 0,
+                        ttl: None,
+                        last_accessed: None,
+                        encoding: None,
+                    });
+                }
+            }
+        }
+
+        Ok(KeyScanResult {
+            keys: key_metadata,
+            cursor: None,
+            has_more: false,
         })
     }
 
@@ -637,6 +711,7 @@ mod tests {
         assert!(caps.supports_scan); // Using stats cachedump
         assert!(!caps.supports_raw_commands);
         assert!(caps.supports_batch_get);
+        assert!(!caps.supports_efficient_pattern_search); // Client-side only
     }
 
     #[test]

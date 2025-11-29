@@ -150,6 +150,7 @@ impl Backend for RedisBackend {
             supports_scan: true,
             supports_raw_commands: true,
             supports_batch_get: true,
+            supports_efficient_pattern_search: true,
         }
     }
 
@@ -254,6 +255,58 @@ impl Backend for RedisBackend {
                 None
             },
             has_more: next_cursor > 0,
+        })
+    }
+
+    async fn search_keys(&self, pattern: &str, limit: usize) -> Result<KeyScanResult, BackendError> {
+        let mut conn = self.get_connection()?.clone();
+
+        // Build glob pattern for Redis SCAN MATCH
+        // If pattern doesn't contain wildcards, wrap it with * for substring matching
+        let glob_pattern = if pattern.contains('*') || pattern.contains('?') {
+            pattern.to_string()
+        } else {
+            format!("*{}*", pattern)
+        };
+
+        // Collect keys using SCAN with MATCH until we have enough or exhausted
+        let mut all_keys = Vec::new();
+        let mut cursor = 0u64;
+
+        loop {
+            let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&glob_pattern)
+                .arg("COUNT")
+                .arg(1000) // Scan in larger batches for efficiency
+                .query_async(&mut conn)
+                .await
+                .map_err(Self::convert_error)?;
+
+            all_keys.extend(keys);
+
+            if all_keys.len() >= limit || next_cursor == 0 {
+                break;
+            }
+            cursor = next_cursor;
+        }
+
+        // Truncate to limit
+        all_keys.truncate(limit);
+
+        // Get metadata for each key
+        let mut key_metadata = Vec::new();
+        for key in all_keys {
+            if let Ok(metadata) = self.key_info(&key).await {
+                key_metadata.push(metadata);
+            }
+        }
+
+        Ok(KeyScanResult {
+            keys: key_metadata,
+            cursor: None, // Search returns all results up to limit
+            has_more: false,
         })
     }
 
@@ -728,6 +781,7 @@ uptime_in_seconds:12345
         assert!(caps.supports_scan);
         assert!(caps.supports_raw_commands);
         assert!(caps.supports_batch_get);
+        assert!(caps.supports_efficient_pattern_search);
     }
 
     #[test]

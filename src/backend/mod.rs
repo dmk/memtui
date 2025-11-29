@@ -42,6 +42,11 @@ pub trait Backend: Send + Sync {
         limit: usize,
     ) -> Result<KeyScanResult, BackendError>;
 
+    /// Search keys with pattern - backends implement this optimally
+    /// Redis: Uses SCAN MATCH efficiently (server-side)
+    /// Memcached: Falls back to client-side filtering of cached keys
+    async fn search_keys(&self, pattern: &str, limit: usize) -> Result<KeyScanResult, BackendError>;
+
     /// Get total key count (approximate if expensive)
     async fn key_count(&self, pattern: Option<&str>) -> Result<u64, BackendError>;
 
@@ -76,6 +81,8 @@ pub struct BackendCapabilities {
     pub supports_scan: bool,
     pub supports_raw_commands: bool,
     pub supports_batch_get: bool,
+    /// Whether the backend can efficiently search keys server-side (Redis: true, Memcached: false)
+    pub supports_efficient_pattern_search: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +199,7 @@ mod tests {
         assert!(caps.supports_scan);
         assert!(caps.supports_raw_commands);
         assert!(caps.supports_batch_get);
+        assert!(caps.supports_efficient_pattern_search);
     }
 
     #[tokio::test]

@@ -148,7 +148,7 @@ fn default_max_recent_connections() -> usize {
 }
 
 fn default_tick_interval_ms() -> Duration {
-    Duration::from_millis(250)
+    Duration::from_millis(16) // ~60 FPS for smooth scrolling
 }
 
 fn default_event_poll_ms() -> Duration {

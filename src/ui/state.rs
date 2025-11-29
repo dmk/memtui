@@ -37,6 +37,7 @@ pub struct UiState {
     pub show_connection_palette: bool,
     pub connection_palette_area: Option<Rect>,
     pub recent_connection_ids: Vec<String>,
+    pub show_quit_confirmation: bool,
 }
 
 impl UiState {
@@ -59,6 +60,7 @@ impl UiState {
             show_connection_palette: false,
             connection_palette_area: None,
             recent_connection_ids: Vec::new(),
+            show_quit_confirmation: false,
         }
     }
 

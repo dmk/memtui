@@ -10,6 +10,9 @@ pub enum Action {
     Render,
     Resize(u16, u16),
     Quit,
+    ShowQuitConfirmation,
+    ConfirmQuit,
+    CancelQuit,
 
     // User Inputs
     Key(KeyEvent),

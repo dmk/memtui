@@ -173,7 +173,7 @@ impl Backend for MemcachedBackend {
         let version = tokio::task::spawn_blocking(move || {
             let client = client_clone
                 .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex error: {}", e)))?;
+                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
             client
                 .version()
                 .map_err(|e| BackendError::ConnectionError(e.to_string()))
@@ -211,7 +211,7 @@ impl Backend for MemcachedBackend {
         tokio::task::spawn_blocking(move || {
             let client = client
                 .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex error: {}", e)))?;
+                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
             client
                 .version()
                 .map_err(|e| BackendError::ConnectionError(e.to_string()))?;
@@ -229,7 +229,7 @@ impl Backend for MemcachedBackend {
         let stats = tokio::task::spawn_blocking(move || {
             let client = client
                 .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex error: {}", e)))?;
+                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
             client
                 .stats()
                 .map_err(|e| BackendError::Internal(e.to_string()))
@@ -386,7 +386,7 @@ impl Backend for MemcachedBackend {
         let data: Option<Vec<u8>> = tokio::task::spawn_blocking(move || {
             let client = client
                 .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex error: {}", e)))?;
+                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
             client
                 .get(&key_str)
                 .map_err(|e| BackendError::Internal(e.to_string()))
@@ -432,7 +432,7 @@ impl Backend for MemcachedBackend {
         let data: Option<Vec<u8>> = tokio::task::spawn_blocking(move || {
             let client = client
                 .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex error: {}", e)))?;
+                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
             client
                 .get(&key_str)
                 .map_err(|e| BackendError::Internal(e.to_string()))
@@ -474,7 +474,7 @@ impl Backend for MemcachedBackend {
             tokio::task::spawn_blocking(move || {
                 let client = client
                     .lock()
-                    .map_err(|e| BackendError::Internal(format!("Mutex error: {}", e)))?;
+                    .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
 
                 let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
                 client
@@ -534,7 +534,7 @@ impl Backend for MemcachedBackend {
         tokio::task::spawn_blocking(move || {
             let client = client
                 .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex error: {}", e)))?;
+                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
             client
                 .set(&key, &value[..], ttl_secs)
                 .map_err(|e| BackendError::Internal(e.to_string()))?;
@@ -564,7 +564,7 @@ impl Backend for MemcachedBackend {
         let deleted = tokio::task::spawn_blocking(move || {
             let client = client
                 .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex error: {}", e)))?;
+                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
             let result = client
                 .delete(&key)
                 .map_err(|e| BackendError::Internal(e.to_string()))?;

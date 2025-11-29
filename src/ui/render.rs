@@ -87,6 +87,11 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
     } else if ui_state.show_help {
         super::render::render_help(f);
     }
+
+    // Quit confirmation should be rendered on top of everything
+    if ui_state.show_quit_confirmation {
+        render_quit_confirmation(f);
+    }
 }
 
 fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area: Rect) {
@@ -418,6 +423,53 @@ fn render_status_bar(f: &mut Frame, app_state: &AppState, area: Rect) {
 
     let status_bar = Paragraph::new(status_line).style(Style::default().bg(Color::Black));
     f.render_widget(status_bar, area);
+}
+
+fn render_quit_confirmation(f: &mut Frame) {
+    // Small centered dialog
+    let area = centered_rect(40, 20, f.area());
+    // Clamp to reasonable size
+    let area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width.min(50).max(30),
+        height: area.height.min(7).max(5),
+    };
+    // Re-center with clamped size
+    let area = Rect {
+        x: (f.area().width.saturating_sub(area.width)) / 2,
+        y: (f.area().height.saturating_sub(area.height)) / 2,
+        width: area.width,
+        height: area.height,
+    };
+
+    let text = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "Are you sure you want to quit?",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  y", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::raw(" yes  "),
+            Span::styled("n", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::raw(" no  "),
+        ]),
+    ];
+
+    let dialog = Paragraph::new(text)
+        .block(
+            Block::default()
+                .title(" Quit ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Yellow)),
+        )
+        .alignment(Alignment::Center);
+
+    f.render_widget(Clear, area);
+    f.render_widget(dialog, area);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

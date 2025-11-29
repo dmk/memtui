@@ -13,6 +13,7 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicIsize, AtomicU16, Ordering};
 use std::sync::{Arc, Once};
 use tokio::sync::{mpsc, RwLock};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -100,52 +101,74 @@ impl App {
         let mouse_x = last_mouse_x.clone();
         let mouse_y = last_mouse_y.clone();
 
-        tokio::spawn(async move {
+        // Create a cancellation token for clean shutdown
+        let cancel_token = CancellationToken::new();
+        let cancel_token_clone = cancel_token.clone();
+
+        let event_loop_handle = tokio::spawn(async move {
             // Rate limit scroll events: cap maximum accumulation
             const MAX_SCROLL_ACCUMULATION: isize = 50; // ~10 lines max per batch
+            // Maximum events to process in a single batch to prevent starvation
+            const MAX_EVENTS_PER_BATCH: usize = 20;
 
             loop {
-                if event::poll(event_poll_timeout).unwrap_or(false) {
-                    if let Ok(event) = event::read() {
-                        match event {
-                            Event::Key(key) => {
-                                let _ = tx.send(Action::Key(key));
-                            }
-                            Event::Mouse(mouse) => {
-                                // Update last known mouse position (lock-free atomic operations)
-                                mouse_x.store(mouse.column, Ordering::Relaxed);
-                                mouse_y.store(mouse.row, Ordering::Relaxed);
+                tokio::select! {
+                    _ = cancel_token_clone.cancelled() => {
+                        info!("Event loop task cancelled");
+                        // Drain any remaining events from crossterm buffer before exiting
+                        while event::poll(std::time::Duration::ZERO).unwrap_or(false) {
+                            let _ = event::read();
+                        }
+                        break;
+                    }
+                    _ = tokio::time::sleep(event_loop_sleep) => {
+                        // Process up to MAX_EVENTS_PER_BATCH events per iteration
+                        // This prevents event pile-up during aggressive scrolling
+                        let mut events_processed = 0;
+                        while events_processed < MAX_EVENTS_PER_BATCH
+                            && event::poll(event_poll_timeout).unwrap_or(false)
+                        {
+                            events_processed += 1;
+                            if let Ok(event) = event::read() {
+                                match event {
+                                    Event::Key(key) => {
+                                        let _ = tx.send(Action::Key(key));
+                                    }
+                                    Event::Mouse(mouse) => {
+                                        // Update last known mouse position (lock-free atomic operations)
+                                        mouse_x.store(mouse.column, Ordering::Relaxed);
+                                        mouse_y.store(mouse.row, Ordering::Relaxed);
 
-                                match mouse.kind {
-                                    MouseEventKind::ScrollDown => {
-                                        // Cap accumulation to prevent pile-up
-                                        let current = scroll_acc.load(Ordering::Relaxed);
-                                        if current < MAX_SCROLL_ACCUMULATION {
-                                            scroll_acc.fetch_add(1, Ordering::Relaxed);
+                                        match mouse.kind {
+                                            MouseEventKind::ScrollDown => {
+                                                // Cap accumulation to prevent pile-up
+                                                let current = scroll_acc.load(Ordering::Relaxed);
+                                                if current < MAX_SCROLL_ACCUMULATION {
+                                                    scroll_acc.fetch_add(1, Ordering::Relaxed);
+                                                }
+                                            }
+                                            MouseEventKind::ScrollUp => {
+                                                // Cap accumulation to prevent pile-up
+                                                let current = scroll_acc.load(Ordering::Relaxed);
+                                                if current > -MAX_SCROLL_ACCUMULATION {
+                                                    scroll_acc.fetch_sub(1, Ordering::Relaxed);
+                                                }
+                                            }
+                                            _ => {
+                                                // Forward non-scroll mouse events as normal
+                                                let _ = tx.send(Action::Mouse(mouse));
+                                            }
                                         }
                                     }
-                                    MouseEventKind::ScrollUp => {
-                                        // Cap accumulation to prevent pile-up
-                                        let current = scroll_acc.load(Ordering::Relaxed);
-                                        if current > -MAX_SCROLL_ACCUMULATION {
-                                            scroll_acc.fetch_sub(1, Ordering::Relaxed);
-                                        }
+                                    Event::Resize(w, h) => {
+                                        let _ = tx.send(Action::Resize(w, h));
                                     }
-                                    _ => {
-                                        // Forward non-scroll mouse events as normal
-                                        let _ = tx.send(Action::Mouse(mouse));
-                                    }
+                                    _ => {}
                                 }
                             }
-                            Event::Resize(w, h) => {
-                                let _ = tx.send(Action::Resize(w, h));
-                            }
-                            _ => {}
                         }
                     }
                 }
-                // Yield to let other tasks run
-                tokio::time::sleep(event_loop_sleep).await;
             }
         });
 
@@ -163,8 +186,27 @@ impl App {
                 Some(action) = self.action_rx.recv() => action,
             };
 
-            if let Action::Quit = action {
-                info!("Quit action received, breaking event loop");
+            if let Action::ConfirmQuit = action {
+                // Drain any pending actions from the channel to ensure clean shutdown
+                // This prevents stale events from interfering
+                let mut drained = 0;
+                while let Ok(pending) = self.action_rx.try_recv() {
+                    drained += 1;
+                    // Log non-tick/quit actions that are being drained
+                    if !matches!(pending, Action::ConfirmQuit | Action::Tick) {
+                        debug!("Draining pending action during quit");
+                    }
+                }
+                if drained > 0 {
+                    debug!(drained, "Drained pending actions before quit");
+                }
+
+                info!("Quit confirmed, cancelling event loop task");
+                cancel_token.cancel();
+                // Wait for the event loop task to finish
+                if let Err(e) = event_loop_handle.await {
+                    warn!("Event loop task join error: {}", e);
+                }
                 break;
             }
 
@@ -189,7 +231,16 @@ impl App {
     async fn update(&mut self, action: Action) {
         let should_render = match action {
             Action::Tick => true,  // Tick processes debounced scrolls and maintains FPS
-            Action::Quit => false, // Quit is handled separately
+            Action::Quit => false, // Legacy quit (not used with confirmation flow)
+            Action::ConfirmQuit => false, // Handled in main loop
+            Action::ShowQuitConfirmation => {
+                self.ui_state.show_quit_confirmation = true;
+                true
+            }
+            Action::CancelQuit => {
+                self.ui_state.show_quit_confirmation = false;
+                true
+            }
             Action::Resize(_, _) => {
                 // Resize always needs render
                 true
@@ -799,10 +850,24 @@ impl App {
                     }
                 }
                 KeyCode::Char('q') => {
-                    let _ = self.action_tx.send(Action::Quit);
+                    let _ = self.action_tx.send(Action::ShowQuitConfirmation);
                 }
                 KeyCode::Char('?') => {
                     let _ = self.action_tx.send(Action::ToggleHelp);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Handle quit confirmation dialog
+        if self.ui_state.show_quit_confirmation {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    let _ = self.action_tx.send(Action::ConfirmQuit);
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    let _ = self.action_tx.send(Action::CancelQuit);
                 }
                 _ => {}
             }
@@ -837,8 +902,8 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Char('q') => {
-                let _ = self.action_tx.send(Action::Quit);
+            KeyCode::Char('q') | KeyCode::Esc => {
+                let _ = self.action_tx.send(Action::ShowQuitConfirmation);
             }
             KeyCode::Char('?') => {
                 let _ = self.action_tx.send(Action::ToggleHelp);
@@ -858,15 +923,15 @@ impl App {
             KeyCode::Enter => {
                 let _ = self.action_tx.send(Action::Enter);
             }
-            KeyCode::Esc => {
-                let _ = self.action_tx.send(Action::Quit);
-            }
             _ => {}
         }
     }
 
     fn handle_mouse(&mut self, event: MouseEvent) {
-        if self.ui_state.show_connection_form || self.ui_state.show_help {
+        if self.ui_state.show_connection_form
+            || self.ui_state.show_help
+            || self.ui_state.show_quit_confirmation
+        {
             return;
         }
 
@@ -1000,6 +1065,14 @@ impl App {
     fn handle_scroll_delta(&mut self, column: u16, row: u16, delta: isize) -> bool {
         if delta == 0 {
             trace!("Scroll delta is zero; ignoring");
+            return false;
+        }
+
+        // Ignore scrolls when modal dialogs are open
+        if self.ui_state.show_quit_confirmation
+            || self.ui_state.show_help
+            || self.ui_state.show_connection_form
+        {
             return false;
         }
 

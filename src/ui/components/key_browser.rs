@@ -491,8 +491,11 @@ impl KeyBrowser {
         content_width: usize,
         backend_type: Option<crate::types::BackendType>,
     ) -> ListItem<'static> {
-        // Don't show key type for memcached
-        let show_type = !matches!(backend_type, Some(crate::types::BackendType::Memcached));
+        // Don't show key type for memcached or etcd (they don't have typed keys)
+        let show_type = !matches!(
+            backend_type,
+            Some(crate::types::BackendType::Memcached | crate::types::BackendType::Etcd)
+        );
 
         if show_type {
             let type_label = key.value_type.to_string();
@@ -550,7 +553,10 @@ impl KeyBrowser {
         backend_type: Option<crate::types::BackendType>,
         indicator: &str,
     ) -> ListItem<'static> {
-        let show_type = !matches!(backend_type, Some(crate::types::BackendType::Memcached));
+        let show_type = !matches!(
+            backend_type,
+            Some(crate::types::BackendType::Memcached | crate::types::BackendType::Etcd)
+        );
         let indicator_width = indicator.chars().count() + 1; // +1 for space
 
         if show_type {

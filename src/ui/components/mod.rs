@@ -1,4 +1,6 @@
+pub mod connection_form;
 pub mod connection_list;
+pub mod help;
 pub mod key_browser;
 pub mod status_bar;
 pub mod value_viewer;

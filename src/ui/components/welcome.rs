@@ -175,25 +175,16 @@ impl Component for WelcomeScreen {
                 .iter()
                 .map(|config| {
                     let name = &config.name;
-                    let backend_icon = match config.backend_type {
-                        crate::types::BackendType::Redis => "◈",
-                        crate::types::BackendType::Memcached => "◇",
-                        crate::types::BackendType::Etcd => "◆",
-                    };
                     let details =
                         format!("{}:{} ({})", config.host, config.port, config.backend_type);
 
                     // Calculate padding
                     let available_width = list_width.saturating_sub(6);
-                    let content_width = name.len() + details.len() + 3; // +3 for icon and spaces
+                    let content_width = name.len() + details.len() + 1;
                     let padding_len = available_width.saturating_sub(content_width);
                     let padding = " ".repeat(padding_len);
 
                     let content = Line::from(vec![
-                        Span::styled(
-                            format!("{} ", backend_icon),
-                            Style::default().fg(theme::NEON_CYAN()),
-                        ),
                         Span::styled(
                             name,
                             Style::default()

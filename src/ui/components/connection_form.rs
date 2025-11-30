@@ -80,30 +80,43 @@ impl ConnectionForm {
         }
     }
 
-    pub fn toggle_backend_type(&mut self) {
-        self.backend_type = match self.backend_type {
-            BackendType::Redis => {
-                self.port = Input::default().with_value("11211".into());
-                BackendType::Memcached
+    pub fn select_backend_type(&mut self, backend: BackendType) {
+        self.backend_type = backend;
+        self.port = Input::default().with_value(
+            match backend {
+                BackendType::Redis => "6379",
+                BackendType::Memcached => "11211",
+                BackendType::Etcd => "2379",
             }
-            BackendType::Memcached => {
-                self.port = Input::default().with_value("2379".into());
-                BackendType::Etcd
-            }
-            BackendType::Etcd => {
-                self.port = Input::default().with_value("6379".into());
-                BackendType::Redis
-            }
+            .into(),
+        );
+    }
+
+    pub fn next_backend_type(&mut self) {
+        let next = match self.backend_type {
+            BackendType::Redis => BackendType::Memcached,
+            BackendType::Memcached => BackendType::Etcd,
+            BackendType::Etcd => BackendType::Redis,
         };
+        self.select_backend_type(next);
+    }
+
+    pub fn prev_backend_type(&mut self) {
+        let prev = match self.backend_type {
+            BackendType::Redis => BackendType::Etcd,
+            BackendType::Memcached => BackendType::Redis,
+            BackendType::Etcd => BackendType::Memcached,
+        };
+        self.select_backend_type(prev);
     }
 
     pub fn handle_key_event(&mut self, event: KeyEvent) {
         match self.active_field {
-            FormField::BackendType => {
-                if event.code == KeyCode::Char(' ') {
-                    self.toggle_backend_type();
-                }
-            }
+            FormField::BackendType => match event.code {
+                KeyCode::Left => self.prev_backend_type(),
+                KeyCode::Right => self.next_backend_type(),
+                _ => {}
+            },
             FormField::Name => {
                 let _ = self.name.handle_event(&CrosstermEvent::Key(event));
             }
@@ -279,20 +292,50 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
         Style::default()
     };
 
-    let backend_type_display = format!(
-        " {} (press Space to toggle)",
-        match form.backend_type {
-            BackendType::Redis => "Redis",
-            BackendType::Memcached => "Memcached",
-            BackendType::Etcd => "etcd",
-        }
-    );
+    // Backend type horizontal selector
+    let backends = [
+        (BackendType::Redis, "Redis"),
+        (BackendType::Memcached, "Memcached"),
+        (BackendType::Etcd, "etcd"),
+    ];
 
-    let backend_type_field = Paragraph::new(backend_type_display)
-        .style(Style::default().fg(Color::White))
+    let backend_spans: Vec<Span> = backends
+        .iter()
+        .enumerate()
+        .flat_map(|(i, (backend, label))| {
+            let is_selected = *backend == form.backend_type;
+            let is_field_active = form.active_field == FormField::BackendType;
+
+            let style = if is_selected {
+                if is_field_active {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                }
+            } else if is_field_active {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+
+            let mut spans = vec![Span::styled(format!(" {} ", label), style)];
+            if i < backends.len() - 1 {
+                spans.push(Span::raw("  "));
+            }
+            spans
+        })
+        .collect();
+
+    let backend_type_field = Paragraph::new(Line::from(backend_spans))
         .block(
             Block::default()
-                .title("Backend Type")
+                .title("Backend Type (←/→)")
                 .borders(Borders::ALL)
                 .border_style(backend_type_style),
         );
@@ -387,14 +430,14 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
     }
 
     instructions.push(Line::from(vec![
-        Span::styled("Tab/Shift+Tab", Style::default().fg(Color::Yellow)),
-        Span::raw(" - Navigate  "),
-        Span::styled("Space", Style::default().fg(Color::Yellow)),
-        Span::raw(" - Toggle  "),
+        Span::styled("Tab/↓", Style::default().fg(Color::Yellow)),
+        Span::raw(" Next  "),
+        Span::styled("Shift+Tab/↑", Style::default().fg(Color::Yellow)),
+        Span::raw(" Prev  "),
         Span::styled("Enter", Style::default().fg(Color::Yellow)),
-        Span::raw(" - Save  "),
+        Span::raw(" Save  "),
         Span::styled("Esc", Style::default().fg(Color::Yellow)),
-        Span::raw(" - Cancel"),
+        Span::raw(" Cancel"),
     ]));
 
     let instructions_widget = Paragraph::new(instructions)
@@ -441,6 +484,45 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
             .style(Style::default().fg(Color::Red))
             .alignment(Alignment::Center);
         f.render_widget(error_widget, chunks[chunk_idx]);
+    }
+
+    // Render cursor for active input fields
+    match form.active_field {
+        FormField::Name => {
+            let cursor_x = chunks[2].x
+                + 1
+                + (form.name.visual_cursor().saturating_sub(name_scroll) as u16);
+            let cursor_y = chunks[2].y + 1;
+            f.set_cursor_position((cursor_x, cursor_y));
+        }
+        FormField::Host => {
+            let cursor_x = chunks[3].x
+                + 1
+                + (form.host.visual_cursor().saturating_sub(host_scroll) as u16);
+            let cursor_y = chunks[3].y + 1;
+            f.set_cursor_position((cursor_x, cursor_y));
+        }
+        FormField::Port => {
+            let cursor_x = chunks[4].x
+                + 1
+                + (form.port.visual_cursor().saturating_sub(port_scroll) as u16);
+            let cursor_y = chunks[4].y + 1;
+            f.set_cursor_position((cursor_x, cursor_y));
+        }
+        FormField::Password => {
+            // For password, cursor is at the end of masked text
+            let cursor_x = chunks[5].x + 1 + (form.password.value().len() as u16);
+            let cursor_y = chunks[5].y + 1;
+            f.set_cursor_position((cursor_x, cursor_y));
+        }
+        FormField::Database if show_database => {
+            let cursor_x = chunks[6].x
+                + 1
+                + (form.database.visual_cursor().saturating_sub(database_scroll) as u16);
+            let cursor_y = chunks[6].y + 1;
+            f.set_cursor_position((cursor_x, cursor_y));
+        }
+        _ => {}
     }
 }
 

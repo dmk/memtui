@@ -8,6 +8,7 @@ use ratatui::{
 
 use super::components::{
     connection_list::ConnectionListProps,
+    help::render_help,
     key_browser::KeyBrowserProps,
     value_viewer::ValueViewerProps,
     warning_message::{MessageKind, WarningMessage, WarningMessageProps},
@@ -94,7 +95,7 @@ pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, k
     if ui_state.show_connection_form {
         render_connection_form(f, &ui_state.connection_form, ui_state.form_error.as_deref());
     } else if ui_state.show_help {
-        render_help(f, &ui_state.animation, keybindings);
+        render_help(f, keybindings);
     }
 
     // Quit confirmation should be rendered on top of everything
@@ -378,141 +379,6 @@ fn render_connection_palette(f: &mut Frame, app_state: &AppState, ui_state: &mut
     .alignment(Alignment::Center);
 
     f.render_widget(instructions, chunks[1]);
-}
-
-pub fn render_help(f: &mut Frame, _animation: &AnimationState, keybindings: &KeybindingsConfig) {
-    let area = centered_rect(65, 55, f.area());
-    let context = BindingContext::Default;
-
-    // Get keybindings from config
-    let next_panel_key = keybindings
-        .get_first_keybinding("navigation.next_panel", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "Tab".to_string());
-    let prev_panel_key = keybindings
-        .get_first_keybinding("navigation.prev_panel", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "⇧Tab".to_string());
-    let next_item_key = keybindings
-        .get_first_keybinding("navigation.next_item", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "↓".to_string());
-    let prev_item_key = keybindings
-        .get_first_keybinding("navigation.prev_item", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "↑".to_string());
-    let search_key = keybindings
-        .get_first_keybinding("search.start", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "/".to_string());
-    let palette_key = keybindings
-        .get_first_keybinding("connection.palette.toggle", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "^P".to_string());
-    let new_key = keybindings
-        .get_first_keybinding("connection.form.open", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "^N".to_string());
-    let tab_next_key = keybindings
-        .get_first_keybinding("connection.tab.next", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "^→".to_string());
-    let tab_prev_key = keybindings
-        .get_first_keybinding("connection.tab.prev", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "^←".to_string());
-    let resize_left_key = keybindings
-        .get_first_keybinding("pane.resize.left", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "^H".to_string());
-    let resize_right_key = keybindings
-        .get_first_keybinding("pane.resize.right", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "^L".to_string());
-    let help_key = keybindings
-        .get_first_keybinding("help.toggle", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "?".to_string());
-    let quit_key = keybindings
-        .get_first_keybinding("quit.show", context)
-        .map(|k| format_key_for_display(&k))
-        .unwrap_or_else(|| "q".to_string());
-
-    let help_sections = vec![
-        (
-            "Navigation",
-            vec![
-                (format!("{} / {}", next_panel_key, prev_panel_key), "Switch panels"),
-                (format!("{} / {}", prev_item_key, next_item_key), "Move up/down"),
-                (search_key, "Search keys"),
-            ],
-        ),
-        (
-            "Connections",
-            vec![
-                (palette_key, "Connection palette"),
-                (new_key, "New connection"),
-                (format!("{} / {}", tab_prev_key, tab_next_key), "Switch tabs"),
-            ],
-        ),
-        (
-            "Panes",
-            vec![
-                (format!("{} / {}", resize_left_key, resize_right_key), "Resize panes"),
-                ("Mouse drag".to_string(), "Resize panes"),
-            ],
-        ),
-        (
-            "General",
-            vec![(help_key, "Toggle help"), (quit_key, "Quit")],
-        ),
-    ];
-
-    let mut lines = vec![
-        Line::from(Span::styled(
-            "Help",
-            Style::default()
-                .fg(theme::NEON_CYAN())
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-    ];
-
-    for (section_name, bindings) in help_sections {
-        lines.push(Line::from(Span::styled(
-            format!("▸ {}", section_name),
-            Style::default()
-                .fg(theme::NEON_AMBER())
-                .add_modifier(Modifier::BOLD),
-        )));
-
-        for (key, desc) in bindings {
-            lines.push(Line::from(vec![
-                Span::styled("    ", Style::default()),
-                Span::styled(
-                    format!("{:<12}", key),
-                    Style::default().fg(theme::NEON_CYAN()),
-                ),
-                Span::styled(desc, Style::default().fg(theme::TEXT_PRIMARY())),
-            ]));
-        }
-        lines.push(Line::from(""));
-    }
-
-    lines.push(Line::from(Span::styled(
-        "Press any key to close",
-        Style::default()
-            .fg(theme::TEXT_DIM())
-            .add_modifier(Modifier::ITALIC),
-    )));
-
-    let help = Paragraph::new(lines)
-        .block(theme::glass_block("Help"))
-        .alignment(Alignment::Center)
-        .style(Style::default().bg(Color::Rgb(12, 15, 25)));
-
-    f.render_widget(Clear, area);
-    f.render_widget(help, area);
 }
 
 fn render_status_bar(

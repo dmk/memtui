@@ -1,5 +1,6 @@
 use super::Component;
 use crate::action::Action;
+use crate::keybindings::{BindingContext, KeybindingsConfig, format_key_for_display};
 use crate::types::ConnectionConfig;
 use crate::ui::theme::{self, AnimationState};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -14,6 +15,7 @@ use ratatui::{
 pub struct WelcomeScreenProps<'a> {
     pub recent_configs: Vec<&'a ConnectionConfig>,
     pub animation: &'a AnimationState,
+    pub keybindings: &'a KeybindingsConfig,
 }
 
 pub struct WelcomeScreen {
@@ -214,9 +216,26 @@ impl Component for WelcomeScreen {
         }
 
         // 3. Footer with styled keybindings
+        let context = BindingContext::Default;
+        let palette_key = props
+            .keybindings
+            .get_first_keybinding("connection.palette.toggle", context)
+            .map(|k| format_key_for_display(&k))
+            .unwrap_or_else(|| "Ctrl+P".to_string());
+        let new_key = props
+            .keybindings
+            .get_first_keybinding("connection.form.open", context)
+            .map(|k| format_key_for_display(&k))
+            .unwrap_or_else(|| "Ctrl+N".to_string());
+        let help_key = props
+            .keybindings
+            .get_first_keybinding("help.toggle", context)
+            .map(|k| format_key_for_display(&k))
+            .unwrap_or_else(|| "?".to_string());
+
         let footer_text = vec![Line::from(vec![
             Span::styled(
-                " Ctrl+P ",
+                format!(" {} ", palette_key),
                 Style::default()
                     .fg(theme::BG_DEEP())
                     .bg(theme::NEON_CYAN())
@@ -224,7 +243,7 @@ impl Component for WelcomeScreen {
             ),
             Span::styled(" connections  ", Style::default().fg(theme::TEXT_SECONDARY())),
             Span::styled(
-                " Ctrl+N ",
+                format!(" {} ", new_key),
                 Style::default()
                     .fg(theme::BG_DEEP())
                     .bg(theme::NEON_GREEN())
@@ -232,7 +251,7 @@ impl Component for WelcomeScreen {
             ),
             Span::styled(" new  ", Style::default().fg(theme::TEXT_SECONDARY())),
             Span::styled(
-                " ? ",
+                format!(" {} ", help_key),
                 Style::default()
                     .fg(theme::BG_DEEP())
                     .bg(theme::NEON_AMBER())

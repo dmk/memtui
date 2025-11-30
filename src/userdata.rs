@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::keybindings::{default_keybindings, KeybindingsConfig};
 use crate::types::ConnectionConfig;
 use crate::ui::theme::ThemeConfig;
 use std::fs;
@@ -388,6 +389,133 @@ pub fn save_default_theme() -> Result<(), Box<dyn std::error::Error>> {
 pub fn save_theme(theme: &ThemeConfig) -> Result<(), Box<dyn std::error::Error>> {
     let file_path = get_theme_file()?;
     let json = serde_json::to_string_pretty(theme)?;
+    fs::write(file_path, json)?;
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// KEYBINDINGS CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Get the path to the keybindings file
+pub fn get_keybindings_file() -> Result<PathBuf, io::Error> {
+    Ok(get_config_dir()?.join("keybindings.json"))
+}
+
+/// Load keybindings configuration from userdata directory
+/// Returns merged keybindings (defaults + user overrides) if file doesn't exist or is invalid
+pub fn load_keybindings() -> KeybindingsConfig {
+    let defaults = default_keybindings();
+    let file_path = match get_keybindings_file() {
+        Ok(path) => path,
+        Err(_) => return defaults,
+    };
+
+    if !file_path.exists() {
+        // Create default keybindings file for user reference
+        if let Err(e) = save_default_keybindings() {
+            eprintln!("Warning: Could not create default keybindings file: {}", e);
+        }
+        return defaults;
+    }
+
+    match fs::read_to_string(&file_path) {
+        Ok(contents) => match serde_json::from_str::<KeybindingsConfig>(&contents) {
+            Ok(user_config) => KeybindingsConfig::merge(defaults, user_config),
+            Err(e) => {
+                eprintln!(
+                    "Warning: Invalid keybindings file ({}), using defaults: {}",
+                    file_path.display(),
+                    e
+                );
+                defaults
+            }
+        },
+        Err(e) => {
+            eprintln!(
+                "Warning: Could not read keybindings file ({}), using defaults: {}",
+                file_path.display(),
+                e
+            );
+            defaults
+        }
+    }
+}
+
+/// Generate default keybindings file content with comments
+fn generate_default_keybindings_json() -> String {
+    r#"{
+  "_comment": "Customize keyboard shortcuts for memtui. Commands use dot-separated names (e.g., 'quit.show', 'search.start'). Keys can be simple ('q', 'esc') or with modifiers ('ctrl+p', 'shift+tab'). Only specify bindings you want to override; others will use defaults.",
+  "default": {
+    "quit.show": ["q", "esc"],
+    "help.toggle": ["?"],
+    "search.start": ["/"],
+    "navigation.next_panel": ["tab"],
+    "navigation.prev_panel": ["shift+tab"],
+    "navigation.next_item": ["down", "j"],
+    "navigation.prev_item": ["up", "k"],
+    "navigation.enter": ["enter"],
+    "connection.palette.toggle": ["ctrl+p"],
+    "connection.form.open": ["ctrl+n"],
+    "connection.tab.next": ["ctrl+right"],
+    "connection.tab.prev": ["ctrl+left"],
+    "pane.resize.left": ["ctrl+h"],
+    "pane.resize.right": ["ctrl+l"]
+  },
+  "search": {
+    "search.clear": ["esc"],
+    "search.next_result": ["down", "j", "tab"],
+    "search.prev_result": ["up", "k", "shift+tab"],
+    "search.confirm": ["enter"]
+  },
+  "connection_form": {
+    "connection.form.submit": ["enter"],
+    "connection.form.close": ["esc"],
+    "connection.form.next_field": ["tab"],
+    "connection.form.prev_field": ["shift+tab"]
+  },
+  "connection_palette": {
+    "connection.palette.close": ["esc"],
+    "connection.palette.select": ["enter"],
+    "connection.palette.next": ["down", "j"],
+    "connection.palette.prev": ["up", "k"],
+    "connection.palette.delete": ["d"],
+    "quit.show": ["q"],
+    "help.toggle": ["?"],
+    "connection.palette.toggle": ["ctrl+p"],
+    "connection.form.open": ["ctrl+n"]
+  },
+  "quit_confirmation": {
+    "quit.confirm": ["y", "Y", "enter"],
+    "quit.cancel": ["n", "N", "esc"]
+  },
+  "welcome": {
+    "navigation.next_item": ["down", "j"],
+    "navigation.prev_item": ["up", "k"],
+    "navigation.enter": ["enter"]
+  }
+}
+"#
+    .to_string()
+}
+
+/// Save default keybindings configuration to userdata directory
+pub fn save_default_keybindings() -> Result<(), Box<dyn std::error::Error>> {
+    let file_path = get_keybindings_file()?;
+
+    // Only create if it doesn't exist
+    if !file_path.exists() {
+        let keybindings_json = generate_default_keybindings_json();
+        fs::write(&file_path, keybindings_json)?;
+    }
+
+    Ok(())
+}
+
+/// Save keybindings configuration to userdata directory
+pub fn save_keybindings(keybindings: &KeybindingsConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let file_path = get_keybindings_file()?;
+    let json = serde_json::to_string_pretty(keybindings)?;
     fs::write(file_path, json)?;
     Ok(())
 }

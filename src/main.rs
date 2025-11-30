@@ -21,6 +21,7 @@ use memtui::action::Action;
 use memtui::app::{AppState, ConnectionStatus};
 use memtui::backend::{Backend, MemcachedBackend, RedisBackend};
 use memtui::config::Config;
+use memtui::keybindings::{BindingContext, KeybindingsConfig};
 use memtui::search::fuzzy_search_keys;
 use memtui::types::{BackendType, ConnectionConfig};
 use memtui::ui::{self, init_theme, Panel, UiState};
@@ -32,6 +33,7 @@ pub struct App {
     pub action_tx: mpsc::UnboundedSender<Action>,
     pub action_rx: mpsc::UnboundedReceiver<Action>,
     pub config: Config,
+    pub keybindings: KeybindingsConfig,
     needs_render: bool,
 }
 
@@ -47,6 +49,9 @@ impl App {
 
         // Load configuration
         let config = userdata::load_config();
+
+        // Load keybindings
+        let keybindings = userdata::load_keybindings();
 
         let mut app_state = AppState::new_with_config(&config);
         let mut ui_state = UiState::new();
@@ -71,6 +76,7 @@ impl App {
             action_tx: tx,
             action_rx: rx,
             config,
+            keybindings,
             needs_render: true, // Render on first loop iteration
         }
     }
@@ -177,7 +183,7 @@ impl App {
             // Only render when state has changed
             if self.needs_render {
                 terminal.draw(|f| {
-                    ui::render(f, &mut self.app_state, &mut self.ui_state);
+                    ui::render(f, &mut self.app_state, &mut self.ui_state, &self.keybindings);
                 })?;
                 self.needs_render = false;
             }
@@ -817,139 +823,168 @@ impl App {
         }
     }
 
-    fn handle_key(&mut self, key: event::KeyEvent) {
-        // Global keys
+    /// Get the current binding context based on UI state
+    fn get_binding_context(&self) -> BindingContext {
         if self.ui_state.show_connection_form {
-            self.ui_state.connection_form.handle_key_event(key);
-            match key.code {
-                KeyCode::Enter => {
-                    let _ = self.action_tx.send(Action::Enter);
-                }
-                KeyCode::Esc => {
-                    let _ = self.action_tx.send(Action::CloseConnectionForm);
-                }
-                KeyCode::Tab => {
-                    let _ = self.action_tx.send(Action::ConnectionFormNextField);
-                }
-                KeyCode::BackTab => {
-                    let _ = self.action_tx.send(Action::ConnectionFormPrevField);
-                }
-                _ => {}
-            }
-            return;
-        }
-
-        if self.ui_state.show_help {
-            let _ = self.action_tx.send(Action::ToggleHelp);
-            return;
-        }
-
-        // Handle search mode input
-        if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
-            match key.code {
-                KeyCode::Esc => {
-                    let _ = self.action_tx.send(Action::ClearSearch);
-                }
-                KeyCode::Backspace if self.app_state.is_searching => {
-                    let _ = self.action_tx.send(Action::SearchDeleteChar);
-                }
-                KeyCode::Enter if self.app_state.is_searching => {
-                    // Confirm search and keep results, exit search input mode
-                    self.app_state.is_searching = false;
-                }
-                KeyCode::Char(c) if self.app_state.is_searching => {
-                    let _ = self.action_tx.send(Action::SearchAddChar(c));
-                }
-                KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-                    // Navigate through search results (simple index-based)
-                    let results_len = self.app_state.search_results_local.len();
-                    if results_len > 0 {
-                        let current = self.app_state.search_selection_index.unwrap_or(0);
-                        let next = if current + 1 >= results_len { 0 } else { current + 1 };
-                        self.app_state.search_selection_index = Some(next);
-                        // Load value for selected key
-                        if let Some(&key_idx) = self.app_state.search_results_local.get(next) {
-                            let _ = self.action_tx.send(Action::SelectKey(key_idx));
-                        }
-                    }
-                }
-                KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
-                    // Navigate through search results backwards
-                    let results_len = self.app_state.search_results_local.len();
-                    if results_len > 0 {
-                        let current = self.app_state.search_selection_index.unwrap_or(0);
-                        let prev = if current == 0 { results_len - 1 } else { current - 1 };
-                        self.app_state.search_selection_index = Some(prev);
-                        // Load value for selected key
-                        if let Some(&key_idx) = self.app_state.search_results_local.get(prev) {
-                            let _ = self.action_tx.send(Action::SelectKey(key_idx));
-                        }
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
-
-        // Handle welcome screen navigation
-        if self.app_state.connection_manager.get_active_id().is_none()
+            BindingContext::ConnectionForm
+        } else if self.ui_state.show_quit_confirmation {
+            BindingContext::QuitConfirmation
+        } else if self.ui_state.show_connection_palette {
+            BindingContext::ConnectionPalette
+        } else if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
+            BindingContext::Search
+        } else if self.app_state.connection_manager.get_active_id().is_none()
             && !self.ui_state.show_connection_palette
         {
-            let configs = self.app_state.connection_manager.get_configs();
-            let recent_configs: Vec<&ConnectionConfig> = self
-                .ui_state
-                .recent_connection_ids
-                .iter()
-                .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
-                .collect();
-
-            if !recent_configs.is_empty() {
-                match key.code {
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        self.ui_state.welcome_screen.next(recent_configs.len());
-                        return;
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        self.ui_state.welcome_screen.prev(recent_configs.len());
-                        return;
-                    }
-                    KeyCode::Enter => {
-                        if let Some(idx) = self.ui_state.welcome_screen.state.selected() {
-                            if let Some(config) = recent_configs.get(idx) {
-                                let _ = self
-                                    .action_tx
-                                    .send(Action::FocusConnection(config.id.clone()));
-                            }
-                        }
-                        return;
-                    }
-                    _ => {}
-                }
-            }
+            BindingContext::Welcome
+        } else {
+            BindingContext::Default
         }
+    }
 
-        if self.ui_state.show_connection_palette {
-            let configs = self.app_state.connection_manager.get_configs();
-
-            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                match key.code {
-                    KeyCode::Char('p') => {
-                        let _ = self.action_tx.send(Action::CloseConnectionPalette);
-                    }
-                    KeyCode::Char('n') => {
-                        let _ = self.action_tx.send(Action::CloseConnectionPalette);
-                        let _ = self.action_tx.send(Action::OpenConnectionForm);
-                    }
-                    _ => {}
-                }
-                return;
+    /// Map a command name to an Action and execute it
+    fn execute_command(&mut self, command: &str) -> bool {
+        match command {
+            // Quit commands
+            "quit.show" => {
+                let _ = self.action_tx.send(Action::ShowQuitConfirmation);
+                true
+            }
+            "quit.confirm" => {
+                let _ = self.action_tx.send(Action::ConfirmQuit);
+                true
+            }
+            "quit.cancel" => {
+                let _ = self.action_tx.send(Action::CancelQuit);
+                true
             }
 
-            match key.code {
-                KeyCode::Esc => {
-                    let _ = self.action_tx.send(Action::CloseConnectionPalette);
+            // Help
+            "help.toggle" => {
+                let _ = self.action_tx.send(Action::ToggleHelp);
+                true
+            }
+
+            // Search commands
+            "search.start" => {
+                // Only start search when there's an active connection with keys
+                if self.app_state.connection_manager.get_active_id().is_some()
+                    && !self.app_state.keys.is_empty()
+                {
+                    let _ = self.action_tx.send(Action::StartSearch);
                 }
-                KeyCode::Enter => {
+                true
+            }
+            "search.clear" => {
+                let _ = self.action_tx.send(Action::ClearSearch);
+                true
+            }
+            "search.next_result" => {
+                let results_len = self.app_state.search_results_local.len();
+                if results_len > 0 {
+                    let current = self.app_state.search_selection_index.unwrap_or(0);
+                    let next = if current + 1 >= results_len { 0 } else { current + 1 };
+                    self.app_state.search_selection_index = Some(next);
+                    if let Some(&key_idx) = self.app_state.search_results_local.get(next) {
+                        let _ = self.action_tx.send(Action::SelectKey(key_idx));
+                    }
+                }
+                true
+            }
+            "search.prev_result" => {
+                let results_len = self.app_state.search_results_local.len();
+                if results_len > 0 {
+                    let current = self.app_state.search_selection_index.unwrap_or(0);
+                    let prev = if current == 0 { results_len - 1 } else { current - 1 };
+                    self.app_state.search_selection_index = Some(prev);
+                    if let Some(&key_idx) = self.app_state.search_results_local.get(prev) {
+                        let _ = self.action_tx.send(Action::SelectKey(key_idx));
+                    }
+                }
+                true
+            }
+            "search.confirm" => {
+                // Confirm search and keep results, exit search input mode
+                if self.app_state.is_searching {
+                    self.app_state.is_searching = false;
+                }
+                true
+            }
+
+            // Navigation commands
+            "navigation.next_panel" => {
+                let _ = self.action_tx.send(Action::NextPanel);
+                true
+            }
+            "navigation.prev_panel" => {
+                let _ = self.action_tx.send(Action::PrevPanel);
+                true
+            }
+            "navigation.next_item" => {
+                let context = self.get_binding_context();
+                if context == BindingContext::Welcome {
+                    let configs = self.app_state.connection_manager.get_configs();
+                    let recent_configs: Vec<&ConnectionConfig> = self
+                        .ui_state
+                        .recent_connection_ids
+                        .iter()
+                        .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
+                        .collect();
+                    if !recent_configs.is_empty() {
+                        self.ui_state.welcome_screen.next(recent_configs.len());
+                    }
+                } else if context == BindingContext::ConnectionPalette {
+                    let configs = self.app_state.connection_manager.get_configs();
+                    if !configs.is_empty() {
+                        self.ui_state.connection_list.next(configs.len());
+                    }
+                } else {
+                    let _ = self.action_tx.send(Action::NextItem);
+                }
+                true
+            }
+            "navigation.prev_item" => {
+                let context = self.get_binding_context();
+                if context == BindingContext::Welcome {
+                    let configs = self.app_state.connection_manager.get_configs();
+                    let recent_configs: Vec<&ConnectionConfig> = self
+                        .ui_state
+                        .recent_connection_ids
+                        .iter()
+                        .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
+                        .collect();
+                    if !recent_configs.is_empty() {
+                        self.ui_state.welcome_screen.prev(recent_configs.len());
+                    }
+                } else if context == BindingContext::ConnectionPalette {
+                    let configs = self.app_state.connection_manager.get_configs();
+                    if !configs.is_empty() {
+                        self.ui_state.connection_list.prev(configs.len());
+                    }
+                } else {
+                    let _ = self.action_tx.send(Action::PrevItem);
+                }
+                true
+            }
+            "navigation.enter" => {
+                let context = self.get_binding_context();
+                if context == BindingContext::Welcome {
+                    let configs = self.app_state.connection_manager.get_configs();
+                    let recent_configs: Vec<&ConnectionConfig> = self
+                        .ui_state
+                        .recent_connection_ids
+                        .iter()
+                        .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
+                        .collect();
+                    if let Some(idx) = self.ui_state.welcome_screen.state.selected() {
+                        if let Some(config) = recent_configs.get(idx) {
+                            let _ = self
+                                .action_tx
+                                .send(Action::FocusConnection(config.id.clone()));
+                        }
+                    }
+                } else if context == BindingContext::ConnectionPalette {
+                    let configs = self.app_state.connection_manager.get_configs();
                     if let Some(idx) = self.ui_state.connection_list.state.selected() {
                         if let Some(config) = configs.get(idx) {
                             let _ = self
@@ -957,121 +992,158 @@ impl App {
                                 .send(Action::FocusConnection(config.id.clone()));
                         }
                     }
+                } else {
+                    let _ = self.action_tx.send(Action::Enter);
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if !configs.is_empty() {
-                        self.ui_state.connection_list.next(configs.len());
+                true
+            }
+
+            // Connection commands
+            "connection.palette.toggle" => {
+                let action = if self.ui_state.show_connection_palette {
+                    Action::CloseConnectionPalette
+                } else {
+                    Action::OpenConnectionPalette
+                };
+                let _ = self.action_tx.send(action);
+                true
+            }
+            "connection.palette.open" => {
+                let _ = self.action_tx.send(Action::OpenConnectionPalette);
+                true
+            }
+            "connection.palette.close" => {
+                let _ = self.action_tx.send(Action::CloseConnectionPalette);
+                true
+            }
+            "connection.palette.select" => {
+                let configs = self.app_state.connection_manager.get_configs();
+                if let Some(idx) = self.ui_state.connection_list.state.selected() {
+                    if let Some(config) = configs.get(idx) {
+                        let _ = self
+                            .action_tx
+                            .send(Action::FocusConnection(config.id.clone()));
                     }
                 }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if !configs.is_empty() {
-                        self.ui_state.connection_list.prev(configs.len());
+                true
+            }
+            "connection.palette.next" => {
+                let configs = self.app_state.connection_manager.get_configs();
+                if !configs.is_empty() {
+                    self.ui_state.connection_list.next(configs.len());
+                }
+                true
+            }
+            "connection.palette.prev" => {
+                let configs = self.app_state.connection_manager.get_configs();
+                if !configs.is_empty() {
+                    self.ui_state.connection_list.prev(configs.len());
+                }
+                true
+            }
+            "connection.palette.delete" => {
+                let configs = self.app_state.connection_manager.get_configs();
+                if let Some(idx) = self.ui_state.connection_list.state.selected() {
+                    if let Some(config) = configs.get(idx) {
+                        let _ = self
+                            .action_tx
+                            .send(Action::DeleteConnection(config.id.clone()));
                     }
                 }
-                KeyCode::Char('d') => {
-                    if let Some(idx) = self.ui_state.connection_list.state.selected() {
-                        if let Some(config) = configs.get(idx) {
-                            let _ = self
-                                .action_tx
-                                .send(Action::DeleteConnection(config.id.clone()));
-                        }
-                    }
-                }
-                KeyCode::Char('q') => {
-                    let _ = self.action_tx.send(Action::ShowQuitConfirmation);
-                }
-                KeyCode::Char('?') => {
-                    let _ = self.action_tx.send(Action::ToggleHelp);
-                }
-                _ => {}
+                true
             }
-            return;
-        }
-
-        // Handle quit confirmation dialog
-        if self.ui_state.show_quit_confirmation {
-            match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                    let _ = self.action_tx.send(Action::ConfirmQuit);
+            "connection.form.open" => {
+                if self.ui_state.show_connection_palette {
+                    let _ = self.action_tx.send(Action::CloseConnectionPalette);
                 }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                    let _ = self.action_tx.send(Action::CancelQuit);
-                }
-                _ => {}
+                let _ = self.action_tx.send(Action::OpenConnectionForm);
+                true
             }
-            return;
-        }
-
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
-            match key.code {
-                KeyCode::Char('p') => {
-                    let action = if self.ui_state.show_connection_palette {
-                        Action::CloseConnectionPalette
-                    } else {
-                        Action::OpenConnectionPalette
-                    };
-                    let _ = self.action_tx.send(action);
-                    return;
-                }
-                KeyCode::Char('n') => {
-                    let _ = self.action_tx.send(Action::OpenConnectionForm);
-                    return;
-                }
-                // Ctrl+Arrow keys for connection tab switching
-                KeyCode::Right => {
-                    let _ = self.action_tx.send(Action::NextConnectionTab);
-                    return;
-                }
-                KeyCode::Left => {
-                    let _ = self.action_tx.send(Action::PrevConnectionTab);
-                    return;
-                }
-                // Ctrl+H/L for pane resizing
-                KeyCode::Char('l') => {
-                    // Expand right pane (shrink left)
-                    self.ui_state.resize_panes(-0.05);
-                    return;
-                }
-                KeyCode::Char('h') => {
-                    // Expand left pane (shrink right)
-                    self.ui_state.resize_panes(0.05);
-                    return;
-                }
-                _ => {}
+            "connection.form.close" => {
+                let _ = self.action_tx.send(Action::CloseConnectionForm);
+                true
             }
-        }
-
-        match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => {
-                let _ = self.action_tx.send(Action::ShowQuitConfirmation);
-            }
-            KeyCode::Char('?') => {
-                let _ = self.action_tx.send(Action::ToggleHelp);
-            }
-            KeyCode::Char('/') => {
-                // Start search mode when there's an active connection with keys
-                if self.app_state.connection_manager.get_active_id().is_some()
-                    && !self.app_state.keys.is_empty()
-                {
-                    let _ = self.action_tx.send(Action::StartSearch);
-                }
-            }
-            KeyCode::Tab => {
-                let _ = self.action_tx.send(Action::NextPanel);
-            }
-            KeyCode::BackTab => {
-                let _ = self.action_tx.send(Action::PrevPanel);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let _ = self.action_tx.send(Action::NextItem);
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                let _ = self.action_tx.send(Action::PrevItem);
-            }
-            KeyCode::Enter => {
+            "connection.form.submit" => {
                 let _ = self.action_tx.send(Action::Enter);
+                true
             }
-            _ => {}
+            "connection.form.next_field" => {
+                let _ = self.action_tx.send(Action::ConnectionFormNextField);
+                true
+            }
+            "connection.form.prev_field" => {
+                let _ = self.action_tx.send(Action::ConnectionFormPrevField);
+                true
+            }
+            "connection.tab.next" => {
+                let _ = self.action_tx.send(Action::NextConnectionTab);
+                true
+            }
+            "connection.tab.prev" => {
+                let _ = self.action_tx.send(Action::PrevConnectionTab);
+                true
+            }
+
+            // Pane resizing
+            "pane.resize.left" => {
+                self.ui_state.resize_panes(0.05);
+                true
+            }
+            "pane.resize.right" => {
+                self.ui_state.resize_panes(-0.05);
+                true
+            }
+
+            _ => false,
+        }
+    }
+
+    fn handle_key(&mut self, key: event::KeyEvent) {
+        // Handle connection form input - needs direct key event handling for text input
+        if self.ui_state.show_connection_form {
+            self.ui_state.connection_form.handle_key_event(key);
+            // Check keybindings for form-specific commands
+            let context = BindingContext::ConnectionForm;
+            if let Some(command) = self.keybindings.get_command(key, context) {
+                let _ = self.execute_command(&command);
+            }
+            return;
+        }
+
+        // Help screen - any key toggles it
+        if self.ui_state.show_help {
+            let _ = self.action_tx.send(Action::ToggleHelp);
+            return;
+        }
+
+        // Handle search mode input - special handling for character input
+        if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
+            // Handle text input directly
+            match key.code {
+                KeyCode::Backspace if self.app_state.is_searching => {
+                    let _ = self.action_tx.send(Action::SearchDeleteChar);
+                    return;
+                }
+                KeyCode::Char(c) if self.app_state.is_searching && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    // Only handle plain character input here, let keybindings handle special keys
+                    let _ = self.action_tx.send(Action::SearchAddChar(c));
+                    return;
+                }
+                _ => {}
+            }
+
+            // Check keybindings for search commands
+            let context = BindingContext::Search;
+            if let Some(command) = self.keybindings.get_command(key, context) {
+                let _ = self.execute_command(&command);
+            }
+            return;
+        }
+
+        // Determine context and look up command in keybindings
+        let context = self.get_binding_context();
+        if let Some(command) = self.keybindings.get_command(key, context) {
+            let _ = self.execute_command(&command);
         }
     }
 

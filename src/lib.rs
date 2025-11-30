@@ -3,6 +3,7 @@ pub mod app;
 pub mod backend;
 pub mod config;
 pub mod formatter;
+pub mod keybindings;
 pub mod search;
 pub mod types;
 pub mod ui;

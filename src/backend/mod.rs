@@ -1,3 +1,4 @@
+mod etcd;
 mod memcached;
 mod mock;
 mod redis;
@@ -7,6 +8,7 @@ use crate::types::{BackendType, KeyMetadata, KeyScanResult, Value};
 use std::time::Duration;
 use thiserror::Error;
 
+pub use etcd::EtcdBackend;
 pub use memcached::MemcachedBackend;
 pub use mock::MockBackend;
 pub use redis::RedisBackend;

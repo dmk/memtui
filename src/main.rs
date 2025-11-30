@@ -18,7 +18,7 @@ use tracing_subscriber::EnvFilter;
 
 use memtui::action::Action;
 use memtui::app::{AppState, ConnectionStatus};
-use memtui::backend::{Backend, MemcachedBackend, RedisBackend};
+use memtui::backend::{Backend, EtcdBackend, MemcachedBackend, RedisBackend};
 use memtui::config::Config;
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
 use memtui::search::fuzzy_search_keys;
@@ -461,13 +461,7 @@ impl App {
                             BackendType::Memcached => {
                                 Box::new(MemcachedBackend::new(config.clone()))
                             }
-                            BackendType::Etcd => {
-                                let _ = tx.send(Action::DidFailConnect(
-                                    config.id,
-                                    "Etcd not implemented".into(),
-                                ));
-                                return;
-                            }
+                            BackendType::Etcd => Box::new(EtcdBackend::new(config.clone())),
                         };
 
                         match backend.connect().await {

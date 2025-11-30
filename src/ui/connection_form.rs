@@ -87,8 +87,8 @@ impl ConnectionForm {
                 BackendType::Memcached
             }
             BackendType::Memcached => {
-                self.port = Input::default().with_value("6379".into());
-                BackendType::Redis
+                self.port = Input::default().with_value("2379".into());
+                BackendType::Etcd
             }
             BackendType::Etcd => {
                 self.port = Input::default().with_value("6379".into());
@@ -372,7 +372,14 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
 
     if matches!(form.backend_type, BackendType::Memcached) {
         instructions.push(Line::from(vec![Span::styled(
-            "Note: Memcached doesn't use database field or authentication",
+            "Note: Memcached doesn't use database field",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )]));
+    } else if matches!(form.backend_type, BackendType::Etcd) {
+        instructions.push(Line::from(vec![Span::styled(
+            "Note: etcd doesn't use database field",
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),

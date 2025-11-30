@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Seed Redis and Memcached datastores with sample data.
+Seed Redis, Memcached, and etcd datastores with sample data.
 
-This script populates Redis and Memcached instances with realistic sample data
+This script populates Redis, Memcached, and etcd instances with realistic sample data
 for testing and development purposes.
 """
 
@@ -14,6 +14,7 @@ import time
 
 try:
     import redis
+    import etcd3gw
     from faker import Faker
     from tqdm import tqdm
     from colorama import Fore, Style, init as colorama_init
@@ -26,11 +27,13 @@ except ImportError as e:
 
 
 class DatastoreSeeder:
-    """Manages seeding of Redis and Memcached datastores."""
+    """Manages seeding of Redis, Memcached, and etcd datastores."""
 
     # Default base counts for various data types
     BASE_REDIS_USERS = 200
     BASE_MEMCACHED_USERS = 120
+    BASE_ETCD_SERVICES = 50
+    BASE_ETCD_CONFIGS = 30
     BASE_JOBS = 40
     BASE_EVENT_BUCKETS = 5
     BASE_LEADERBOARD_ENTRIES = 4
@@ -56,6 +59,8 @@ class DatastoreSeeder:
         redis_port: int = 6379,
         memcached_host: str = "127.0.0.1",
         memcached_port: int = 11211,
+        etcd_host: str = "127.0.0.1",
+        etcd_port: int = 2379,
         scale: float = 1.0,
         seed: int = None,
         flush: bool = False,
@@ -65,6 +70,8 @@ class DatastoreSeeder:
         self.redis_port = redis_port
         self.memcached_host = memcached_host
         self.memcached_port = memcached_port
+        self.etcd_host = etcd_host
+        self.etcd_port = etcd_port
         self.scale = scale
         self.flush = flush
         self.verbose = verbose
@@ -72,6 +79,8 @@ class DatastoreSeeder:
         # Calculate scaled counts
         self.num_users = int(self.BASE_REDIS_USERS * scale)
         self.num_memcached_users = int(self.BASE_MEMCACHED_USERS * scale)
+        self.num_etcd_services = max(5, int(self.BASE_ETCD_SERVICES * scale))
+        self.num_etcd_configs = max(5, int(self.BASE_ETCD_CONFIGS * scale))
         self.num_jobs = int(self.BASE_JOBS * scale)
         self.num_event_buckets = max(1, int(self.BASE_EVENT_BUCKETS * scale))
         self.num_leaderboard_entries = max(1, int(self.BASE_LEADERBOARD_ENTRIES * scale))
@@ -670,6 +679,253 @@ class DatastoreSeeder:
         finally:
             sock.close()
 
+    def etcd_put(self, client, key: str, value):
+        """Helper to put a value in etcd."""
+        if not isinstance(value, str):
+            value = json.dumps(value)
+        client.put(key, value)
+
+    def seed_etcd(self):
+        """Populate etcd with sample data using etcd3gw client."""
+        self.print_header("ETCD DATASTORE")
+
+        endpoint = f"http://{self.etcd_host}:{self.etcd_port}"
+        self.log(f"Connecting to etcd at {Fore.YELLOW}{endpoint}{Style.RESET_ALL}")
+
+        # Connect to etcd
+        try:
+            from etcd3gw.client import Etcd3Client
+            client = Etcd3Client(host=self.etcd_host, port=self.etcd_port, timeout=5)
+            # Test connection
+            try:
+                client.status()
+            except (AttributeError, Exception):
+                # Some versions might not have status(), try a simple operation
+                pass
+            self.log("Connected successfully", "success")
+        except Exception as e:
+            self.log(f"Failed to connect: {e}", "error")
+            raise
+
+        # Flush all existing data (if requested)
+        if self.flush:
+            self.log("Flushing existing data", "warning")
+            try:
+                # Get all keys and delete them
+                # etcd3gw uses get_prefix to get all keys with a prefix
+                all_keys = client.get_prefix('')
+                for key, value, metadata in all_keys:
+                    if key:
+                        key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+                        client.delete(key_str)
+            except Exception as e:
+                self.log(f"Warning: Error during flush: {e}", "warning")
+        else:
+            self.log("Skipping flush (use --flush to clear existing data)")
+
+        bar_color = "\033[36m"  # Cyan
+
+        # Service discovery entries
+        self.log(f"Registering {Fore.YELLOW}{self.num_etcd_services}{Style.RESET_ALL} services")
+        services = ["api-gateway", "auth-service", "user-service", "order-service",
+                    "payment-service", "notification-service", "inventory-service",
+                    "search-service", "analytics-service", "cache-service"]
+        regions = ["us-west-1", "us-east-1", "eu-central-1", "ap-southeast-1"]
+        statuses = ["healthy", "degraded", "maintenance"]
+
+        for i in tqdm(
+            range(1, self.num_etcd_services + 1),
+            desc=f"{bar_color}Services{Style.RESET_ALL}",
+            unit="svc",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+        ):
+            service_name = self.fake.random_element(services)
+            instance_id = f"{service_name}-{i:03d}"
+            region = self.fake.random_element(regions)
+
+            # Service registration
+            service_data = {
+                "id": instance_id,
+                "name": service_name,
+                "address": f"{service_name}-{i}.{region}.svc.cluster.local",
+                "port": self.fake.random_int(min=8000, max=9000),
+                "region": region,
+                "status": self.fake.random_element(statuses),
+                "version": f"{self.fake.random_int(1, 3)}.{self.fake.random_int(0, 15)}.{self.fake.random_int(0, 99)}",
+                "started_at": self.fake.date_time_this_month().isoformat(),
+                "metadata": {
+                    "cpu_cores": self.fake.random_int(min=2, max=16),
+                    "memory_mb": self.fake.random_int(min=512, max=8192),
+                    "environment": self.fake.random_element(["dev", "staging", "prod"]),
+                },
+            }
+            key = f"/services/{service_name}/{region}/{instance_id}"
+            self.etcd_put(client, key, service_data)
+
+            # Health check entry
+            health_data = {
+                "status": self.fake.random_element(["passing", "warning", "critical"]),
+                "last_check": self.fake.date_time_this_month().isoformat(),
+                "check_interval": "10s",
+            }
+            self.etcd_put(client, f"/health/{instance_id}", health_data)
+
+        # Configuration entries
+        self.log(f"Creating {Fore.YELLOW}{self.num_etcd_configs}{Style.RESET_ALL} configuration entries")
+        environments = ["dev", "staging", "prod"]
+        config_types = ["database", "cache", "messaging", "logging", "security", "feature-flags"]
+
+        for i in tqdm(
+            range(1, self.num_etcd_configs + 1),
+            desc=f"{bar_color}Configs{Style.RESET_ALL}",
+            unit="cfg",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}",
+        ):
+            env = self.fake.random_element(environments)
+            config_type = self.fake.random_element(config_types)
+
+            if config_type == "database":
+                config_data = {
+                    "host": f"db-{env}.internal",
+                    "port": 5432,
+                    "database": f"app_{env}",
+                    "pool_size": self.fake.random_int(min=5, max=50),
+                    "ssl": env == "prod",
+                    "timeout_ms": self.fake.random_int(min=1000, max=5000),
+                }
+            elif config_type == "cache":
+                config_data = {
+                    "host": f"redis-{env}.internal",
+                    "port": 6379,
+                    "ttl_seconds": self.fake.random_int(min=300, max=3600),
+                    "max_connections": self.fake.random_int(min=10, max=100),
+                }
+            elif config_type == "messaging":
+                config_data = {
+                    "broker": f"kafka-{env}.internal:9092",
+                    "consumer_group": f"app-{env}",
+                    "topics": [self.fake.word() for _ in range(3)],
+                    "batch_size": self.fake.random_int(min=100, max=1000),
+                }
+            elif config_type == "logging":
+                config_data = {
+                    "level": self.fake.random_element(["debug", "info", "warn", "error"]),
+                    "format": self.fake.random_element(["json", "text"]),
+                    "output": self.fake.random_element(["stdout", "file", "remote"]),
+                    "retention_days": self.fake.random_int(min=7, max=90),
+                }
+            elif config_type == "security":
+                config_data = {
+                    "jwt_expiry_hours": self.fake.random_int(min=1, max=24),
+                    "rate_limit_per_minute": self.fake.random_int(min=60, max=1000),
+                    "allowed_origins": [self.fake.domain_name() for _ in range(3)],
+                    "enable_cors": True,
+                }
+            else:  # feature-flags
+                config_data = {
+                    "dark_mode": self.fake.boolean(),
+                    "new_dashboard": self.fake.boolean(),
+                    "beta_features": self.fake.boolean(),
+                    "ai_assistant": self.fake.boolean(),
+                    "rollout_percentage": self.fake.random_int(min=0, max=100),
+                }
+
+            key = f"/config/{env}/{config_type}"
+            self.etcd_put(client, key, config_data)
+
+        # Cluster membership
+        self.log("Recording cluster membership")
+        nodes = ["node-1", "node-2", "node-3", "node-4", "node-5"]
+        for node in nodes:
+            node_data = {
+                "id": node,
+                "ip": self.fake.ipv4_private(),
+                "role": self.fake.random_element(["leader", "follower"]),
+                "joined_at": self.fake.date_time_this_year().isoformat(),
+                "last_heartbeat": self.fake.date_time_this_month().isoformat(),
+            }
+            self.etcd_put(client, f"/cluster/nodes/{node}", node_data)
+
+        # Locks and leases (simulated)
+        self.log("Creating distributed locks")
+        lock_owners = ["scheduler", "replicator", "cleaner", "indexer", "aggregator"]
+        for owner in lock_owners:
+            lock_data = {
+                "owner": owner,
+                "acquired_at": self.fake.date_time_this_month().isoformat(),
+                "ttl_seconds": self.fake.random_int(min=10, max=60),
+            }
+            self.etcd_put(client, f"/locks/{owner}", lock_data)
+
+        # Leader election entries
+        self.log("Setting up leader election")
+        leader_services = ["job-scheduler", "event-processor", "cache-manager"]
+        for service in leader_services:
+            leader_data = {
+                "leader_id": f"{service}-{self.fake.random_int(1, 5)}",
+                "elected_at": self.fake.date_time_this_month().isoformat(),
+                "term": self.fake.random_int(min=1, max=100),
+            }
+            self.etcd_put(client, f"/election/{service}/leader", leader_data)
+
+        # Rate limiting counters
+        self.log("Initializing rate limit counters")
+        for i in range(1, min(self.num_users, 50) + 1):
+            user_id = f"user-{i:04d}"
+            rate_data = {
+                "requests_minute": self.fake.random_int(min=0, max=100),
+                "requests_hour": self.fake.random_int(min=0, max=500),
+                "last_request": self.fake.date_time_this_month().isoformat(),
+            }
+            self.etcd_put(client, f"/ratelimit/{user_id}", rate_data)
+
+        # Secret references (not actual secrets, just metadata)
+        self.log("Storing secret references")
+        secret_types = ["api-key", "database-password", "jwt-secret", "oauth-client"]
+        for secret_type in secret_types:
+            for env in environments:
+                secret_meta = {
+                    "type": secret_type,
+                    "environment": env,
+                    "version": self.fake.random_int(min=1, max=10),
+                    "rotated_at": self.fake.date_time_this_year().isoformat(),
+                    "vault_path": f"secret/data/{env}/{secret_type}",
+                }
+                self.etcd_put(client, f"/secrets/{env}/{secret_type}", secret_meta)
+
+        # Workflow state
+        self.log("Storing workflow states")
+        workflow_types = ["deploy", "backup", "migration", "cleanup"]
+        for i in range(1, self.num_releases + 1):
+            workflow = {
+                "id": f"wf-{i:05d}",
+                "type": self.fake.random_element(workflow_types),
+                "status": self.fake.random_element(["pending", "running", "completed", "failed"]),
+                "started_at": self.fake.date_time_this_month().isoformat(),
+                "steps_completed": self.fake.random_int(min=0, max=10),
+                "total_steps": 10,
+            }
+            self.etcd_put(client, f"/workflows/{workflow['id']}", workflow)
+
+        # Tenant isolation
+        self.log("Creating tenant configurations")
+        for org_id in range(1, self.num_orgs + 1):
+            tenant = {
+                "id": f"tenant-{org_id:03d}",
+                "name": self.fake.company(),
+                "tier": self.fake.random_element(["free", "pro", "enterprise"]),
+                "features": {
+                    "max_users": self.fake.random_int(min=5, max=500),
+                    "max_storage_gb": self.fake.random_int(min=10, max=1000),
+                    "api_rate_limit": self.fake.random_int(min=100, max=10000),
+                },
+                "created_at": self.fake.date_time_this_year().isoformat(),
+            }
+            self.etcd_put(client, f"/tenants/{tenant['id']}", tenant)
+
+        # etcd3gw client doesn't need explicit close, but we can clean up if needed
+        self.log("etcd seeding complete", "success")
+
     def run(self):
         """Run the full seeding process."""
         try:
@@ -685,12 +941,14 @@ class DatastoreSeeder:
             if self.scale != 1.0:
                 self.log(f"  Redis users: {Fore.YELLOW}{self.num_users}{Style.RESET_ALL} (base: {self.BASE_REDIS_USERS})")
                 self.log(f"  Memcached users: {Fore.YELLOW}{self.num_memcached_users}{Style.RESET_ALL} (base: {self.BASE_MEMCACHED_USERS})")
+                self.log(f"  etcd services: {Fore.YELLOW}{self.num_etcd_services}{Style.RESET_ALL} (base: {self.BASE_ETCD_SERVICES})")
                 self.log(f"  Jobs: {Fore.YELLOW}{self.num_jobs}{Style.RESET_ALL} (base: {self.BASE_JOBS})")
             print()
 
-            # Seed both datastores
+            # Seed all datastores
             self.seed_redis()
             self.seed_memcached()
+            self.seed_etcd()
 
             # Print success summary
             print()
@@ -700,6 +958,7 @@ class DatastoreSeeder:
             print()
             self.log(f"Total Redis keys: {Fore.YELLOW}~{self.num_users * 2 + 50}{Style.RESET_ALL}")
             self.log(f"Total Memcached keys: {Fore.YELLOW}~{self.num_memcached_users + self.num_jobs + 3}{Style.RESET_ALL}")
+            self.log(f"Total etcd keys: {Fore.YELLOW}~{self.num_etcd_services * 2 + self.num_etcd_configs + 100}{Style.RESET_ALL}")
             print()
 
         except KeyboardInterrupt:
@@ -717,7 +976,7 @@ class DatastoreSeeder:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Seed Redis and Memcached datastores with sample data",
+        description="Seed Redis, Memcached, and etcd datastores with sample data",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -744,6 +1003,17 @@ def main():
         help="Memcached port",
     )
     parser.add_argument(
+        "--etcd-host",
+        default="127.0.0.1",
+        help="etcd host address",
+    )
+    parser.add_argument(
+        "--etcd-port",
+        type=int,
+        default=2379,
+        help="etcd port",
+    )
+    parser.add_argument(
         "--scale",
         type=float,
         default=1.0,
@@ -751,6 +1021,7 @@ def main():
             "Scale multiplier for data generation (default: 1.0). "
             f"Base amounts: {DatastoreSeeder.BASE_REDIS_USERS} Redis users, "
             f"{DatastoreSeeder.BASE_MEMCACHED_USERS} Memcached users, "
+            f"{DatastoreSeeder.BASE_ETCD_SERVICES} etcd services, "
             f"{DatastoreSeeder.BASE_JOBS} jobs. "
             "Use 0.5 for half, 2.0 for double, etc."
         ),
@@ -778,6 +1049,8 @@ def main():
         redis_port=args.redis_port,
         memcached_host=args.memcached_host,
         memcached_port=args.memcached_port,
+        etcd_host=args.etcd_host,
+        etcd_port=args.etcd_port,
         scale=args.scale,
         seed=args.seed,
         flush=args.flush,

@@ -23,7 +23,7 @@ use memtui::backend::{Backend, MemcachedBackend, RedisBackend};
 use memtui::config::Config;
 use memtui::search::fuzzy_search_keys;
 use memtui::types::{BackendType, ConnectionConfig};
-use memtui::ui::{self, Panel, UiState};
+use memtui::ui::{self, init_theme, Panel, UiState};
 use memtui::userdata;
 
 pub struct App {
@@ -1547,6 +1547,10 @@ fn init_tracing() {
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
     init_tracing();
+
+    // Load and initialize the theme before any rendering
+    let theme = userdata::load_theme();
+    init_theme(theme);
 
     // Setup panic hook to restore terminal before printing error
     let original_hook = std::panic::take_hook();

@@ -1,5 +1,7 @@
 //! 2026 Modern Theme Module
 //! Clean, consistent styling with subtle animations
+//!
+//! Theme colors can be customized via `~/.config/memtui/theme.json`
 
 use ratatui::{
     layout::Rect,
@@ -7,58 +9,337 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders},
 };
+use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COLOR PALETTE
+// THEME CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Primary accent - cyan
-pub const ACCENT: Color = Color::Rgb(80, 200, 220);
-/// Secondary accent - lighter cyan
-pub const ACCENT_DIM: Color = Color::Rgb(60, 150, 170);
-/// Highlight accent
-pub const ACCENT_BRIGHT: Color = Color::Rgb(100, 220, 240);
+/// Global theme instance, loaded once at startup
+static THEME: OnceLock<ThemeConfig> = OnceLock::new();
 
-/// Neon green for success/connected
-pub const NEON_GREEN: Color = Color::Rgb(57, 255, 20);
-/// Amber for warnings
-pub const NEON_AMBER: Color = Color::Rgb(255, 191, 0);
-/// Red for errors
-pub const NEON_RED: Color = Color::Rgb(255, 80, 80);
-/// Purple for special elements
-pub const NEON_PURPLE: Color = Color::Rgb(160, 100, 220);
-/// Cyan for accents
-pub const NEON_CYAN: Color = Color::Rgb(0, 255, 255);
-/// Pink for logo gradient
-pub const NEON_PINK: Color = Color::Rgb(255, 100, 150);
-/// Electric blue
-pub const ELECTRIC_BLUE: Color = Color::Rgb(80, 180, 255);
+/// Get the current theme (loads default if not initialized)
+pub fn theme() -> &'static ThemeConfig {
+    THEME.get_or_init(ThemeConfig::default)
+}
 
-/// Deep background
-pub const BG_DEEP: Color = Color::Rgb(12, 14, 22);
-/// Panel background
-pub const BG_PANEL: Color = Color::Rgb(18, 21, 32);
-/// Surface background - for cards/elevated areas
-pub const BG_SURFACE: Color = Color::Rgb(26, 30, 44);
-/// Selected item background
-pub const BG_SELECTED: Color = Color::Rgb(35, 45, 65);
-/// Hover/elevated state
-pub const BG_ELEVATED: Color = Color::Rgb(40, 50, 70);
-pub const BG_HOVER: Color = Color::Rgb(45, 55, 75);
+/// Initialize the global theme with a custom config
+/// Should be called once at startup before any rendering
+pub fn init_theme(config: ThemeConfig) {
+    let _ = THEME.set(config);
+}
 
-/// Dim text
-pub const TEXT_DIM: Color = Color::Rgb(90, 100, 120);
-/// Secondary text
-pub const TEXT_SECONDARY: Color = Color::Rgb(140, 150, 170);
-/// Primary text
-pub const TEXT_PRIMARY: Color = Color::Rgb(210, 215, 230);
-/// Bright/white text
-pub const TEXT_BRIGHT: Color = Color::Rgb(245, 248, 255);
+/// RGB color representation for JSON serialization
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct RgbColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl RgbColor {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+
+    pub fn to_color(self) -> Color {
+        Color::Rgb(self.r, self.g, self.b)
+    }
+}
+
+impl From<RgbColor> for Color {
+    fn from(rgb: RgbColor) -> Self {
+        rgb.to_color()
+    }
+}
+
+/// Complete theme configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeConfig {
+    /// Accent colors
+    #[serde(default)]
+    pub accent: AccentColors,
+
+    /// Neon/semantic colors
+    #[serde(default)]
+    pub neon: NeonColors,
+
+    /// Background colors
+    #[serde(default)]
+    pub background: BackgroundColors,
+
+    /// Text colors
+    #[serde(default)]
+    pub text: TextColors,
+
+    /// Border colors
+    #[serde(default)]
+    pub border: BorderColors,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            accent: AccentColors::default(),
+            neon: NeonColors::default(),
+            background: BackgroundColors::default(),
+            text: TextColors::default(),
+            border: BorderColors::default(),
+        }
+    }
+}
+
+/// Accent colors configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccentColors {
+    /// Primary accent - cyan
+    #[serde(default = "default_accent")]
+    pub primary: RgbColor,
+    /// Secondary accent - lighter cyan
+    #[serde(default = "default_accent_dim")]
+    pub dim: RgbColor,
+    /// Highlight accent
+    #[serde(default = "default_accent_bright")]
+    pub bright: RgbColor,
+}
+
+impl Default for AccentColors {
+    fn default() -> Self {
+        Self {
+            primary: default_accent(),
+            dim: default_accent_dim(),
+            bright: default_accent_bright(),
+        }
+    }
+}
+
+/// Neon/semantic colors
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NeonColors {
+    /// Green for success/connected
+    #[serde(default = "default_neon_green")]
+    pub green: RgbColor,
+    /// Amber for warnings
+    #[serde(default = "default_neon_amber")]
+    pub amber: RgbColor,
+    /// Red for errors
+    #[serde(default = "default_neon_red")]
+    pub red: RgbColor,
+    /// Purple for special elements
+    #[serde(default = "default_neon_purple")]
+    pub purple: RgbColor,
+    /// Cyan for accents
+    #[serde(default = "default_neon_cyan")]
+    pub cyan: RgbColor,
+    /// Pink for logo gradient
+    #[serde(default = "default_neon_pink")]
+    pub pink: RgbColor,
+    /// Electric blue
+    #[serde(default = "default_electric_blue")]
+    pub electric_blue: RgbColor,
+}
+
+impl Default for NeonColors {
+    fn default() -> Self {
+        Self {
+            green: default_neon_green(),
+            amber: default_neon_amber(),
+            red: default_neon_red(),
+            purple: default_neon_purple(),
+            cyan: default_neon_cyan(),
+            pink: default_neon_pink(),
+            electric_blue: default_electric_blue(),
+        }
+    }
+}
+
+/// Background colors
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackgroundColors {
+    /// Deep background
+    #[serde(default = "default_bg_deep")]
+    pub deep: RgbColor,
+    /// Panel background
+    #[serde(default = "default_bg_panel")]
+    pub panel: RgbColor,
+    /// Surface background - for cards/elevated areas
+    #[serde(default = "default_bg_surface")]
+    pub surface: RgbColor,
+    /// Selected item background
+    #[serde(default = "default_bg_selected")]
+    pub selected: RgbColor,
+    /// Elevated state
+    #[serde(default = "default_bg_elevated")]
+    pub elevated: RgbColor,
+    /// Hover state
+    #[serde(default = "default_bg_hover")]
+    pub hover: RgbColor,
+}
+
+impl Default for BackgroundColors {
+    fn default() -> Self {
+        Self {
+            deep: default_bg_deep(),
+            panel: default_bg_panel(),
+            surface: default_bg_surface(),
+            selected: default_bg_selected(),
+            elevated: default_bg_elevated(),
+            hover: default_bg_hover(),
+        }
+    }
+}
+
+/// Text colors
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextColors {
+    /// Dim text
+    #[serde(default = "default_text_dim")]
+    pub dim: RgbColor,
+    /// Secondary text
+    #[serde(default = "default_text_secondary")]
+    pub secondary: RgbColor,
+    /// Primary text
+    #[serde(default = "default_text_primary")]
+    pub primary: RgbColor,
+    /// Bright/white text
+    #[serde(default = "default_text_bright")]
+    pub bright: RgbColor,
+}
+
+impl Default for TextColors {
+    fn default() -> Self {
+        Self {
+            dim: default_text_dim(),
+            secondary: default_text_secondary(),
+            primary: default_text_primary(),
+            bright: default_text_bright(),
+        }
+    }
+}
 
 /// Border colors
-pub const BORDER_DIM: Color = Color::Rgb(50, 58, 78);
-pub const BORDER_ACTIVE: Color = Color::Rgb(80, 200, 220);
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BorderColors {
+    /// Dim border
+    #[serde(default = "default_border_dim")]
+    pub dim: RgbColor,
+    /// Active border
+    #[serde(default = "default_border_active")]
+    pub active: RgbColor,
+}
+
+impl Default for BorderColors {
+    fn default() -> Self {
+        Self {
+            dim: default_border_dim(),
+            active: default_border_active(),
+        }
+    }
+}
+
+// Default value functions
+fn default_accent() -> RgbColor { RgbColor::new(80, 200, 220) }
+fn default_accent_dim() -> RgbColor { RgbColor::new(60, 150, 170) }
+fn default_accent_bright() -> RgbColor { RgbColor::new(100, 220, 240) }
+
+fn default_neon_green() -> RgbColor { RgbColor::new(57, 255, 20) }
+fn default_neon_amber() -> RgbColor { RgbColor::new(255, 191, 0) }
+fn default_neon_red() -> RgbColor { RgbColor::new(255, 80, 80) }
+fn default_neon_purple() -> RgbColor { RgbColor::new(160, 100, 220) }
+fn default_neon_cyan() -> RgbColor { RgbColor::new(0, 255, 255) }
+fn default_neon_pink() -> RgbColor { RgbColor::new(255, 100, 150) }
+fn default_electric_blue() -> RgbColor { RgbColor::new(80, 180, 255) }
+
+fn default_bg_deep() -> RgbColor { RgbColor::new(12, 14, 22) }
+fn default_bg_panel() -> RgbColor { RgbColor::new(18, 21, 32) }
+fn default_bg_surface() -> RgbColor { RgbColor::new(26, 30, 44) }
+fn default_bg_selected() -> RgbColor { RgbColor::new(35, 45, 65) }
+fn default_bg_elevated() -> RgbColor { RgbColor::new(40, 50, 70) }
+fn default_bg_hover() -> RgbColor { RgbColor::new(45, 55, 75) }
+
+fn default_text_dim() -> RgbColor { RgbColor::new(90, 100, 120) }
+fn default_text_secondary() -> RgbColor { RgbColor::new(140, 150, 170) }
+fn default_text_primary() -> RgbColor { RgbColor::new(210, 215, 230) }
+fn default_text_bright() -> RgbColor { RgbColor::new(245, 248, 255) }
+
+fn default_border_dim() -> RgbColor { RgbColor::new(50, 58, 78) }
+fn default_border_active() -> RgbColor { RgbColor::new(80, 200, 220) }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COLOR PALETTE (backward compatible functions that read from theme)
+// These use SCREAMING_CASE to match the original const-based API
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[allow(non_snake_case)]
+/// Primary accent - cyan
+pub fn ACCENT() -> Color { theme().accent.primary.to_color() }
+#[allow(non_snake_case)]
+/// Secondary accent - lighter cyan
+pub fn ACCENT_DIM() -> Color { theme().accent.dim.to_color() }
+#[allow(non_snake_case)]
+/// Highlight accent
+pub fn ACCENT_BRIGHT() -> Color { theme().accent.bright.to_color() }
+
+#[allow(non_snake_case)]
+/// Neon green for success/connected
+pub fn NEON_GREEN() -> Color { theme().neon.green.to_color() }
+#[allow(non_snake_case)]
+/// Amber for warnings
+pub fn NEON_AMBER() -> Color { theme().neon.amber.to_color() }
+#[allow(non_snake_case)]
+/// Red for errors
+pub fn NEON_RED() -> Color { theme().neon.red.to_color() }
+#[allow(non_snake_case)]
+/// Purple for special elements
+pub fn NEON_PURPLE() -> Color { theme().neon.purple.to_color() }
+#[allow(non_snake_case)]
+/// Cyan for accents
+pub fn NEON_CYAN() -> Color { theme().neon.cyan.to_color() }
+#[allow(non_snake_case)]
+/// Pink for logo gradient
+pub fn NEON_PINK() -> Color { theme().neon.pink.to_color() }
+#[allow(non_snake_case)]
+/// Electric blue
+pub fn ELECTRIC_BLUE() -> Color { theme().neon.electric_blue.to_color() }
+
+#[allow(non_snake_case)]
+/// Deep background
+pub fn BG_DEEP() -> Color { theme().background.deep.to_color() }
+#[allow(non_snake_case)]
+/// Panel background
+pub fn BG_PANEL() -> Color { theme().background.panel.to_color() }
+#[allow(non_snake_case)]
+/// Surface background - for cards/elevated areas
+pub fn BG_SURFACE() -> Color { theme().background.surface.to_color() }
+#[allow(non_snake_case)]
+/// Selected item background
+pub fn BG_SELECTED() -> Color { theme().background.selected.to_color() }
+#[allow(non_snake_case)]
+/// Hover/elevated state
+pub fn BG_ELEVATED() -> Color { theme().background.elevated.to_color() }
+#[allow(non_snake_case)]
+pub fn BG_HOVER() -> Color { theme().background.hover.to_color() }
+
+#[allow(non_snake_case)]
+/// Dim text
+pub fn TEXT_DIM() -> Color { theme().text.dim.to_color() }
+#[allow(non_snake_case)]
+/// Secondary text
+pub fn TEXT_SECONDARY() -> Color { theme().text.secondary.to_color() }
+#[allow(non_snake_case)]
+/// Primary text
+pub fn TEXT_PRIMARY() -> Color { theme().text.primary.to_color() }
+#[allow(non_snake_case)]
+/// Bright/white text
+pub fn TEXT_BRIGHT() -> Color { theme().text.bright.to_color() }
+
+#[allow(non_snake_case)]
+/// Border colors
+pub fn BORDER_DIM() -> Color { theme().border.dim.to_color() }
+#[allow(non_snake_case)]
+pub fn BORDER_ACTIVE() -> Color { theme().border.active.to_color() }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ANIMATION STATE
@@ -173,11 +454,11 @@ pub const INDICATOR_ERROR: &str = "✕";
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub fn border_inactive() -> Style {
-    Style::default().fg(BORDER_DIM)
+    Style::default().fg(BORDER_DIM())
 }
 
 pub fn border_focused() -> Style {
-    Style::default().fg(BORDER_ACTIVE)
+    Style::default().fg(BORDER_ACTIVE())
 }
 
 pub fn border_active(_animation: &AnimationState) -> Style {
@@ -189,7 +470,7 @@ pub fn border_active(_animation: &AnimationState) -> Style {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub fn status_connected() -> Style {
-    Style::default().fg(NEON_GREEN)
+    Style::default().fg(NEON_GREEN())
 }
 
 pub fn status_connecting(animation: &AnimationState) -> Style {
@@ -199,11 +480,11 @@ pub fn status_connecting(animation: &AnimationState) -> Style {
 }
 
 pub fn status_error() -> Style {
-    Style::default().fg(NEON_RED)
+    Style::default().fg(NEON_RED())
 }
 
 pub fn status_disconnected() -> Style {
-    Style::default().fg(TEXT_DIM)
+    Style::default().fg(TEXT_DIM())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -217,29 +498,29 @@ pub fn panel_block(title: impl Into<String>, is_active: bool) -> Block<'static> 
     if is_active {
         Block::default()
             .title(Line::from(vec![
-                Span::styled("│", Style::default().fg(BORDER_ACTIVE)),
+                Span::styled("│", Style::default().fg(BORDER_ACTIVE())),
                 Span::styled(
                     format!(" {} ", title_str),
-                    Style::default().fg(ACCENT_BRIGHT).add_modifier(Modifier::BOLD),
+                    Style::default().fg(ACCENT_BRIGHT()).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("│", Style::default().fg(BORDER_ACTIVE)),
+                Span::styled("│", Style::default().fg(BORDER_ACTIVE())),
             ]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(border_focused())
-            .style(Style::default().bg(BG_PANEL))
+            .style(Style::default().bg(BG_PANEL()))
     } else {
         Block::default()
             .title(Line::from(vec![
                 Span::styled(
                     format!(" {} ", title_str),
-                    Style::default().fg(TEXT_SECONDARY),
+                    Style::default().fg(TEXT_SECONDARY()),
                 ),
             ]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(border_inactive())
-            .style(Style::default().bg(BG_PANEL))
+            .style(Style::default().bg(BG_PANEL()))
     }
 }
 
@@ -262,13 +543,13 @@ pub fn modal_block(title: impl Into<String>) -> Block<'static> {
         .title(Line::from(vec![
             Span::styled(
                 format!(" {} ", title.into()),
-                Style::default().fg(TEXT_BRIGHT).add_modifier(Modifier::BOLD),
+                Style::default().fg(TEXT_BRIGHT()).add_modifier(Modifier::BOLD),
             ),
         ]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT))
-        .style(Style::default().bg(BG_SURFACE))
+        .border_style(Style::default().fg(ACCENT()))
+        .style(Style::default().bg(BG_SURFACE()))
 }
 
 /// Glass-style block for dialogs (kept for compatibility)
@@ -282,20 +563,20 @@ pub fn glass_block(title: impl Into<String>) -> Block<'static> {
 
 /// Style for selected items - only sets background, preserves text colors
 pub fn list_selected() -> Style {
-    Style::default().bg(BG_SELECTED)
+    Style::default().bg(BG_SELECTED())
 }
 
 /// Highlighted item (stronger selection indicator)
 pub fn list_highlight() -> Style {
-    Style::default().bg(BG_ELEVATED).add_modifier(Modifier::BOLD)
+    Style::default().bg(BG_ELEVATED()).add_modifier(Modifier::BOLD)
 }
 
 pub fn list_hover() -> Style {
-    Style::default().bg(BG_HOVER)
+    Style::default().bg(BG_HOVER())
 }
 
 pub fn text_highlight() -> Style {
-    Style::default().fg(ACCENT_BRIGHT).add_modifier(Modifier::BOLD)
+    Style::default().fg(ACCENT_BRIGHT()).add_modifier(Modifier::BOLD)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -355,16 +636,16 @@ pub fn keybind(key: &str, description: &str) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             format!(" {} ", key),
-            Style::default().fg(BG_DEEP).bg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(BG_DEEP()).bg(ACCENT()).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!(" {} ", description), Style::default().fg(TEXT_SECONDARY)),
+        Span::styled(format!(" {} ", description), Style::default().fg(TEXT_SECONDARY())),
     ]
 }
 
 pub fn keybind_subtle(key: &str, description: &str) -> Vec<Span<'static>> {
     vec![
-        Span::styled(key.to_string(), Style::default().fg(NEON_AMBER)),
-        Span::styled(format!(" {} ", description), Style::default().fg(TEXT_DIM)),
+        Span::styled(key.to_string(), Style::default().fg(NEON_AMBER())),
+        Span::styled(format!(" {} ", description), Style::default().fg(TEXT_DIM())),
     ]
 }
 
@@ -438,5 +719,5 @@ pub fn logo_lines(animation: &AnimationState) -> Vec<Line<'static>> {
 
 pub fn separator_line(width: u16) -> Line<'static> {
     let bar = "─".repeat(width as usize);
-    Line::from(Span::styled(bar, Style::default().fg(BORDER_DIM)))
+    Line::from(Span::styled(bar, Style::default().fg(BORDER_DIM())))
 }

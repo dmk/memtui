@@ -94,7 +94,7 @@ impl Component for WelcomeScreen {
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         // Fill background
-        let bg = Block::default().style(Style::default().bg(theme::BG_DEEP));
+        let bg = Block::default().style(Style::default().bg(theme::BG_DEEP()));
         f.render_widget(bg, area);
 
         let card_area = Self::centered_rect(75, 75, area);
@@ -103,8 +103,8 @@ impl Component for WelcomeScreen {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
-            .border_style(Style::default().fg(theme::NEON_PURPLE))
-            .style(Style::default().bg(theme::BG_PANEL));
+            .border_style(Style::default().fg(theme::NEON_PURPLE()))
+            .style(Style::default().bg(theme::BG_PANEL()));
 
         let inner_area = block.inner(card_area);
         f.render_widget(block, card_area);
@@ -125,7 +125,7 @@ impl Component for WelcomeScreen {
         header_lines.push(Line::from(""));
         header_lines.push(Line::from(Span::styled(
             "Terminal UI for Redis & Memcached",
-            Style::default().fg(theme::TEXT_SECONDARY),
+            Style::default().fg(theme::TEXT_SECONDARY()),
         )));
 
         let header = Paragraph::new(header_lines).alignment(Alignment::Center);
@@ -138,13 +138,13 @@ impl Component for WelcomeScreen {
                 Line::from(Span::styled(
                     "No recent connections",
                     Style::default()
-                        .fg(theme::TEXT_DIM)
+                        .fg(theme::TEXT_DIM())
                         .add_modifier(Modifier::ITALIC),
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
                     "Press Ctrl+N to create a new connection",
-                    Style::default().fg(theme::TEXT_SECONDARY),
+                    Style::default().fg(theme::TEXT_SECONDARY()),
                 )),
             ])
             .alignment(Alignment::Center);
@@ -154,7 +154,7 @@ impl Component for WelcomeScreen {
             let title = Paragraph::new(Line::from(Span::styled(
                 "Recent Connections",
                 Style::default()
-                    .fg(theme::NEON_AMBER)
+                    .fg(theme::NEON_AMBER())
                     .add_modifier(Modifier::BOLD),
             )))
             .alignment(Alignment::Center);
@@ -190,16 +190,16 @@ impl Component for WelcomeScreen {
                     let content = Line::from(vec![
                         Span::styled(
                             format!("{} ", backend_icon),
-                            Style::default().fg(theme::NEON_CYAN),
+                            Style::default().fg(theme::NEON_CYAN()),
                         ),
                         Span::styled(
                             name,
                             Style::default()
-                                .fg(theme::TEXT_BRIGHT)
+                                .fg(theme::TEXT_BRIGHT())
                                 .add_modifier(Modifier::BOLD),
                         ),
                         Span::raw(padding),
-                        Span::styled(details, Style::default().fg(theme::TEXT_DIM)),
+                        Span::styled(details, Style::default().fg(theme::TEXT_DIM())),
                     ]);
 
                     ListItem::new(content)
@@ -218,27 +218,27 @@ impl Component for WelcomeScreen {
             Span::styled(
                 " Ctrl+P ",
                 Style::default()
-                    .fg(theme::BG_DEEP)
-                    .bg(theme::NEON_CYAN)
+                    .fg(theme::BG_DEEP())
+                    .bg(theme::NEON_CYAN())
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" connections  ", Style::default().fg(theme::TEXT_SECONDARY)),
+            Span::styled(" connections  ", Style::default().fg(theme::TEXT_SECONDARY())),
             Span::styled(
                 " Ctrl+N ",
                 Style::default()
-                    .fg(theme::BG_DEEP)
-                    .bg(theme::NEON_GREEN)
+                    .fg(theme::BG_DEEP())
+                    .bg(theme::NEON_GREEN())
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" new  ", Style::default().fg(theme::TEXT_SECONDARY)),
+            Span::styled(" new  ", Style::default().fg(theme::TEXT_SECONDARY())),
             Span::styled(
                 " ? ",
                 Style::default()
-                    .fg(theme::BG_DEEP)
-                    .bg(theme::NEON_AMBER)
+                    .fg(theme::BG_DEEP())
+                    .bg(theme::NEON_AMBER())
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" help", Style::default().fg(theme::TEXT_SECONDARY)),
+            Span::styled(" help", Style::default().fg(theme::TEXT_SECONDARY())),
         ])];
         let footer = Paragraph::new(footer_text).alignment(Alignment::Center);
         f.render_widget(footer, chunks[2]);

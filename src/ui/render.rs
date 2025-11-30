@@ -23,7 +23,7 @@ use crate::types::BackendType;
 /// Main UI rendering function
 pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState) {
     // Render the deep background
-    let bg_block = Block::default().style(Style::default().bg(theme::BG_DEEP));
+    let bg_block = Block::default().style(Style::default().bg(theme::BG_DEEP()));
     f.render_widget(bg_block, f.area());
 
     let configs = app_state.connection_manager.get_configs();
@@ -108,7 +108,7 @@ fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area
 
     // Background for tab bar
     let tab_bg = Block::default()
-        .style(Style::default().bg(theme::BG_PANEL))
+        .style(Style::default().bg(theme::BG_PANEL()))
         .borders(Borders::BOTTOM)
         .border_style(Style::default().fg(Color::Rgb(40, 50, 70)));
     f.render_widget(tab_bg, area);
@@ -133,13 +133,13 @@ fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area
     for config in open_configs {
         let status = app_state.connection_manager.get_status(&config.id);
         let (icon, tone) = match status {
-            ConnectionStatus::Connected => (theme::INDICATOR_CONNECTED, theme::NEON_GREEN),
+            ConnectionStatus::Connected => (theme::INDICATOR_CONNECTED, theme::NEON_GREEN()),
             ConnectionStatus::Connecting => {
                 let spinner = theme::spinner_pulse(&ui_state.animation);
-                (spinner, theme::NEON_AMBER)
+                (spinner, theme::NEON_AMBER())
             }
-            ConnectionStatus::Disconnected => (theme::INDICATOR_DISCONNECTED, theme::TEXT_DIM),
-            ConnectionStatus::Error(_) => (theme::INDICATOR_ERROR, theme::NEON_RED),
+            ConnectionStatus::Disconnected => (theme::INDICATOR_DISCONNECTED, theme::TEXT_DIM()),
+            ConnectionStatus::Error(_) => (theme::INDICATOR_ERROR, theme::NEON_RED()),
         };
 
         let is_active = app_state
@@ -157,9 +157,9 @@ fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area
         let (style, bg_style) = if is_active {
             (
                 Style::default()
-                    .fg(theme::BG_DEEP)
+                    .fg(theme::BG_DEEP())
                     .add_modifier(Modifier::BOLD),
-                Some(theme::ACCENT),
+                Some(theme::ACCENT()),
             )
         } else {
             (Style::default().fg(tone), None)
@@ -175,7 +175,7 @@ fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area
             spans.push(Span::styled(label, style.bg(bg)));
         } else {
             // Create a subtle background for inactive tabs
-            spans.push(Span::styled(label, style.bg(theme::BG_SURFACE)));
+            spans.push(Span::styled(label, style.bg(theme::BG_SURFACE())));
         }
         spans.push(Span::styled(" ", Style::default()));
         cursor_x = cursor_x.saturating_add(width + 1);
@@ -184,13 +184,13 @@ fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area
     if spans.is_empty() {
         spans.push(Span::styled(
             "  Ctrl+P to open connections",
-            Style::default().fg(theme::TEXT_DIM),
+            Style::default().fg(theme::TEXT_DIM()),
         ));
     }
 
     let tabs_line = Paragraph::new(Line::from(spans))
         .alignment(Alignment::Left)
-        .style(Style::default().bg(theme::BG_PANEL));
+        .style(Style::default().bg(theme::BG_PANEL()));
 
     let inner_area = Rect::new(area.x, area.y + 1, area.width, 1);
     f.render_widget(tabs_line, inner_area);
@@ -222,7 +222,7 @@ fn render_body(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, 
 
 fn render_resize_handle(f: &mut Frame, area: Rect, is_active: bool, _animation: &AnimationState) {
     let style = if is_active {
-        Style::default().fg(theme::NEON_CYAN)
+        Style::default().fg(theme::NEON_CYAN())
     } else {
         Style::default().fg(Color::Rgb(50, 60, 80))
     };
@@ -341,7 +341,7 @@ fn render_connection_palette(f: &mut Frame, app_state: &AppState, ui_state: &mut
         .style(Style::default().bg(Color::Rgb(15, 18, 30)))
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(theme::NEON_PURPLE));
+        .border_style(Style::default().fg(theme::NEON_PURPLE()));
 
     f.render_widget(Clear, area);
     f.render_widget(glass_bg, area);
@@ -351,27 +351,27 @@ fn render_connection_palette(f: &mut Frame, app_state: &AppState, ui_state: &mut
         Span::styled(
             " Enter ",
             Style::default()
-                .fg(theme::BG_DEEP)
-                .bg(theme::NEON_CYAN)
+                .fg(theme::BG_DEEP())
+                .bg(theme::NEON_CYAN())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" connect ", Style::default().fg(theme::TEXT_SECONDARY)),
+        Span::styled(" connect ", Style::default().fg(theme::TEXT_SECONDARY())),
         Span::styled(
             " d ",
             Style::default()
-                .fg(theme::BG_DEEP)
-                .bg(theme::NEON_AMBER)
+                .fg(theme::BG_DEEP())
+                .bg(theme::NEON_AMBER())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" delete ", Style::default().fg(theme::TEXT_SECONDARY)),
+        Span::styled(" delete ", Style::default().fg(theme::TEXT_SECONDARY())),
         Span::styled(
             " Esc ",
             Style::default()
-                .fg(theme::BG_DEEP)
-                .bg(theme::NEON_PINK)
+                .fg(theme::BG_DEEP())
+                .bg(theme::NEON_PINK())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" close ", Style::default().fg(theme::TEXT_SECONDARY)),
+        Span::styled(" close ", Style::default().fg(theme::TEXT_SECONDARY())),
     ]))
     .alignment(Alignment::Center);
 
@@ -415,7 +415,7 @@ pub fn render_help(f: &mut Frame, _animation: &AnimationState) {
         Line::from(Span::styled(
             "Help",
             Style::default()
-                .fg(theme::NEON_CYAN)
+                .fg(theme::NEON_CYAN())
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -425,7 +425,7 @@ pub fn render_help(f: &mut Frame, _animation: &AnimationState) {
         lines.push(Line::from(Span::styled(
             format!("▸ {}", section_name),
             Style::default()
-                .fg(theme::NEON_AMBER)
+                .fg(theme::NEON_AMBER())
                 .add_modifier(Modifier::BOLD),
         )));
 
@@ -434,9 +434,9 @@ pub fn render_help(f: &mut Frame, _animation: &AnimationState) {
                 Span::styled("    ", Style::default()),
                 Span::styled(
                     format!("{:<12}", key),
-                    Style::default().fg(theme::NEON_CYAN),
+                    Style::default().fg(theme::NEON_CYAN()),
                 ),
-                Span::styled(desc, Style::default().fg(theme::TEXT_PRIMARY)),
+                Span::styled(desc, Style::default().fg(theme::TEXT_PRIMARY())),
             ]));
         }
         lines.push(Line::from(""));
@@ -445,7 +445,7 @@ pub fn render_help(f: &mut Frame, _animation: &AnimationState) {
     lines.push(Line::from(Span::styled(
         "Press any key to close",
         Style::default()
-            .fg(theme::TEXT_DIM)
+            .fg(theme::TEXT_DIM())
             .add_modifier(Modifier::ITALIC),
     )));
 
@@ -466,7 +466,7 @@ fn render_status_bar(
 ) {
     // Background
     let bg = Block::default()
-        .style(Style::default().bg(theme::BG_PANEL))
+        .style(Style::default().bg(theme::BG_PANEL()))
         .borders(Borders::TOP)
         .border_style(Style::default().fg(Color::Rgb(40, 50, 70)));
     f.render_widget(bg, area);
@@ -525,10 +525,10 @@ fn render_status_bar(
 
     let mut right_spans: Vec<Span> = Vec::new();
     for (key, desc) in keybinds.iter() {
-        right_spans.push(Span::styled(*key, Style::default().fg(theme::NEON_CYAN)));
+        right_spans.push(Span::styled(*key, Style::default().fg(theme::NEON_CYAN())));
         right_spans.push(Span::styled(
             format!(" {}  ", desc),
-            Style::default().fg(theme::TEXT_DIM),
+            Style::default().fg(theme::TEXT_DIM()),
         ));
     }
 
@@ -544,7 +544,7 @@ fn render_status_bar(
 
     let mut spans = vec![
         Span::styled(format!("{} ", status_icon), status_style),
-        Span::styled(status_text, Style::default().fg(theme::TEXT_PRIMARY)),
+        Span::styled(status_text, Style::default().fg(theme::TEXT_PRIMARY())),
         Span::raw(" ".repeat(padding as usize)),
     ];
     spans.extend(right_spans);
@@ -573,7 +573,7 @@ fn render_quit_confirmation(f: &mut Frame, _animation: &AnimationState) {
         Line::from(Span::styled(
             "Are you sure you want to quit?",
             Style::default()
-                .fg(theme::TEXT_BRIGHT)
+                .fg(theme::TEXT_BRIGHT())
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -581,19 +581,19 @@ fn render_quit_confirmation(f: &mut Frame, _animation: &AnimationState) {
             Span::styled(
                 " y ",
                 Style::default()
-                    .fg(theme::BG_DEEP)
-                    .bg(theme::NEON_GREEN)
+                    .fg(theme::BG_DEEP())
+                    .bg(theme::NEON_GREEN())
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" yes  ", Style::default().fg(theme::TEXT_SECONDARY)),
+            Span::styled(" yes  ", Style::default().fg(theme::TEXT_SECONDARY())),
             Span::styled(
                 " n ",
                 Style::default()
-                    .fg(theme::BG_DEEP)
-                    .bg(theme::NEON_RED)
+                    .fg(theme::BG_DEEP())
+                    .bg(theme::NEON_RED())
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" no ", Style::default().fg(theme::TEXT_SECONDARY)),
+            Span::styled(" no ", Style::default().fg(theme::TEXT_SECONDARY())),
         ]),
     ];
 
@@ -605,17 +605,17 @@ fn render_quit_confirmation(f: &mut Frame, _animation: &AnimationState) {
                     Span::styled(
                         "Quit",
                         Style::default()
-                            .fg(theme::NEON_AMBER)
+                            .fg(theme::NEON_AMBER())
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(" ", Style::default()),
                 ]))
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(theme::NEON_AMBER)),
+                .border_style(Style::default().fg(theme::NEON_AMBER())),
         )
         .alignment(Alignment::Center)
-        .style(Style::default().bg(theme::BG_SURFACE));
+        .style(Style::default().bg(theme::BG_SURFACE()));
 
     f.render_widget(Clear, area);
     f.render_widget(dialog, area);

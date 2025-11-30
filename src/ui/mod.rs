@@ -8,4 +8,4 @@ pub use components::Component;
 pub use connection_form::{render_connection_form, ConnectionForm};
 pub use render::render;
 pub use state::{Panel, UiState};
-pub use theme::{AnimationState, PaneSplit};
+pub use theme::{AnimationState, PaneSplit, ThemeConfig, init_theme};

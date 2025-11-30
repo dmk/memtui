@@ -136,7 +136,7 @@ impl Component for KeyBrowser {
                 .track_symbol(Some("│"))
                 .thumb_symbol("█")
                 .style(Style::default().fg(if is_active {
-                    theme::NEON_CYAN
+                    theme::NEON_CYAN()
                 } else {
                     Color::Rgb(60, 70, 90)
                 }));
@@ -260,7 +260,7 @@ impl KeyBrowser {
                 items.push(ListItem::new(Span::styled(
                     format!("{} Searching...", spinner),
                     Style::default()
-                        .fg(theme::NEON_AMBER)
+                        .fg(theme::NEON_AMBER())
                         .add_modifier(Modifier::ITALIC),
                 )));
             } else if props
@@ -271,7 +271,7 @@ impl KeyBrowser {
                 items.push(ListItem::new(Span::styled(
                     "  No matches found",
                     Style::default()
-                        .fg(theme::TEXT_DIM)
+                        .fg(theme::TEXT_DIM())
                         .add_modifier(Modifier::ITALIC),
                 )));
             }
@@ -325,7 +325,7 @@ impl KeyBrowser {
                 let spinner = theme::spinner_dots(props.animation);
                 key_items.push(ListItem::new(Span::styled(
                     format!("  {} loading...", spinner),
-                    Style::default().fg(theme::TEXT_DIM),
+                    Style::default().fg(theme::TEXT_DIM()),
                 )));
             }
         }
@@ -510,20 +510,20 @@ impl KeyBrowser {
 
             // Type-specific colors
             let type_color = match key.value_type {
-                crate::types::ValueType::String => theme::NEON_CYAN,
-                crate::types::ValueType::Hash => theme::NEON_PURPLE,
-                crate::types::ValueType::List => theme::NEON_GREEN,
-                crate::types::ValueType::Set => theme::NEON_AMBER,
-                crate::types::ValueType::SortedSet => theme::NEON_PINK,
-                crate::types::ValueType::Binary => theme::TEXT_SECONDARY,
-                crate::types::ValueType::Json => theme::ELECTRIC_BLUE,
-                crate::types::ValueType::Integer => theme::NEON_GREEN,
-                crate::types::ValueType::Float => theme::NEON_AMBER,
-                crate::types::ValueType::Unknown => theme::TEXT_DIM,
+                crate::types::ValueType::String => theme::NEON_CYAN(),
+                crate::types::ValueType::Hash => theme::NEON_PURPLE(),
+                crate::types::ValueType::List => theme::NEON_GREEN(),
+                crate::types::ValueType::Set => theme::NEON_AMBER(),
+                crate::types::ValueType::SortedSet => theme::NEON_PINK(),
+                crate::types::ValueType::Binary => theme::TEXT_SECONDARY(),
+                crate::types::ValueType::Json => theme::ELECTRIC_BLUE(),
+                crate::types::ValueType::Integer => theme::NEON_GREEN(),
+                crate::types::ValueType::Float => theme::NEON_AMBER(),
+                crate::types::ValueType::Unknown => theme::TEXT_DIM(),
             };
 
             let line = Line::from(vec![
-                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY)),
+                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY())),
                 Span::raw(spacer),
                 Span::styled(
                     type_label,
@@ -537,7 +537,7 @@ impl KeyBrowser {
             let name_display = Self::truncate_to_fit(&key.name, content_width);
             let line = Line::from(vec![Span::styled(
                 name_display,
-                Style::default().fg(theme::TEXT_PRIMARY),
+                Style::default().fg(theme::TEXT_PRIMARY()),
             )]);
             ListItem::new(line)
         }
@@ -576,11 +576,11 @@ impl KeyBrowser {
             let line = Line::from(vec![
                 Span::styled(
                     format!("{} ", indicator),
-                    Style::default().fg(theme::NEON_AMBER),
+                    Style::default().fg(theme::NEON_AMBER()),
                 ),
-                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY)),
+                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY())),
                 Span::raw(spacer),
-                Span::styled(type_label, Style::default().fg(theme::TEXT_DIM)),
+                Span::styled(type_label, Style::default().fg(theme::TEXT_DIM())),
             ]);
 
             ListItem::new(line)
@@ -590,9 +590,9 @@ impl KeyBrowser {
             let line = Line::from(vec![
                 Span::styled(
                     format!("{} ", indicator),
-                    Style::default().fg(theme::NEON_AMBER),
+                    Style::default().fg(theme::NEON_AMBER()),
                 ),
-                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY)),
+                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY())),
             ]);
             ListItem::new(line)
         }

@@ -662,7 +662,7 @@ impl ValueViewer {
         self.viewport_height = area.height.saturating_sub(2);
 
         let header_style = Style::default()
-            .fg(theme::NEON_CYAN)
+            .fg(theme::NEON_CYAN())
             .add_modifier(Modifier::BOLD);
 
         let entry_count = rows_data.len();
@@ -725,9 +725,9 @@ impl ValueViewer {
                     .enumerate()
                     .map(|(i, lines)| {
                         let style = if i == 0 && headers.len() == 2 {
-                            Style::default().fg(theme::NEON_AMBER)
+                            Style::default().fg(theme::NEON_AMBER())
                         } else {
-                            Style::default().fg(theme::TEXT_PRIMARY)
+                            Style::default().fg(theme::TEXT_PRIMARY())
                         };
                         Cell::from(lines).style(style)
                     })
@@ -735,9 +735,9 @@ impl ValueViewer {
 
                 // Alternate row colors with themed styling
                 let row_style = if idx % 2 == 0 {
-                    Style::default().bg(theme::BG_PANEL)
+                    Style::default().bg(theme::BG_PANEL())
                 } else {
-                    Style::default().bg(theme::BG_SURFACE)
+                    Style::default().bg(theme::BG_SURFACE())
                 };
 
                 Row::new(cells).style(row_style).height(height)
@@ -1101,7 +1101,7 @@ impl Component for ValueViewer {
                 &base_title,
                 vec![Line::from(Span::styled(
                     format!("✕ Error: {}", err),
-                    Style::default().fg(theme::NEON_RED),
+                    Style::default().fg(theme::NEON_RED()),
                 ))],
                 Style::default(),
                 animation,
@@ -1134,7 +1134,7 @@ impl Component for ValueViewer {
                                 props.is_active,
                                 &base_title,
                                 vec![Line::from(format!("Parse error: {}", e))],
-                                Style::default().fg(theme::NEON_RED),
+                                Style::default().fg(theme::NEON_RED()),
                                 animation,
                             );
                             return;
@@ -1164,7 +1164,7 @@ impl Component for ValueViewer {
                                 props.is_active,
                                 &base_title,
                                 vec![Line::from(format!("Parse error: {}", e))],
-                                Style::default().fg(theme::NEON_RED),
+                                Style::default().fg(theme::NEON_RED()),
                                 animation,
                             );
                             return;
@@ -1194,7 +1194,7 @@ impl Component for ValueViewer {
                                 props.is_active,
                                 &base_title,
                                 vec![Line::from(format!("Parse error: {}", e))],
-                                Style::default().fg(theme::NEON_RED),
+                                Style::default().fg(theme::NEON_RED()),
                                 animation,
                             );
                             return;
@@ -1224,7 +1224,7 @@ impl Component for ValueViewer {
                                 props.is_active,
                                 &base_title,
                                 vec![Line::from(format!("Parse error: {}", e))],
-                                Style::default().fg(theme::NEON_RED),
+                                Style::default().fg(theme::NEON_RED()),
                                 animation,
                             );
                             return;
@@ -1260,7 +1260,7 @@ impl Component for ValueViewer {
             &base_title,
             vec![Line::from(Span::styled(
                 "Select a key to view its value",
-                Style::default().fg(theme::TEXT_DIM),
+                Style::default().fg(theme::TEXT_DIM()),
             ))],
             Style::default(),
             animation,

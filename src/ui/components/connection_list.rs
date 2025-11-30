@@ -118,14 +118,14 @@ impl Component for ConnectionList {
                     .unwrap_or(ConnectionStatus::Disconnected);
 
                 let (status_indicator, status_color) = match status {
-                    ConnectionStatus::Connected => (theme::INDICATOR_CONNECTED, theme::NEON_GREEN),
+                    ConnectionStatus::Connected => (theme::INDICATOR_CONNECTED, theme::NEON_GREEN()),
                     ConnectionStatus::Connecting => {
-                        (theme::spinner_pulse(props.animation), theme::NEON_AMBER)
+                        (theme::spinner_pulse(props.animation), theme::NEON_AMBER())
                     }
                     ConnectionStatus::Disconnected => {
-                        (theme::INDICATOR_DISCONNECTED, theme::TEXT_DIM)
+                        (theme::INDICATOR_DISCONNECTED, theme::TEXT_DIM())
                     }
-                    ConnectionStatus::Error(_) => (theme::INDICATOR_ERROR, theme::NEON_RED),
+                    ConnectionStatus::Error(_) => (theme::INDICATOR_ERROR, theme::NEON_RED()),
                 };
 
                 let is_active = props
@@ -135,10 +135,10 @@ impl Component for ConnectionList {
 
                 let name_style = if is_active {
                     Style::default()
-                        .fg(theme::NEON_CYAN)
+                        .fg(theme::NEON_CYAN())
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(theme::TEXT_PRIMARY)
+                    Style::default().fg(theme::TEXT_PRIMARY())
                 };
 
                 ListItem::new(Line::from(vec![
@@ -149,7 +149,7 @@ impl Component for ConnectionList {
                     Span::styled(&config.name, name_style),
                     Span::styled(
                         format!(" ({}:{})", config.host, config.port),
-                        Style::default().fg(theme::TEXT_DIM),
+                        Style::default().fg(theme::TEXT_DIM()),
                     ),
                 ]))
             })

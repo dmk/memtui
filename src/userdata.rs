@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::types::ConnectionConfig;
+use crate::ui::theme::ThemeConfig;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -252,4 +253,141 @@ pub fn record_recent_connection_id_with_config(
     }
     save_recent_connection_ids(&ids)?;
     Ok(ids)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// THEME CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Get the path to the theme file
+pub fn get_theme_file() -> Result<PathBuf, io::Error> {
+    Ok(get_config_dir()?.join("theme.json"))
+}
+
+/// Load theme configuration from userdata directory
+/// Returns default theme if file doesn't exist or is invalid
+pub fn load_theme() -> ThemeConfig {
+    let file_path = match get_theme_file() {
+        Ok(path) => path,
+        Err(_) => return ThemeConfig::default(),
+    };
+
+    if !file_path.exists() {
+        // Create default theme file for user reference
+        if let Err(e) = save_default_theme() {
+            eprintln!("Warning: Could not create default theme file: {}", e);
+        }
+        return ThemeConfig::default();
+    }
+
+    match fs::read_to_string(&file_path) {
+        Ok(contents) => match serde_json::from_str(&contents) {
+            Ok(theme) => theme,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Invalid theme file ({}), using defaults: {}",
+                    file_path.display(),
+                    e
+                );
+                ThemeConfig::default()
+            }
+        },
+        Err(e) => {
+            eprintln!(
+                "Warning: Could not read theme file ({}), using defaults: {}",
+                file_path.display(),
+                e
+            );
+            ThemeConfig::default()
+        }
+    }
+}
+
+/// Generate default theme file content with comments
+fn generate_default_theme_json() -> String {
+    r#"{
+  "// Theme Configuration": "Customize the colors of memtui",
+  "// Colors are specified as RGB objects: { \"r\": 0-255, \"g\": 0-255, \"b\": 0-255 }",
+
+  "accent": {
+    "// primary": "Main accent color (used for active borders, highlights)",
+    "primary": { "r": 80, "g": 200, "b": 220 },
+    "// dim": "Dimmed accent for secondary elements",
+    "dim": { "r": 60, "g": 150, "b": 170 },
+    "// bright": "Bright accent for emphasis",
+    "bright": { "r": 100, "g": 220, "b": 240 }
+  },
+
+  "neon": {
+    "// green": "Success, connected status",
+    "green": { "r": 57, "g": 255, "b": 20 },
+    "// amber": "Warnings, connecting status",
+    "amber": { "r": 255, "g": 191, "b": 0 },
+    "// red": "Errors",
+    "red": { "r": 255, "g": 80, "b": 80 },
+    "// purple": "Special elements, palette borders",
+    "purple": { "r": 160, "g": 100, "b": 220 },
+    "// cyan": "Key bindings, accents",
+    "cyan": { "r": 0, "g": 255, "b": 255 },
+    "// pink": "Logo gradient, special highlights",
+    "pink": { "r": 255, "g": 100, "b": 150 },
+    "// electric_blue": "JSON values",
+    "electric_blue": { "r": 80, "g": 180, "b": 255 }
+  },
+
+  "background": {
+    "// deep": "Main background color",
+    "deep": { "r": 12, "g": 14, "b": 22 },
+    "// panel": "Panel backgrounds",
+    "panel": { "r": 18, "g": 21, "b": 32 },
+    "// surface": "Elevated surfaces, cards",
+    "surface": { "r": 26, "g": 30, "b": 44 },
+    "// selected": "Selected item background",
+    "selected": { "r": 35, "g": 45, "b": 65 },
+    "// elevated": "Elevated/highlighted state",
+    "elevated": { "r": 40, "g": 50, "b": 70 },
+    "// hover": "Hover state",
+    "hover": { "r": 45, "g": 55, "b": 75 }
+  },
+
+  "text": {
+    "// dim": "Least important text",
+    "dim": { "r": 90, "g": 100, "b": 120 },
+    "// secondary": "Secondary text",
+    "secondary": { "r": 140, "g": 150, "b": 170 },
+    "// primary": "Main text color",
+    "primary": { "r": 210, "g": 215, "b": 230 },
+    "// bright": "Most important text",
+    "bright": { "r": 245, "g": 248, "b": 255 }
+  },
+
+  "border": {
+    "// dim": "Inactive borders",
+    "dim": { "r": 50, "g": 58, "b": 78 },
+    "// active": "Active/focused borders",
+    "active": { "r": 80, "g": 200, "b": 220 }
+  }
+}
+"#.to_string()
+}
+
+/// Save default theme configuration to userdata directory
+pub fn save_default_theme() -> Result<(), Box<dyn std::error::Error>> {
+    let file_path = get_theme_file()?;
+
+    // Only create if it doesn't exist
+    if !file_path.exists() {
+        let theme_json = generate_default_theme_json();
+        fs::write(&file_path, theme_json)?;
+    }
+
+    Ok(())
+}
+
+/// Save theme configuration to userdata directory
+pub fn save_theme(theme: &ThemeConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let file_path = get_theme_file()?;
+    let json = serde_json::to_string_pretty(theme)?;
+    fs::write(file_path, json)?;
+    Ok(())
 }

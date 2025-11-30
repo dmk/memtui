@@ -17,6 +17,7 @@ pub enum Action {
     // User Inputs
     Key(KeyEvent),
     Mouse(MouseEvent),
+    Scroll { column: u16, row: u16, delta: isize },
 
     // Navigation
     NextPanel,

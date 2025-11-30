@@ -10,7 +10,6 @@ use ratatui::layout::Rect;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicIsize, AtomicU16, Ordering};
 use std::sync::{Arc, Once};
 use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -98,23 +97,13 @@ impl App {
 
         let mut interval = tokio::time::interval(tick_interval);
 
-        // Shared state for scroll handling
-        let scroll_accumulator = Arc::new(AtomicIsize::new(0));
-        let last_mouse_x = Arc::new(AtomicU16::new(0));
-        let last_mouse_y = Arc::new(AtomicU16::new(0));
-
         let tx = self.action_tx.clone();
-        let scroll_acc = scroll_accumulator.clone();
-        let mouse_x = last_mouse_x.clone();
-        let mouse_y = last_mouse_y.clone();
 
         // Create a cancellation token for clean shutdown
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
 
         let event_loop_handle = tokio::spawn(async move {
-            // Rate limit scroll events: cap maximum accumulation
-            const MAX_SCROLL_ACCUMULATION: isize = 50; // ~10 lines max per batch
             // Maximum events to process in a single batch to prevent starvation
             const MAX_EVENTS_PER_BATCH: usize = 20;
 
@@ -142,24 +131,22 @@ impl App {
                                         let _ = tx.send(Action::Key(key));
                                     }
                                     Event::Mouse(mouse) => {
-                                        // Update last known mouse position (lock-free atomic operations)
-                                        mouse_x.store(mouse.column, Ordering::Relaxed);
-                                        mouse_y.store(mouse.row, Ordering::Relaxed);
-
                                         match mouse.kind {
                                             MouseEventKind::ScrollDown => {
-                                                // Cap accumulation to prevent pile-up
-                                                let current = scroll_acc.load(Ordering::Relaxed);
-                                                if current < MAX_SCROLL_ACCUMULATION {
-                                                    scroll_acc.fetch_add(1, Ordering::Relaxed);
-                                                }
+                                                // Send scroll events immediately for responsive scrolling
+                                                let _ = tx.send(Action::Scroll {
+                                                    column: mouse.column,
+                                                    row: mouse.row,
+                                                    delta: 1,
+                                                });
                                             }
                                             MouseEventKind::ScrollUp => {
-                                                // Cap accumulation to prevent pile-up
-                                                let current = scroll_acc.load(Ordering::Relaxed);
-                                                if current > -MAX_SCROLL_ACCUMULATION {
-                                                    scroll_acc.fetch_sub(1, Ordering::Relaxed);
-                                                }
+                                                // Send scroll events immediately for responsive scrolling
+                                                let _ = tx.send(Action::Scroll {
+                                                    column: mouse.column,
+                                                    row: mouse.row,
+                                                    delta: -1,
+                                                });
                                             }
                                             _ => {
                                                 // Forward non-scroll mouse events as normal
@@ -217,18 +204,6 @@ impl App {
                 break;
             }
 
-            // Debounced scroll processing: only on Tick
-            if matches!(action, Action::Tick) {
-                let scroll_delta = scroll_accumulator.swap(0, Ordering::Relaxed);
-                if scroll_delta != 0 {
-                    let col = last_mouse_x.load(Ordering::Relaxed);
-                    let row = last_mouse_y.load(Ordering::Relaxed);
-                    if self.handle_scroll_delta(col, row, scroll_delta) {
-                        self.needs_render = true;
-                    }
-                }
-            }
-
             self.update(action).await;
         }
         info!("Event loop finished");
@@ -259,6 +234,40 @@ impl App {
             Action::Mouse(mouse) => {
                 self.handle_mouse(mouse);
                 true
+            }
+            Action::Scroll { column, row, delta } => {
+                // Coalesce scroll events: drain pending scrolls from channel,
+                // accumulating same-direction scrolls but resetting on direction change
+                let mut total_delta = delta;
+                let mut last_col = column;
+                let mut last_row = row;
+
+                // Drain and coalesce pending scroll events
+                while let Ok(pending) = self.action_rx.try_recv() {
+                    match pending {
+                        Action::Scroll { column: c, row: r, delta: d } => {
+                            // Check if direction changed (sign differs)
+                            let same_direction = (total_delta > 0 && d > 0) || (total_delta < 0 && d < 0);
+                            if same_direction {
+                                // Same direction: accumulate
+                                total_delta += d;
+                            } else {
+                                // Direction changed: reset to new direction, drop accumulated
+                                total_delta = d;
+                            }
+                            last_col = c;
+                            last_row = r;
+                        }
+                        other => {
+                            // Non-scroll action: put it back by sending and stop draining
+                            let _ = self.action_tx.send(other);
+                            break;
+                        }
+                    }
+                }
+
+                // Process the coalesced scroll
+                self.handle_scroll_delta(last_col, last_row, total_delta)
             }
             Action::NextPanel => {
                 self.ui_state.next_panel();

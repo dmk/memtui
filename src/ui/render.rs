@@ -399,8 +399,14 @@ fn render_connection_palette(f: &mut Frame, app_state: &AppState, ui_state: &mut
         animation: &ui_state.animation,
     };
 
-    // Glass effect background
+    // Glass effect background with title
     let glass_bg = Block::default()
+        .title(Line::from(vec![Span::styled(
+            " Connections ",
+            Style::default()
+                .fg(theme::TEXT_BRIGHT())
+                .add_modifier(Modifier::BOLD),
+        )]))
         .style(Style::default().bg(Color::Rgb(15, 18, 30)))
         .borders(Borders::ALL)
         .border_type(BorderType::Double)

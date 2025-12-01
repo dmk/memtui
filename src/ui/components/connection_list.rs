@@ -72,23 +72,20 @@ impl ConnectionList {
         row: u16,
         total: usize,
     ) -> Option<usize> {
-        if total == 0 || area.height <= 2 || area.width <= 2 {
+        if total == 0 || area.height == 0 || area.width == 0 {
             return None;
         }
 
-        let inner_left = area.x.saturating_add(1);
-        let inner_right = area.x.saturating_add(area.width.saturating_sub(1));
-        if column < inner_left || column >= inner_right {
+        // Check if click is within bounds
+        if column < area.x
+            || column >= area.x + area.width
+            || row < area.y
+            || row >= area.y + area.height
+        {
             return None;
         }
 
-        let inner_top = area.y.saturating_add(1);
-        let inner_bottom = area.y.saturating_add(area.height.saturating_sub(1));
-        if row < inner_top || row >= inner_bottom {
-            return None;
-        }
-
-        let rel = (row - inner_top) as usize;
+        let rel = (row - area.y) as usize;
         if rel >= total {
             return None;
         }
@@ -155,7 +152,6 @@ impl Component for ConnectionList {
             .collect();
 
         let connections_list = List::new(connections)
-            .block(theme::panel_block("Connections", props.is_active))
             .highlight_style(theme::list_selected().add_modifier(Modifier::BOLD))
             .highlight_symbol("▸ ");
 

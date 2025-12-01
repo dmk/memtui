@@ -1345,11 +1345,33 @@ impl App {
         if let Some(area) = self.ui_state.last_key_area {
             if Self::point_in_rect(area, column, row) {
                 self.ui_state.active_panel = Panel::Keys;
-                if let Some(index) = self.key_index_from_position(column, row) {
-                    self.ui_state.key_browser.select(Some(index));
-                    self.app_state.selected_key_index = Some(index);
-                    self.app_state.selected_value = None;
-                    let _ = self.action_tx.send(Action::SelectKey(index));
+
+                // Check if we're in search mode
+                let has_search = !self.app_state.search_query.is_empty();
+
+                if has_search {
+                    // Search mode: click on search results
+                    if let Some(result_idx) = self.search_result_index_from_position(column, row) {
+                        // Update the search selection index
+                        self.app_state.search_selection_index = Some(result_idx);
+
+                        // Get the actual key index from search results
+                        if let Some(&key_idx) = self.app_state.search_results_local.get(result_idx)
+                        {
+                            self.ui_state.key_browser.select(Some(key_idx));
+                            self.app_state.selected_key_index = Some(key_idx);
+                            self.app_state.selected_value = None;
+                            let _ = self.action_tx.send(Action::SelectKey(key_idx));
+                        }
+                    }
+                } else {
+                    // Normal mode: click on full key list
+                    if let Some(index) = self.key_index_from_position(column, row) {
+                        self.ui_state.key_browser.select(Some(index));
+                        self.app_state.selected_key_index = Some(index);
+                        self.app_state.selected_value = None;
+                        let _ = self.action_tx.send(Action::SelectKey(index));
+                    }
                 }
                 return;
             }
@@ -1685,6 +1707,38 @@ impl App {
         }
 
         Some(index)
+    }
+
+    /// Get search result index from click position (for search mode)
+    fn search_result_index_from_position(&self, column: u16, row: u16) -> Option<usize> {
+        let area = self.ui_state.last_key_area?;
+        if area.height <= 2 || area.width <= 2 {
+            return None;
+        }
+
+        let inner_left = area.x.saturating_add(1);
+        let inner_right = area.x.saturating_add(area.width.saturating_sub(1));
+        if column < inner_left || column >= inner_right {
+            return None;
+        }
+
+        let inner_top = area.y.saturating_add(1);
+        let inner_bottom = area.y.saturating_add(area.height.saturating_sub(1));
+        if row < inner_top || row >= inner_bottom {
+            return None;
+        }
+
+        let result_count = self.app_state.search_results_local.len();
+        if result_count == 0 {
+            return None;
+        }
+
+        let rel = (row - inner_top) as usize;
+        if rel >= result_count {
+            return None;
+        }
+
+        Some(rel)
     }
 
     fn point_in_rect(area: Rect, column: u16, row: u16) -> bool {

@@ -105,12 +105,17 @@ impl Component for KeyBrowser {
             .unwrap_or(false);
 
         // Build the display list - either filtered or full
-        let (key_items, display_count, selected_display_idx) = if has_search {
+        // Returns: (items, total_count, relative_selection_in_view, absolute_selection_for_scrollbar)
+        let (key_items, display_count, selected_display_idx, scrollbar_position) = if has_search {
             // SEARCH MODE: Show only matching keys
-            self.build_search_results_list(&props, content_width)
+            let (items, count, sel) = self.build_search_results_list(&props, content_width);
+            (items, count, sel, sel.unwrap_or(0))
         } else {
             // NORMAL MODE: Show full key list with virtualization
-            self.build_normal_list(&props, content_width, is_active)
+            let (items, count, sel) = self.build_normal_list(&props, content_width, is_active);
+            // For scrollbar, use the absolute position (self.state.selected), not the relative view position
+            let abs_pos = self.state.selected().unwrap_or(0);
+            (items, count, sel, abs_pos)
         };
 
         // Build title
@@ -149,7 +154,7 @@ impl Component for KeyBrowser {
             self.scrollbar_state = self
                 .scrollbar_state
                 .content_length(display_count)
-                .position(selected_display_idx.unwrap_or(0));
+                .position(scrollbar_position);
 
             f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.scrollbar_state);
         }

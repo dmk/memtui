@@ -49,7 +49,10 @@ impl KeybindingsConfig {
             default: merge_hashmaps(defaults.default, user.default),
             search: merge_hashmaps(defaults.search, user.search),
             connection_form: merge_hashmaps(defaults.connection_form, user.connection_form),
-            connection_palette: merge_hashmaps(defaults.connection_palette, user.connection_palette),
+            connection_palette: merge_hashmaps(
+                defaults.connection_palette,
+                user.connection_palette,
+            ),
             quit_confirmation: merge_hashmaps(defaults.quit_confirmation, user.quit_confirmation),
             welcome: merge_hashmaps(defaults.welcome, user.welcome),
         }
@@ -176,7 +179,12 @@ pub fn parse_key_string(key_str: &str) -> Option<KeyEvent> {
         _ => return None,
     };
 
-    Some(KeyEvent { code, modifiers, kind: crossterm::event::KeyEventKind::Press, state: crossterm::event::KeyEventState::empty() })
+    Some(KeyEvent {
+        code,
+        modifiers,
+        kind: crossterm::event::KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::empty(),
+    })
 }
 
 /// Format a key string for display (e.g., "ctrl+p" -> "^P", "q" -> "q", "tab" -> "Tab")
@@ -259,18 +267,42 @@ pub fn default_keybindings() -> KeybindingsConfig {
 
     // Default context bindings
     let mut default = HashMap::new();
-    default.insert("quit.show".to_string(), vec!["q".to_string(), "esc".to_string()]);
+    default.insert(
+        "quit.show".to_string(),
+        vec!["q".to_string(), "esc".to_string()],
+    );
     default.insert("help.toggle".to_string(), vec!["?".to_string()]);
     default.insert("search.start".to_string(), vec!["/".to_string()]);
     default.insert("navigation.next_panel".to_string(), vec!["tab".to_string()]);
-    default.insert("navigation.prev_panel".to_string(), vec!["shift+tab".to_string()]);
-    default.insert("navigation.next_item".to_string(), vec!["down".to_string(), "j".to_string()]);
-    default.insert("navigation.prev_item".to_string(), vec!["up".to_string(), "k".to_string()]);
+    default.insert(
+        "navigation.prev_panel".to_string(),
+        vec!["shift+tab".to_string()],
+    );
+    default.insert(
+        "navigation.next_item".to_string(),
+        vec!["down".to_string(), "j".to_string()],
+    );
+    default.insert(
+        "navigation.prev_item".to_string(),
+        vec!["up".to_string(), "k".to_string()],
+    );
     default.insert("navigation.enter".to_string(), vec!["enter".to_string()]);
-    default.insert("connection.palette.toggle".to_string(), vec!["ctrl+p".to_string()]);
-    default.insert("connection.form.open".to_string(), vec!["ctrl+n".to_string()]);
-    default.insert("connection.tab.next".to_string(), vec!["ctrl+right".to_string()]);
-    default.insert("connection.tab.prev".to_string(), vec!["ctrl+left".to_string()]);
+    default.insert(
+        "connection.palette.toggle".to_string(),
+        vec!["ctrl+p".to_string()],
+    );
+    default.insert(
+        "connection.form.open".to_string(),
+        vec!["ctrl+n".to_string()],
+    );
+    default.insert(
+        "connection.tab.next".to_string(),
+        vec!["ctrl+right".to_string()],
+    );
+    default.insert(
+        "connection.tab.prev".to_string(),
+        vec!["ctrl+left".to_string()],
+    );
     default.insert("pane.resize.left".to_string(), vec!["ctrl+h".to_string()]);
     default.insert("pane.resize.right".to_string(), vec!["ctrl+l".to_string()]);
     config.default = default;
@@ -278,43 +310,91 @@ pub fn default_keybindings() -> KeybindingsConfig {
     // Search context bindings
     let mut search = HashMap::new();
     search.insert("search.clear".to_string(), vec!["esc".to_string()]);
-    search.insert("search.next_result".to_string(), vec!["down".to_string(), "j".to_string(), "tab".to_string()]);
-    search.insert("search.prev_result".to_string(), vec!["up".to_string(), "k".to_string(), "shift+tab".to_string()]);
+    search.insert(
+        "search.next_result".to_string(),
+        vec!["down".to_string(), "j".to_string(), "tab".to_string()],
+    );
+    search.insert(
+        "search.prev_result".to_string(),
+        vec!["up".to_string(), "k".to_string(), "shift+tab".to_string()],
+    );
     search.insert("search.confirm".to_string(), vec!["enter".to_string()]);
     config.search = search;
 
     // Connection form context bindings
     let mut connection_form = HashMap::new();
-    connection_form.insert("connection.form.submit".to_string(), vec!["enter".to_string()]);
+    connection_form.insert(
+        "connection.form.submit".to_string(),
+        vec!["enter".to_string()],
+    );
     connection_form.insert("connection.form.close".to_string(), vec!["esc".to_string()]);
-    connection_form.insert("connection.form.next_field".to_string(), vec!["tab".to_string()]);
-    connection_form.insert("connection.form.prev_field".to_string(), vec!["shift+tab".to_string()]);
+    connection_form.insert(
+        "connection.form.next_field".to_string(),
+        vec!["tab".to_string()],
+    );
+    connection_form.insert(
+        "connection.form.prev_field".to_string(),
+        vec!["shift+tab".to_string()],
+    );
     config.connection_form = connection_form;
 
     // Connection palette context bindings
     let mut connection_palette = HashMap::new();
-    connection_palette.insert("connection.palette.close".to_string(), vec!["esc".to_string()]);
-    connection_palette.insert("connection.palette.select".to_string(), vec!["enter".to_string()]);
-    connection_palette.insert("connection.palette.next".to_string(), vec!["down".to_string(), "j".to_string()]);
-    connection_palette.insert("connection.palette.prev".to_string(), vec!["up".to_string(), "k".to_string()]);
-    connection_palette.insert("connection.palette.delete".to_string(), vec!["d".to_string()]);
+    connection_palette.insert(
+        "connection.palette.close".to_string(),
+        vec!["esc".to_string()],
+    );
+    connection_palette.insert(
+        "connection.palette.select".to_string(),
+        vec!["enter".to_string()],
+    );
+    connection_palette.insert(
+        "connection.palette.next".to_string(),
+        vec!["down".to_string(), "j".to_string()],
+    );
+    connection_palette.insert(
+        "connection.palette.prev".to_string(),
+        vec!["up".to_string(), "k".to_string()],
+    );
+    connection_palette.insert(
+        "connection.palette.delete".to_string(),
+        vec!["d".to_string()],
+    );
     connection_palette.insert("quit.show".to_string(), vec!["q".to_string()]);
     connection_palette.insert("help.toggle".to_string(), vec!["?".to_string()]);
-    connection_palette.insert("connection.palette.toggle".to_string(), vec!["ctrl+p".to_string()]);
-    connection_palette.insert("connection.form.open".to_string(), vec!["ctrl+n".to_string()]);
+    connection_palette.insert(
+        "connection.palette.toggle".to_string(),
+        vec!["ctrl+p".to_string()],
+    );
+    connection_palette.insert(
+        "connection.form.open".to_string(),
+        vec!["ctrl+n".to_string()],
+    );
     config.connection_palette = connection_palette;
 
     // Quit confirmation context bindings
     let mut quit_confirmation = HashMap::new();
     // Note: "Y" and "N" will be handled by case-insensitive matching in parse_key_string
-    quit_confirmation.insert("quit.confirm".to_string(), vec!["y".to_string(), "enter".to_string()]);
-    quit_confirmation.insert("quit.cancel".to_string(), vec!["n".to_string(), "esc".to_string()]);
+    quit_confirmation.insert(
+        "quit.confirm".to_string(),
+        vec!["y".to_string(), "enter".to_string()],
+    );
+    quit_confirmation.insert(
+        "quit.cancel".to_string(),
+        vec!["n".to_string(), "esc".to_string()],
+    );
     config.quit_confirmation = quit_confirmation;
 
     // Welcome context bindings
     let mut welcome = HashMap::new();
-    welcome.insert("navigation.next_item".to_string(), vec!["down".to_string(), "j".to_string()]);
-    welcome.insert("navigation.prev_item".to_string(), vec!["up".to_string(), "k".to_string()]);
+    welcome.insert(
+        "navigation.next_item".to_string(),
+        vec!["down".to_string(), "j".to_string()],
+    );
+    welcome.insert(
+        "navigation.prev_item".to_string(),
+        vec!["up".to_string(), "k".to_string()],
+    );
     welcome.insert("navigation.enter".to_string(), vec!["enter".to_string()]);
     config.welcome = welcome;
 
@@ -400,10 +480,12 @@ mod tests {
         let merged = KeybindingsConfig::merge(defaults.clone(), user);
 
         // User override should be present
-        assert_eq!(merged.default.get("quit.show"), Some(&vec!["x".to_string()]));
+        assert_eq!(
+            merged.default.get("quit.show"),
+            Some(&vec!["x".to_string()])
+        );
 
         // Other defaults should still be there
         assert!(merged.default.contains_key("help.toggle"));
     }
 }
-

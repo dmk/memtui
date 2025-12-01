@@ -1,7 +1,9 @@
 use super::{
     Backend, BackendCapabilities, BackendError, ConnectionInfo, RawCommandResult, ServerInfo,
 };
-use crate::types::{Auth, BackendType, ConnectionConfig, KeyMetadata, KeyScanResult, Value, ValueType};
+use crate::types::{
+    Auth, BackendType, ConnectionConfig, KeyMetadata, KeyScanResult, Value, ValueType,
+};
 use etcd_client::{Client, GetOptions, KeyValue};
 use std::time::{Duration, SystemTime};
 
@@ -74,10 +76,10 @@ impl Backend for EtcdBackend {
 
     fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities {
-            supports_ttl: true,           // Via leases
-            supports_scan: true,          // Via prefix range queries
-            supports_raw_commands: false, // No raw command support
-            supports_batch_get: true,     // Can get ranges
+            supports_ttl: true,                      // Via leases
+            supports_scan: true,                     // Via prefix range queries
+            supports_raw_commands: false,            // No raw command support
+            supports_batch_get: true,                // Can get ranges
             supports_efficient_pattern_search: true, // Prefix-based
         }
     }
@@ -126,12 +128,10 @@ impl Backend for EtcdBackend {
 
         // Get cluster version via status
         let version = match self.client.as_mut() {
-            Some(client) => {
-                match client.status().await {
-                    Ok(resp) => resp.version().to_string(),
-                    Err(_) => "unknown".to_string(),
-                }
-            }
+            Some(client) => match client.status().await {
+                Ok(resp) => resp.version().to_string(),
+                Err(_) => "unknown".to_string(),
+            },
             None => "unknown".to_string(),
         };
 
@@ -200,10 +200,8 @@ impl Backend for EtcdBackend {
         let mut options = etcd_client::ConnectOptions::new();
         options = options.with_connect_timeout(self.config.timeout);
 
-        if let Some(auth) = &self.config.auth {
-            if let Auth::UserPassword { username, password } = auth {
-                options = options.with_user(username, password);
-            }
+        if let Some(Auth::UserPassword { username, password }) = &self.config.auth {
+            options = options.with_user(username, password);
         }
 
         let mut client = Client::connect(endpoints, Some(options))
@@ -257,7 +255,11 @@ impl Backend for EtcdBackend {
         })
     }
 
-    async fn search_keys(&self, pattern: &str, limit: usize) -> Result<KeyScanResult, BackendError> {
+    async fn search_keys(
+        &self,
+        pattern: &str,
+        limit: usize,
+    ) -> Result<KeyScanResult, BackendError> {
         // For etcd, search is essentially a prefix query
         // Strip wildcards and use as prefix
         let prefix = pattern.trim_matches('*');
@@ -275,10 +277,8 @@ impl Backend for EtcdBackend {
         let mut options = etcd_client::ConnectOptions::new();
         options = options.with_connect_timeout(self.config.timeout);
 
-        if let Some(auth) = &self.config.auth {
-            if let Auth::UserPassword { username, password } = auth {
-                options = options.with_user(username, password);
-            }
+        if let Some(Auth::UserPassword { username, password }) = &self.config.auth {
+            options = options.with_user(username, password);
         }
 
         let mut client = Client::connect(endpoints, Some(options))
@@ -304,10 +304,8 @@ impl Backend for EtcdBackend {
         let mut options = etcd_client::ConnectOptions::new();
         options = options.with_connect_timeout(self.config.timeout);
 
-        if let Some(auth) = &self.config.auth {
-            if let Auth::UserPassword { username, password } = auth {
-                options = options.with_user(username, password);
-            }
+        if let Some(Auth::UserPassword { username, password }) = &self.config.auth {
+            options = options.with_user(username, password);
         }
 
         let mut client = Client::connect(endpoints, Some(options))
@@ -336,10 +334,8 @@ impl Backend for EtcdBackend {
         let mut options = etcd_client::ConnectOptions::new();
         options = options.with_connect_timeout(self.config.timeout);
 
-        if let Some(auth) = &self.config.auth {
-            if let Auth::UserPassword { username, password } = auth {
-                options = options.with_user(username, password);
-            }
+        if let Some(Auth::UserPassword { username, password }) = &self.config.auth {
+            options = options.with_user(username, password);
         }
 
         let mut client = Client::connect(endpoints, Some(options))
@@ -375,10 +371,8 @@ impl Backend for EtcdBackend {
         let mut options = etcd_client::ConnectOptions::new();
         options = options.with_connect_timeout(self.config.timeout);
 
-        if let Some(auth) = &self.config.auth {
-            if let Auth::UserPassword { username, password } = auth {
-                options = options.with_user(username, password);
-            }
+        if let Some(Auth::UserPassword { username, password }) = &self.config.auth {
+            options = options.with_user(username, password);
         }
 
         let mut client = Client::connect(endpoints, Some(options))
@@ -429,10 +423,8 @@ impl Backend for EtcdBackend {
         let mut options = etcd_client::ConnectOptions::new();
         options = options.with_connect_timeout(self.config.timeout);
 
-        if let Some(auth) = &self.config.auth {
-            if let Auth::UserPassword { username, password } = auth {
-                options = options.with_user(username, password);
-            }
+        if let Some(Auth::UserPassword { username, password }) = &self.config.auth {
+            options = options.with_user(username, password);
         }
 
         let mut client = Client::connect(endpoints, Some(options))
@@ -477,10 +469,8 @@ impl Backend for EtcdBackend {
         let mut options = etcd_client::ConnectOptions::new();
         options = options.with_connect_timeout(self.config.timeout);
 
-        if let Some(auth) = &self.config.auth {
-            if let Auth::UserPassword { username, password } = auth {
-                options = options.with_user(username, password);
-            }
+        if let Some(Auth::UserPassword { username, password }) = &self.config.auth {
+            options = options.with_user(username, password);
         }
 
         let mut client = Client::connect(endpoints, Some(options))
@@ -575,13 +565,19 @@ mod tests {
     #[test]
     fn test_detect_value_type_string() {
         let string_data = b"hello world";
-        assert_eq!(EtcdBackend::detect_value_type(string_data), ValueType::String);
+        assert_eq!(
+            EtcdBackend::detect_value_type(string_data),
+            ValueType::String
+        );
     }
 
     #[test]
     fn test_detect_value_type_binary() {
         let binary_data = &[0x00, 0xFF, 0x80, 0x90];
-        assert_eq!(EtcdBackend::detect_value_type(binary_data), ValueType::Binary);
+        assert_eq!(
+            EtcdBackend::detect_value_type(binary_data),
+            ValueType::Binary
+        );
     }
 
     #[test]
@@ -590,4 +586,3 @@ mod tests {
         assert!(!backend.has_client());
     }
 }
-

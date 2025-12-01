@@ -56,7 +56,7 @@ impl From<RgbColor> for Color {
 }
 
 /// Complete theme configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ThemeConfig {
     /// Accent colors
     #[serde(default)]
@@ -77,18 +77,6 @@ pub struct ThemeConfig {
     /// Border colors
     #[serde(default)]
     pub border: BorderColors,
-}
-
-impl Default for ThemeConfig {
-    fn default() -> Self {
-        Self {
-            accent: AccentColors::default(),
-            neon: NeonColors::default(),
-            background: BackgroundColors::default(),
-            text: TextColors::default(),
-            border: BorderColors::default(),
-        }
-    }
 }
 
 /// Accent colors configuration
@@ -240,32 +228,76 @@ impl Default for BorderColors {
 }
 
 // Default value functions
-fn default_accent() -> RgbColor { RgbColor::new(80, 200, 220) }
-fn default_accent_dim() -> RgbColor { RgbColor::new(60, 150, 170) }
-fn default_accent_bright() -> RgbColor { RgbColor::new(100, 220, 240) }
+fn default_accent() -> RgbColor {
+    RgbColor::new(80, 200, 220)
+}
+fn default_accent_dim() -> RgbColor {
+    RgbColor::new(60, 150, 170)
+}
+fn default_accent_bright() -> RgbColor {
+    RgbColor::new(100, 220, 240)
+}
 
-fn default_neon_green() -> RgbColor { RgbColor::new(57, 255, 20) }
-fn default_neon_amber() -> RgbColor { RgbColor::new(255, 191, 0) }
-fn default_neon_red() -> RgbColor { RgbColor::new(255, 80, 80) }
-fn default_neon_purple() -> RgbColor { RgbColor::new(160, 100, 220) }
-fn default_neon_cyan() -> RgbColor { RgbColor::new(0, 255, 255) }
-fn default_neon_pink() -> RgbColor { RgbColor::new(255, 100, 150) }
-fn default_electric_blue() -> RgbColor { RgbColor::new(80, 180, 255) }
+fn default_neon_green() -> RgbColor {
+    RgbColor::new(57, 255, 20)
+}
+fn default_neon_amber() -> RgbColor {
+    RgbColor::new(255, 191, 0)
+}
+fn default_neon_red() -> RgbColor {
+    RgbColor::new(255, 80, 80)
+}
+fn default_neon_purple() -> RgbColor {
+    RgbColor::new(160, 100, 220)
+}
+fn default_neon_cyan() -> RgbColor {
+    RgbColor::new(0, 255, 255)
+}
+fn default_neon_pink() -> RgbColor {
+    RgbColor::new(255, 100, 150)
+}
+fn default_electric_blue() -> RgbColor {
+    RgbColor::new(80, 180, 255)
+}
 
-fn default_bg_deep() -> RgbColor { RgbColor::new(12, 14, 22) }
-fn default_bg_panel() -> RgbColor { RgbColor::new(18, 21, 32) }
-fn default_bg_surface() -> RgbColor { RgbColor::new(26, 30, 44) }
-fn default_bg_selected() -> RgbColor { RgbColor::new(35, 45, 65) }
-fn default_bg_elevated() -> RgbColor { RgbColor::new(40, 50, 70) }
-fn default_bg_hover() -> RgbColor { RgbColor::new(45, 55, 75) }
+fn default_bg_deep() -> RgbColor {
+    RgbColor::new(12, 14, 22)
+}
+fn default_bg_panel() -> RgbColor {
+    RgbColor::new(18, 21, 32)
+}
+fn default_bg_surface() -> RgbColor {
+    RgbColor::new(26, 30, 44)
+}
+fn default_bg_selected() -> RgbColor {
+    RgbColor::new(35, 45, 65)
+}
+fn default_bg_elevated() -> RgbColor {
+    RgbColor::new(40, 50, 70)
+}
+fn default_bg_hover() -> RgbColor {
+    RgbColor::new(45, 55, 75)
+}
 
-fn default_text_dim() -> RgbColor { RgbColor::new(90, 100, 120) }
-fn default_text_secondary() -> RgbColor { RgbColor::new(140, 150, 170) }
-fn default_text_primary() -> RgbColor { RgbColor::new(210, 215, 230) }
-fn default_text_bright() -> RgbColor { RgbColor::new(245, 248, 255) }
+fn default_text_dim() -> RgbColor {
+    RgbColor::new(90, 100, 120)
+}
+fn default_text_secondary() -> RgbColor {
+    RgbColor::new(140, 150, 170)
+}
+fn default_text_primary() -> RgbColor {
+    RgbColor::new(210, 215, 230)
+}
+fn default_text_bright() -> RgbColor {
+    RgbColor::new(245, 248, 255)
+}
 
-fn default_border_dim() -> RgbColor { RgbColor::new(50, 58, 78) }
-fn default_border_active() -> RgbColor { RgbColor::new(80, 200, 220) }
+fn default_border_dim() -> RgbColor {
+    RgbColor::new(50, 58, 78)
+}
+fn default_border_active() -> RgbColor {
+    RgbColor::new(80, 200, 220)
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COLOR PALETTE (backward compatible functions that read from theme)
@@ -274,72 +306,116 @@ fn default_border_active() -> RgbColor { RgbColor::new(80, 200, 220) }
 
 #[allow(non_snake_case)]
 /// Primary accent - cyan
-pub fn ACCENT() -> Color { theme().accent.primary.to_color() }
+pub fn ACCENT() -> Color {
+    theme().accent.primary.to_color()
+}
 #[allow(non_snake_case)]
 /// Secondary accent - lighter cyan
-pub fn ACCENT_DIM() -> Color { theme().accent.dim.to_color() }
+pub fn ACCENT_DIM() -> Color {
+    theme().accent.dim.to_color()
+}
 #[allow(non_snake_case)]
 /// Highlight accent
-pub fn ACCENT_BRIGHT() -> Color { theme().accent.bright.to_color() }
+pub fn ACCENT_BRIGHT() -> Color {
+    theme().accent.bright.to_color()
+}
 
 #[allow(non_snake_case)]
 /// Neon green for success/connected
-pub fn NEON_GREEN() -> Color { theme().neon.green.to_color() }
+pub fn NEON_GREEN() -> Color {
+    theme().neon.green.to_color()
+}
 #[allow(non_snake_case)]
 /// Amber for warnings
-pub fn NEON_AMBER() -> Color { theme().neon.amber.to_color() }
+pub fn NEON_AMBER() -> Color {
+    theme().neon.amber.to_color()
+}
 #[allow(non_snake_case)]
 /// Red for errors
-pub fn NEON_RED() -> Color { theme().neon.red.to_color() }
+pub fn NEON_RED() -> Color {
+    theme().neon.red.to_color()
+}
 #[allow(non_snake_case)]
 /// Purple for special elements
-pub fn NEON_PURPLE() -> Color { theme().neon.purple.to_color() }
+pub fn NEON_PURPLE() -> Color {
+    theme().neon.purple.to_color()
+}
 #[allow(non_snake_case)]
 /// Cyan for accents
-pub fn NEON_CYAN() -> Color { theme().neon.cyan.to_color() }
+pub fn NEON_CYAN() -> Color {
+    theme().neon.cyan.to_color()
+}
 #[allow(non_snake_case)]
 /// Pink for logo gradient
-pub fn NEON_PINK() -> Color { theme().neon.pink.to_color() }
+pub fn NEON_PINK() -> Color {
+    theme().neon.pink.to_color()
+}
 #[allow(non_snake_case)]
 /// Electric blue
-pub fn ELECTRIC_BLUE() -> Color { theme().neon.electric_blue.to_color() }
+pub fn ELECTRIC_BLUE() -> Color {
+    theme().neon.electric_blue.to_color()
+}
 
 #[allow(non_snake_case)]
 /// Deep background
-pub fn BG_DEEP() -> Color { theme().background.deep.to_color() }
+pub fn BG_DEEP() -> Color {
+    theme().background.deep.to_color()
+}
 #[allow(non_snake_case)]
 /// Panel background
-pub fn BG_PANEL() -> Color { theme().background.panel.to_color() }
+pub fn BG_PANEL() -> Color {
+    theme().background.panel.to_color()
+}
 #[allow(non_snake_case)]
 /// Surface background - for cards/elevated areas
-pub fn BG_SURFACE() -> Color { theme().background.surface.to_color() }
+pub fn BG_SURFACE() -> Color {
+    theme().background.surface.to_color()
+}
 #[allow(non_snake_case)]
 /// Selected item background
-pub fn BG_SELECTED() -> Color { theme().background.selected.to_color() }
+pub fn BG_SELECTED() -> Color {
+    theme().background.selected.to_color()
+}
 #[allow(non_snake_case)]
 /// Hover/elevated state
-pub fn BG_ELEVATED() -> Color { theme().background.elevated.to_color() }
+pub fn BG_ELEVATED() -> Color {
+    theme().background.elevated.to_color()
+}
 #[allow(non_snake_case)]
-pub fn BG_HOVER() -> Color { theme().background.hover.to_color() }
+pub fn BG_HOVER() -> Color {
+    theme().background.hover.to_color()
+}
 
 #[allow(non_snake_case)]
 /// Dim text
-pub fn TEXT_DIM() -> Color { theme().text.dim.to_color() }
+pub fn TEXT_DIM() -> Color {
+    theme().text.dim.to_color()
+}
 #[allow(non_snake_case)]
 /// Secondary text
-pub fn TEXT_SECONDARY() -> Color { theme().text.secondary.to_color() }
+pub fn TEXT_SECONDARY() -> Color {
+    theme().text.secondary.to_color()
+}
 #[allow(non_snake_case)]
 /// Primary text
-pub fn TEXT_PRIMARY() -> Color { theme().text.primary.to_color() }
+pub fn TEXT_PRIMARY() -> Color {
+    theme().text.primary.to_color()
+}
 #[allow(non_snake_case)]
 /// Bright/white text
-pub fn TEXT_BRIGHT() -> Color { theme().text.bright.to_color() }
+pub fn TEXT_BRIGHT() -> Color {
+    theme().text.bright.to_color()
+}
 
 #[allow(non_snake_case)]
 /// Border colors
-pub fn BORDER_DIM() -> Color { theme().border.dim.to_color() }
+pub fn BORDER_DIM() -> Color {
+    theme().border.dim.to_color()
+}
 #[allow(non_snake_case)]
-pub fn BORDER_ACTIVE() -> Color { theme().border.active.to_color() }
+pub fn BORDER_ACTIVE() -> Color {
+    theme().border.active.to_color()
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ANIMATION STATE
@@ -355,21 +431,45 @@ pub struct GradientColors {
 /// Subtle gradient presets - all pleasant color combinations
 const GRADIENT_PRESETS: &[GradientColors] = &[
     // Cyan to Blue
-    GradientColors { start: (0, 230, 255), end: (60, 160, 255) },
+    GradientColors {
+        start: (0, 230, 255),
+        end: (60, 160, 255),
+    },
     // Cyan to Teal
-    GradientColors { start: (0, 230, 240), end: (0, 180, 200) },
+    GradientColors {
+        start: (0, 230, 240),
+        end: (0, 180, 200),
+    },
     // Blue to Purple
-    GradientColors { start: (100, 180, 255), end: (180, 130, 255) },
+    GradientColors {
+        start: (100, 180, 255),
+        end: (180, 130, 255),
+    },
     // Teal to Cyan
-    GradientColors { start: (0, 200, 200), end: (80, 220, 255) },
+    GradientColors {
+        start: (0, 200, 200),
+        end: (80, 220, 255),
+    },
     // Purple to Pink
-    GradientColors { start: (160, 140, 255), end: (220, 130, 200) },
+    GradientColors {
+        start: (160, 140, 255),
+        end: (220, 130, 200),
+    },
     // Green to Cyan
-    GradientColors { start: (80, 220, 180), end: (0, 200, 230) },
+    GradientColors {
+        start: (80, 220, 180),
+        end: (0, 200, 230),
+    },
     // Blue to Cyan
-    GradientColors { start: (80, 160, 255), end: (0, 220, 240) },
+    GradientColors {
+        start: (80, 160, 255),
+        end: (0, 220, 240),
+    },
     // Pink to Purple
-    GradientColors { start: (230, 140, 200), end: (160, 120, 230) },
+    GradientColors {
+        start: (230, 140, 200),
+        end: (160, 120, 230),
+    },
 ];
 
 #[derive(Clone)]
@@ -501,7 +601,9 @@ pub fn panel_block(title: impl Into<String>, is_active: bool) -> Block<'static> 
                 Span::styled("│", Style::default().fg(BORDER_ACTIVE())),
                 Span::styled(
                     format!(" {} ", title_str),
-                    Style::default().fg(ACCENT_BRIGHT()).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(ACCENT_BRIGHT())
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled("│", Style::default().fg(BORDER_ACTIVE())),
             ]))
@@ -511,12 +613,10 @@ pub fn panel_block(title: impl Into<String>, is_active: bool) -> Block<'static> 
             .style(Style::default().bg(BG_PANEL()))
     } else {
         Block::default()
-            .title(Line::from(vec![
-                Span::styled(
-                    format!(" {} ", title_str),
-                    Style::default().fg(TEXT_SECONDARY()),
-                ),
-            ]))
+            .title(Line::from(vec![Span::styled(
+                format!(" {} ", title_str),
+                Style::default().fg(TEXT_SECONDARY()),
+            )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(border_inactive())
@@ -540,12 +640,12 @@ pub fn animated_block(
 /// Modal/dialog block
 pub fn modal_block(title: impl Into<String>) -> Block<'static> {
     Block::default()
-        .title(Line::from(vec![
-            Span::styled(
-                format!(" {} ", title.into()),
-                Style::default().fg(TEXT_BRIGHT()).add_modifier(Modifier::BOLD),
-            ),
-        ]))
+        .title(Line::from(vec![Span::styled(
+            format!(" {} ", title.into()),
+            Style::default()
+                .fg(TEXT_BRIGHT())
+                .add_modifier(Modifier::BOLD),
+        )]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(ACCENT()))
@@ -568,7 +668,9 @@ pub fn list_selected() -> Style {
 
 /// Highlighted item (stronger selection indicator)
 pub fn list_highlight() -> Style {
-    Style::default().bg(BG_ELEVATED()).add_modifier(Modifier::BOLD)
+    Style::default()
+        .bg(BG_ELEVATED())
+        .add_modifier(Modifier::BOLD)
 }
 
 pub fn list_hover() -> Style {
@@ -576,7 +678,9 @@ pub fn list_hover() -> Style {
 }
 
 pub fn text_highlight() -> Style {
-    Style::default().fg(ACCENT_BRIGHT()).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(ACCENT_BRIGHT())
+        .add_modifier(Modifier::BOLD)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -636,16 +740,25 @@ pub fn keybind(key: &str, description: &str) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             format!(" {} ", key),
-            Style::default().fg(BG_DEEP()).bg(ACCENT()).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(BG_DEEP())
+                .bg(ACCENT())
+                .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!(" {} ", description), Style::default().fg(TEXT_SECONDARY())),
+        Span::styled(
+            format!(" {} ", description),
+            Style::default().fg(TEXT_SECONDARY()),
+        ),
     ]
 }
 
 pub fn keybind_subtle(key: &str, description: &str) -> Vec<Span<'static>> {
     vec![
         Span::styled(key.to_string(), Style::default().fg(NEON_AMBER())),
-        Span::styled(format!(" {} ", description), Style::default().fg(TEXT_DIM())),
+        Span::styled(
+            format!(" {} ", description),
+            Style::default().fg(TEXT_DIM()),
+        ),
     ]
 }
 
@@ -662,11 +775,7 @@ pub const LOGO: &[&str] = &[
     "╚═╝     ╚═╝╚══════╝╚═╝     ╚═╝   ╚═╝    ╚═════╝ ╚═╝",
 ];
 
-pub const LOGO_COMPACT: &[&str] = &[
-    "┏┳┓┏━╸┏┳┓╺┳╸╻ ╻╻",
-    "┃┃┃┣╸ ┃┃┃ ┃ ┃ ┃┃",
-    "╹ ╹┗━╸╹ ╹ ╹ ┗━┛╹",
-];
+pub const LOGO_COMPACT: &[&str] = &["┏┳┓┏━╸┏┳┓╺┳╸╻ ╻╻", "┃┃┃┣╸ ┃┃┃ ┃ ┃ ┃┃", "╹ ╹┗━╸╹ ╹ ╹ ┗━┛╹"];
 
 /// Create styled logo with smooth animated gradient (random colors each launch)
 pub fn logo_lines(animation: &AnimationState) -> Vec<Line<'static>> {
@@ -690,14 +799,22 @@ pub fn logo_lines(animation: &AnimationState) -> Vec<Line<'static>> {
                     let pos = char_idx as f32 / char_count;
 
                     // Smooth sine wave that travels across - no harsh edges
-                    let wave = ((pos * std::f32::consts::PI * 2.0) - (cycle * std::f32::consts::PI * 2.0)).sin();
+                    let wave = ((pos * std::f32::consts::PI * 2.0)
+                        - (cycle * std::f32::consts::PI * 2.0))
+                        .sin();
                     // Normalize from -1..1 to 0..1
                     let t = (wave + 1.0) / 2.0;
 
                     // Interpolate between gradient start and end colors
-                    let r = (gradient.start.0 as f32 + (gradient.end.0 as f32 - gradient.start.0 as f32) * t) as u8;
-                    let g = (gradient.start.1 as f32 + (gradient.end.1 as f32 - gradient.start.1 as f32) * t) as u8;
-                    let b = (gradient.start.2 as f32 + (gradient.end.2 as f32 - gradient.start.2 as f32) * t) as u8;
+                    let r = (gradient.start.0 as f32
+                        + (gradient.end.0 as f32 - gradient.start.0 as f32) * t)
+                        as u8;
+                    let g = (gradient.start.1 as f32
+                        + (gradient.end.1 as f32 - gradient.start.1 as f32) * t)
+                        as u8;
+                    let b = (gradient.start.2 as f32
+                        + (gradient.end.2 as f32 - gradient.start.2 as f32) * t)
+                        as u8;
 
                     Span::styled(
                         ch.to_string(),

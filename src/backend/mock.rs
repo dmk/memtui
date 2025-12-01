@@ -135,7 +135,11 @@ impl Backend for MockBackend {
         })
     }
 
-    async fn search_keys(&self, pattern: &str, limit: usize) -> Result<KeyScanResult, BackendError> {
+    async fn search_keys(
+        &self,
+        pattern: &str,
+        limit: usize,
+    ) -> Result<KeyScanResult, BackendError> {
         if !self.connected {
             return Err(BackendError::ConnectionError("Not connected".to_string()));
         }

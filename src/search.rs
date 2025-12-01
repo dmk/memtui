@@ -26,8 +26,11 @@ pub fn fuzzy_search_keys(keys: &[Option<crate::types::KeyMetadata>], pattern: &s
         .filter_map(|(idx, key_opt)| {
             key_opt.as_ref().and_then(|key| {
                 let mut buf = Vec::new();
-                pat.score(nucleo_matcher::Utf32Str::new(&key.name, &mut buf), &mut matcher)
-                    .map(|score| (idx, score))
+                pat.score(
+                    nucleo_matcher::Utf32Str::new(&key.name, &mut buf),
+                    &mut matcher,
+                )
+                .map(|score| (idx, score))
             })
         })
         .collect();
@@ -57,14 +60,23 @@ mod tests {
 
     #[test]
     fn test_fuzzy_search_empty_pattern() {
-        let keys = vec![make_key("user:123"), make_key("user:456"), None, make_key("session:abc")];
+        let keys = vec![
+            make_key("user:123"),
+            make_key("user:456"),
+            None,
+            make_key("session:abc"),
+        ];
         let results = fuzzy_search_keys(&keys, "");
         assert_eq!(results, vec![0, 1, 3]); // All loaded keys
     }
 
     #[test]
     fn test_fuzzy_search_exact_match() {
-        let keys = vec![make_key("user:123"), make_key("user:456"), make_key("session:abc")];
+        let keys = vec![
+            make_key("user:123"),
+            make_key("user:456"),
+            make_key("session:abc"),
+        ];
         let results = fuzzy_search_keys(&keys, "user:123");
         assert!(!results.is_empty());
         assert_eq!(results[0], 0); // Exact match should be first
@@ -72,24 +84,34 @@ mod tests {
 
     #[test]
     fn test_fuzzy_search_partial() {
-        let keys = vec![make_key("user:123"), make_key("user:456"), make_key("session:abc")];
+        let keys = vec![
+            make_key("user:123"),
+            make_key("user:456"),
+            make_key("session:abc"),
+        ];
         let results = fuzzy_search_keys(&keys, "user");
         assert_eq!(results.len(), 2); // Should match both user keys
     }
 
     #[test]
     fn test_fuzzy_search_no_match() {
-        let keys = vec![make_key("user:123"), make_key("user:456"), make_key("session:abc")];
+        let keys = vec![
+            make_key("user:123"),
+            make_key("user:456"),
+            make_key("session:abc"),
+        ];
         let results = fuzzy_search_keys(&keys, "zzzzz");
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_fuzzy_search_case_insensitive() {
-        let keys = vec![make_key("User:123"), make_key("USER:456"), make_key("session:abc")];
+        let keys = vec![
+            make_key("User:123"),
+            make_key("USER:456"),
+            make_key("session:abc"),
+        ];
         let results = fuzzy_search_keys(&keys, "user");
         assert_eq!(results.len(), 2);
     }
 }
-
-

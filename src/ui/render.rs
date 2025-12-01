@@ -19,11 +19,16 @@ use super::render_connection_form;
 use super::state::{Panel, TabRegion, UiState};
 use super::theme::{self, AnimationState};
 use crate::app::{AppState, ConnectionStatus};
-use crate::keybindings::{BindingContext, KeybindingsConfig, format_key_for_display};
+use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConfig};
 use crate::types::BackendType;
 
 /// Main UI rendering function
-pub fn render(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, keybindings: &KeybindingsConfig) {
+pub fn render(
+    f: &mut Frame,
+    app_state: &mut AppState,
+    ui_state: &mut UiState,
+    keybindings: &KeybindingsConfig,
+) {
     // Render the deep background
     let bg_block = Block::default().style(Style::default().bg(theme::BG_DEEP()));
     f.render_widget(bg_block, f.area());
@@ -233,7 +238,11 @@ fn render_resize_handle(f: &mut Frame, area: Rect, is_active: bool, _animation: 
     let mut lines = Vec::new();
     for i in 0..area.height {
         let char = if i == area.height / 2 {
-            if is_active { "◀▶" } else { "┃" }
+            if is_active {
+                "◀▶"
+            } else {
+                "┃"
+            }
         } else {
             "│"
         };
@@ -305,7 +314,13 @@ fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, are
     ui_state.value_viewer.render(f, area, props);
 }
 
-fn render_welcome(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area: Rect, keybindings: &KeybindingsConfig) {
+fn render_welcome(
+    f: &mut Frame,
+    app_state: &AppState,
+    ui_state: &mut UiState,
+    area: Rect,
+    keybindings: &KeybindingsConfig,
+) {
     let configs = app_state.connection_manager.get_configs();
     let recent_configs = ui_state
         .recent_connection_ids
@@ -480,7 +495,10 @@ fn render_status_bar(
 
     let mut right_spans: Vec<Span> = Vec::new();
     for (key, desc) in keybinds.iter() {
-        right_spans.push(Span::styled(key.as_str(), Style::default().fg(theme::NEON_CYAN())));
+        right_spans.push(Span::styled(
+            key.as_str(),
+            Style::default().fg(theme::NEON_CYAN()),
+        ));
         right_spans.push(Span::styled(
             format!(" {}  ", desc),
             Style::default().fg(theme::TEXT_DIM()),
@@ -489,10 +507,7 @@ fn render_status_bar(
 
     // Calculate spacing
     let left_content = format!("{} {}", status_icon, status_text);
-    let right_content_len: usize = keybinds
-        .iter()
-        .map(|(k, d)| k.len() + d.len() + 3)
-        .sum();
+    let right_content_len: usize = keybinds.iter().map(|(k, d)| k.len() + d.len() + 3).sum();
     let padding = inner_area
         .width
         .saturating_sub(left_content.chars().count() as u16 + right_content_len as u16);
@@ -513,8 +528,8 @@ fn render_quit_confirmation(f: &mut Frame, _animation: &AnimationState) {
     let area = Rect {
         x: area.x,
         y: area.y,
-        width: area.width.min(55).max(35),
-        height: area.height.min(8).max(6),
+        width: area.width.clamp(35, 55),
+        height: area.height.clamp(6, 8),
     };
     let area = Rect {
         x: (f.area().width.saturating_sub(area.width)) / 2,

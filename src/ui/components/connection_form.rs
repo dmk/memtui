@@ -332,13 +332,12 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
         })
         .collect();
 
-    let backend_type_field = Paragraph::new(Line::from(backend_spans))
-        .block(
-            Block::default()
-                .title("Backend Type (←/→)")
-                .borders(Borders::ALL)
-                .border_style(backend_type_style),
-        );
+    let backend_type_field = Paragraph::new(Line::from(backend_spans)).block(
+        Block::default()
+            .title("Backend Type (←/→)")
+            .borders(Borders::ALL)
+            .border_style(backend_type_style),
+    );
 
     // Use tui-input for name
     let name_scroll = form
@@ -489,23 +488,20 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
     // Render cursor for active input fields
     match form.active_field {
         FormField::Name => {
-            let cursor_x = chunks[2].x
-                + 1
-                + (form.name.visual_cursor().saturating_sub(name_scroll) as u16);
+            let cursor_x =
+                chunks[2].x + 1 + (form.name.visual_cursor().saturating_sub(name_scroll) as u16);
             let cursor_y = chunks[2].y + 1;
             f.set_cursor_position((cursor_x, cursor_y));
         }
         FormField::Host => {
-            let cursor_x = chunks[3].x
-                + 1
-                + (form.host.visual_cursor().saturating_sub(host_scroll) as u16);
+            let cursor_x =
+                chunks[3].x + 1 + (form.host.visual_cursor().saturating_sub(host_scroll) as u16);
             let cursor_y = chunks[3].y + 1;
             f.set_cursor_position((cursor_x, cursor_y));
         }
         FormField::Port => {
-            let cursor_x = chunks[4].x
-                + 1
-                + (form.port.visual_cursor().saturating_sub(port_scroll) as u16);
+            let cursor_x =
+                chunks[4].x + 1 + (form.port.visual_cursor().saturating_sub(port_scroll) as u16);
             let cursor_y = chunks[4].y + 1;
             f.set_cursor_position((cursor_x, cursor_y));
         }
@@ -518,7 +514,10 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
         FormField::Database if show_database => {
             let cursor_x = chunks[6].x
                 + 1
-                + (form.database.visual_cursor().saturating_sub(database_scroll) as u16);
+                + (form
+                    .database
+                    .visual_cursor()
+                    .saturating_sub(database_scroll) as u16);
             let cursor_y = chunks[6].y + 1;
             f.set_cursor_position((cursor_x, cursor_y));
         }

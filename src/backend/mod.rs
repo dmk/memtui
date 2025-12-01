@@ -47,7 +47,8 @@ pub trait Backend: Send + Sync {
     /// Search keys with pattern - backends implement this optimally
     /// Redis: Uses SCAN MATCH efficiently (server-side)
     /// Memcached: Falls back to client-side filtering of cached keys
-    async fn search_keys(&self, pattern: &str, limit: usize) -> Result<KeyScanResult, BackendError>;
+    async fn search_keys(&self, pattern: &str, limit: usize)
+        -> Result<KeyScanResult, BackendError>;
 
     /// Get total key count (approximate if expensive)
     async fn key_count(&self, pattern: Option<&str>) -> Result<u64, BackendError>;

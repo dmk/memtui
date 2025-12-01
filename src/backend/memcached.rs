@@ -172,9 +172,12 @@ impl Backend for MemcachedBackend {
         let client_clone = client_arc.clone();
 
         let version = tokio::task::spawn_blocking(move || {
-            let client = client_clone
-                .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
+            let client = client_clone.lock().map_err(|e| {
+                BackendError::Internal(format!(
+                    "Mutex poisoned (a thread panicked while holding the lock): {}",
+                    e
+                ))
+            })?;
             client
                 .version()
                 .map_err(|e| BackendError::ConnectionError(e.to_string()))
@@ -210,9 +213,12 @@ impl Backend for MemcachedBackend {
         let start = std::time::Instant::now();
 
         tokio::task::spawn_blocking(move || {
-            let client = client
-                .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
+            let client = client.lock().map_err(|e| {
+                BackendError::Internal(format!(
+                    "Mutex poisoned (a thread panicked while holding the lock): {}",
+                    e
+                ))
+            })?;
             client
                 .version()
                 .map_err(|e| BackendError::ConnectionError(e.to_string()))?;
@@ -228,9 +234,12 @@ impl Backend for MemcachedBackend {
         let client = self.get_client()?;
 
         let stats = tokio::task::spawn_blocking(move || {
-            let client = client
-                .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
+            let client = client.lock().map_err(|e| {
+                BackendError::Internal(format!(
+                    "Mutex poisoned (a thread panicked while holding the lock): {}",
+                    e
+                ))
+            })?;
             client
                 .stats()
                 .map_err(|e| BackendError::Internal(e.to_string()))
@@ -373,7 +382,11 @@ impl Backend for MemcachedBackend {
         })
     }
 
-    async fn search_keys(&self, pattern: &str, limit: usize) -> Result<KeyScanResult, BackendError> {
+    async fn search_keys(
+        &self,
+        pattern: &str,
+        limit: usize,
+    ) -> Result<KeyScanResult, BackendError> {
         // Memcached doesn't support efficient server-side pattern search
         // We need to scan all slabs and filter client-side
         let host = self.config.host.clone();
@@ -398,9 +411,7 @@ impl Backend for MemcachedBackend {
 
         for &slab_id in slab_ids.iter() {
             // Get a large batch of keys from each slab
-            let keys = self
-                .get_keys_from_slab(&host, port, slab_id, 1000)
-                .await?;
+            let keys = self.get_keys_from_slab(&host, port, slab_id, 1000).await?;
 
             for key in keys {
                 // Client-side substring match (case-insensitive)
@@ -458,9 +469,12 @@ impl Backend for MemcachedBackend {
         let key_cache = self.key_cache.clone();
 
         let data: Option<Vec<u8>> = tokio::task::spawn_blocking(move || {
-            let client = client
-                .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
+            let client = client.lock().map_err(|e| {
+                BackendError::Internal(format!(
+                    "Mutex poisoned (a thread panicked while holding the lock): {}",
+                    e
+                ))
+            })?;
             client
                 .get(&key_str)
                 .map_err(|e| BackendError::Internal(e.to_string()))
@@ -504,9 +518,12 @@ impl Backend for MemcachedBackend {
         let key_cache = self.key_cache.clone();
 
         let data: Option<Vec<u8>> = tokio::task::spawn_blocking(move || {
-            let client = client
-                .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
+            let client = client.lock().map_err(|e| {
+                BackendError::Internal(format!(
+                    "Mutex poisoned (a thread panicked while holding the lock): {}",
+                    e
+                ))
+            })?;
             client
                 .get(&key_str)
                 .map_err(|e| BackendError::Internal(e.to_string()))
@@ -546,9 +563,12 @@ impl Backend for MemcachedBackend {
 
         let results: std::collections::HashMap<String, Vec<u8>> =
             tokio::task::spawn_blocking(move || {
-                let client = client
-                    .lock()
-                    .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
+                let client = client.lock().map_err(|e| {
+                    BackendError::Internal(format!(
+                        "Mutex poisoned (a thread panicked while holding the lock): {}",
+                        e
+                    ))
+                })?;
 
                 let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
                 client
@@ -606,9 +626,12 @@ impl Backend for MemcachedBackend {
         let ttl_secs = ttl.map(|d| d.as_secs() as u32).unwrap_or(0);
 
         tokio::task::spawn_blocking(move || {
-            let client = client
-                .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
+            let client = client.lock().map_err(|e| {
+                BackendError::Internal(format!(
+                    "Mutex poisoned (a thread panicked while holding the lock): {}",
+                    e
+                ))
+            })?;
             client
                 .set(&key, &value[..], ttl_secs)
                 .map_err(|e| BackendError::Internal(e.to_string()))?;
@@ -636,9 +659,12 @@ impl Backend for MemcachedBackend {
         let key_cache = self.key_cache.clone();
 
         let deleted = tokio::task::spawn_blocking(move || {
-            let client = client
-                .lock()
-                .map_err(|e| BackendError::Internal(format!("Mutex poisoned (a thread panicked while holding the lock): {}", e)))?;
+            let client = client.lock().map_err(|e| {
+                BackendError::Internal(format!(
+                    "Mutex poisoned (a thread panicked while holding the lock): {}",
+                    e
+                ))
+            })?;
             let result = client
                 .delete(&key)
                 .map_err(|e| BackendError::Internal(e.to_string()))?;

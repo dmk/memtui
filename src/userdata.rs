@@ -369,7 +369,8 @@ fn generate_default_theme_json() -> String {
     "active": { "r": 80, "g": 200, "b": 220 }
   }
 }
-"#.to_string()
+"#
+    .to_string()
 }
 
 /// Save default theme configuration to userdata directory

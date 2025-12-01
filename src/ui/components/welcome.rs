@@ -1,6 +1,6 @@
 use super::Component;
 use crate::action::Action;
-use crate::keybindings::{BindingContext, KeybindingsConfig, format_key_for_display};
+use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConfig};
 use crate::types::ConnectionConfig;
 use crate::ui::theme::{self, AnimationState};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -232,7 +232,10 @@ impl Component for WelcomeScreen {
                     .bg(theme::NEON_CYAN())
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" connections  ", Style::default().fg(theme::TEXT_SECONDARY())),
+            Span::styled(
+                " connections  ",
+                Style::default().fg(theme::TEXT_SECONDARY()),
+            ),
             Span::styled(
                 format!(" {} ", new_key),
                 Style::default()

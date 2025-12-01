@@ -8,4 +8,4 @@ pub use components::help::render_help;
 pub use components::Component;
 pub use render::render;
 pub use state::{Panel, UiState};
-pub use theme::{AnimationState, PaneSplit, ThemeConfig, init_theme};
+pub use theme::{init_theme, AnimationState, PaneSplit, ThemeConfig};

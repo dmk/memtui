@@ -258,7 +258,11 @@ impl Backend for RedisBackend {
         })
     }
 
-    async fn search_keys(&self, pattern: &str, limit: usize) -> Result<KeyScanResult, BackendError> {
+    async fn search_keys(
+        &self,
+        pattern: &str,
+        limit: usize,
+    ) -> Result<KeyScanResult, BackendError> {
         let mut conn = self.get_connection()?.clone();
 
         // Build glob pattern for Redis SCAN MATCH

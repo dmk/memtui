@@ -118,7 +118,9 @@ impl Component for ConnectionList {
                     .unwrap_or(ConnectionStatus::Disconnected);
 
                 let (status_indicator, status_color) = match status {
-                    ConnectionStatus::Connected => (theme::INDICATOR_CONNECTED, theme::NEON_GREEN()),
+                    ConnectionStatus::Connected => {
+                        (theme::INDICATOR_CONNECTED, theme::NEON_GREEN())
+                    }
                     ConnectionStatus::Connecting => {
                         (theme::spinner_pulse(props.animation), theme::NEON_AMBER())
                     }
@@ -128,10 +130,7 @@ impl Component for ConnectionList {
                     ConnectionStatus::Error(_) => (theme::INDICATOR_ERROR, theme::NEON_RED()),
                 };
 
-                let is_active = props
-                    .active_id
-                    .map(|id| id == config.id)
-                    .unwrap_or(false);
+                let is_active = props.active_id.map(|id| id == config.id).unwrap_or(false);
 
                 let name_style = if is_active {
                     Style::default()

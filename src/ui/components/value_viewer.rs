@@ -9,8 +9,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Table, TableState, Wrap,
+        Block, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+        TableState, Wrap,
     },
     Frame,
 };
@@ -455,6 +455,7 @@ impl ValueViewer {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_paragraph(
         &mut self,
         f: &mut Frame,

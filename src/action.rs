@@ -17,7 +17,11 @@ pub enum Action {
     // User Inputs
     Key(KeyEvent),
     Mouse(MouseEvent),
-    Scroll { column: u16, row: u16, delta: isize },
+    Scroll {
+        column: u16,
+        row: u16,
+        delta: isize,
+    },
 
     // Navigation
     NextPanel,
@@ -61,11 +65,11 @@ pub enum Action {
     },
 
     // Search Actions
-    StartSearch,                   // Open search input
-    UpdateSearchQuery(String),     // User typed in search
-    ClearSearch,                   // Reset to normal view (Esc or empty query)
-    SearchAddChar(char),           // Add character to search input
-    SearchDeleteChar,              // Delete character from search input
+    StartSearch,               // Open search input
+    UpdateSearchQuery(String), // User typed in search
+    ClearSearch,               // Reset to normal view (Esc or empty query)
+    SearchAddChar(char),       // Add character to search input
+    SearchDeleteChar,          // Delete character from search input
 
     // Async Events (Results)
     DidConnect(String, Arc<RwLock<Box<dyn Backend>>>),

@@ -170,7 +170,12 @@ impl App {
             // Only render when state has changed
             if self.needs_render {
                 terminal.draw(|f| {
-                    ui::render(f, &mut self.app_state, &mut self.ui_state, &self.keybindings);
+                    ui::render(
+                        f,
+                        &mut self.app_state,
+                        &mut self.ui_state,
+                        &self.keybindings,
+                    );
                 })?;
                 self.needs_render = false;
             }
@@ -245,9 +250,14 @@ impl App {
                 // Drain and coalesce pending scroll events
                 while let Ok(pending) = self.action_rx.try_recv() {
                     match pending {
-                        Action::Scroll { column: c, row: r, delta: d } => {
+                        Action::Scroll {
+                            column: c,
+                            row: r,
+                            delta: d,
+                        } => {
                             // Check if direction changed (sign differs)
-                            let same_direction = (total_delta > 0 && d > 0) || (total_delta < 0 && d < 0);
+                            let same_direction =
+                                (total_delta > 0 && d > 0) || (total_delta < 0 && d < 0);
                             if same_direction {
                                 // Same direction: accumulate
                                 total_delta += d;
@@ -886,7 +896,11 @@ impl App {
                 let results_len = self.app_state.search_results_local.len();
                 if results_len > 0 {
                     let current = self.app_state.search_selection_index.unwrap_or(0);
-                    let next = if current + 1 >= results_len { 0 } else { current + 1 };
+                    let next = if current + 1 >= results_len {
+                        0
+                    } else {
+                        current + 1
+                    };
                     self.app_state.search_selection_index = Some(next);
                     if let Some(&key_idx) = self.app_state.search_results_local.get(next) {
                         let _ = self.action_tx.send(Action::SelectKey(key_idx));
@@ -898,7 +912,11 @@ impl App {
                 let results_len = self.app_state.search_results_local.len();
                 if results_len > 0 {
                     let current = self.app_state.search_selection_index.unwrap_or(0);
-                    let prev = if current == 0 { results_len - 1 } else { current - 1 };
+                    let prev = if current == 0 {
+                        results_len - 1
+                    } else {
+                        current - 1
+                    };
                     self.app_state.search_selection_index = Some(prev);
                     if let Some(&key_idx) = self.app_state.search_results_local.get(prev) {
                         let _ = self.action_tx.send(Action::SelectKey(key_idx));
@@ -1127,7 +1145,10 @@ impl App {
                     let _ = self.action_tx.send(Action::SearchDeleteChar);
                     return;
                 }
-                KeyCode::Char(c) if self.app_state.is_searching && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char(c)
+                    if self.app_state.is_searching
+                        && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
                     // Only handle plain character input here, let keybindings handle special keys
                     let _ = self.action_tx.send(Action::SearchAddChar(c));
                     return;
@@ -1162,7 +1183,10 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => {
                 // Check if clicking on resize handle
                 if let Some(body_area) = self.ui_state.last_body_area {
-                    if self.ui_state.pane_split.is_on_handle(body_area, event.column)
+                    if self
+                        .ui_state
+                        .pane_split
+                        .is_on_handle(body_area, event.column)
                         && event.row >= body_area.y
                         && event.row < body_area.y + body_area.height
                     {
@@ -1181,10 +1205,8 @@ impl App {
                         // Calculate new ratio based on mouse position
                         let relative_x = event.column.saturating_sub(body_area.x) as f32;
                         let new_ratio = relative_x / body_area.width as f32;
-                        let clamped = new_ratio.clamp(
-                            self.ui_state.pane_split.min,
-                            self.ui_state.pane_split.max,
-                        );
+                        let clamped = new_ratio
+                            .clamp(self.ui_state.pane_split.min, self.ui_state.pane_split.max);
                         self.ui_state.pane_split.ratio = clamped;
                     }
                 }

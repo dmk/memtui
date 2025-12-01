@@ -60,10 +60,7 @@ pub fn render_help(f: &mut Frame, keybindings: &KeybindingsConfig) {
                 ("Mouse resize", "drag border".to_string()),
             ],
         ),
-        (
-            "General",
-            vec![("Toggle help", help), ("Quit", quit)],
-        ),
+        ("General", vec![("Toggle help", help), ("Quit", quit)]),
     ];
 
     // Calculate inner area (accounting for block borders)
@@ -205,4 +202,3 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1])[1]
 }
-

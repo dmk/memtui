@@ -79,7 +79,9 @@ impl App {
                     let temp_config = parsed.to_config(config.connection.default_timeout);
                     temp_connection_id = Some(temp_config.id.clone());
                     ui_state.show_temp_connection_warning = true;
-                    app_state.connection_manager.add_connection(temp_config.clone());
+                    app_state
+                        .connection_manager
+                        .add_connection(temp_config.clone());
                     // Auto-connect to this temporary connection
                     auto_connect_name = Some(temp_config.id.clone());
                 }
@@ -1299,6 +1301,35 @@ impl App {
             return;
         }
 
+        // Handle clicks on the welcome screen
+        if self.app_state.connection_manager.get_active_id().is_none() {
+            if let Some(area) = self.ui_state.welcome_screen.last_list_area {
+                let configs = self.app_state.connection_manager.get_configs();
+                let recent_configs: Vec<&ConnectionConfig> = self
+                    .ui_state
+                    .recent_connection_ids
+                    .iter()
+                    .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
+                    .collect();
+                let total = recent_configs.len();
+                if total > 0 {
+                    if let Some(idx) = self
+                        .ui_state
+                        .welcome_screen
+                        .index_at_position(area, column, row, total)
+                    {
+                        self.ui_state.welcome_screen.state.select(Some(idx));
+                        if let Some(config) = recent_configs.get(idx) {
+                            let _ = self
+                                .action_tx
+                                .send(Action::FocusConnection(config.id.clone()));
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
         if let Some(region) = self
             .ui_state
             .tab_regions
@@ -1678,11 +1709,7 @@ fn init_tracing(log_file: Option<&PathBuf>, log_level: LogLevel) {
             .unwrap_or_else(|_| EnvFilter::new("info"));
 
         // Write logs to specified file
-        if let Ok(file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_path)
-        {
+        if let Ok(file) = OpenOptions::new().create(true).append(true).open(log_path) {
             tracing_subscriber::fmt()
                 .with_env_filter(env_filter)
                 .with_target(true)

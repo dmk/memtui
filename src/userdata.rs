@@ -136,10 +136,7 @@ pub fn load_config_from_path(file_path: &PathBuf) -> Config {
                 eprintln!("Warning: Could not create default config file: {}", e);
             }
         } else {
-            eprintln!(
-                "Warning: Config file not found: {}",
-                file_path.display()
-            );
+            eprintln!("Warning: Config file not found: {}", file_path.display());
         }
         return Config::default();
     }
@@ -486,18 +483,22 @@ fn generate_default_keybindings_json() -> String {
 // Only specify bindings you want to override; others will use defaults.
 // Lines starting with // are comments and will be ignored.
 {
-  // Default context - active when no overlay is shown
-  "default": {
+  // Global keybindings - available everywhere as fallback
+  "global": {
     "quit.show": ["q", "esc"],
     "help.toggle": ["?"],
+    "connection.palette.toggle": ["ctrl+p"],
+    "connection.form.open": ["ctrl+n"]
+  },
+
+  // Default context - active when connected and browsing
+  "default": {
     "search.start": ["/"],
     "navigation.next_panel": ["tab"],
     "navigation.prev_panel": ["shift+tab"],
     "navigation.next_item": ["down", "j"],
     "navigation.prev_item": ["up", "k"],
     "navigation.enter": ["enter"],
-    "connection.palette.toggle": ["ctrl+p"],
-    "connection.form.open": ["ctrl+n"],
     "connection.tab.next": ["ctrl+right"],
     "connection.tab.prev": ["ctrl+left"],
     "pane.resize.left": ["ctrl+h"],
@@ -526,11 +527,7 @@ fn generate_default_keybindings_json() -> String {
     "connection.palette.select": ["enter"],
     "connection.palette.next": ["down", "j"],
     "connection.palette.prev": ["up", "k"],
-    "connection.palette.delete": ["d"],
-    "quit.show": ["q"],
-    "help.toggle": ["?"],
-    "connection.palette.toggle": ["ctrl+p"],
-    "connection.form.open": ["ctrl+n"]
+    "connection.palette.delete": ["d"]
   },
 
   // Quit confirmation dialog

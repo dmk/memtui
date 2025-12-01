@@ -16,6 +16,9 @@ pub enum BindingContext {
 /// Keybinding configuration - maps command names to key combinations
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeybindingsConfig {
+    /// Global keybindings - always checked as fallback for all contexts
+    #[serde(default)]
+    pub global: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub default: HashMap<String, Vec<String>>,
     #[serde(default)]
@@ -46,6 +49,7 @@ impl KeybindingsConfig {
     /// Merge user config onto defaults - user config overrides defaults
     pub fn merge(defaults: Self, user: Self) -> Self {
         Self {
+            global: merge_hashmaps(defaults.global, user.global),
             default: merge_hashmaps(defaults.default, user.default),
             search: merge_hashmaps(defaults.search, user.search),
             connection_form: merge_hashmaps(defaults.connection_form, user.connection_form),
@@ -59,10 +63,23 @@ impl KeybindingsConfig {
     }
 
     /// Get command name for a key event in the given context
+    /// First checks context-specific bindings, then falls back to global
     pub fn get_command(&self, key: KeyEvent, context: BindingContext) -> Option<String> {
-        let bindings = self.get_context_bindings(context);
+        // First try context-specific bindings
+        if let Some(cmd) = self.match_key_in_bindings(key, self.get_context_bindings(context)) {
+            return Some(cmd);
+        }
 
-        // Try to match the key against all bindings
+        // Fall back to global bindings
+        self.match_key_in_bindings(key, &self.global)
+    }
+
+    /// Helper to match a key against a set of bindings
+    fn match_key_in_bindings(
+        &self,
+        key: KeyEvent,
+        bindings: &HashMap<String, Vec<String>>,
+    ) -> Option<String> {
         for (command, keys) in bindings {
             for key_str in keys {
                 if let Some(parsed_key) = parse_key_string(key_str) {
@@ -81,14 +98,21 @@ impl KeybindingsConfig {
                 }
             }
         }
-
         None
     }
 
     /// Get the first keybinding string for a command in the given context
+    /// First checks context-specific bindings, then falls back to global
     pub fn get_first_keybinding(&self, command: &str, context: BindingContext) -> Option<String> {
         let bindings = self.get_context_bindings(context);
-        bindings.get(command).and_then(|keys| keys.first().cloned())
+        bindings
+            .get(command)
+            .and_then(|keys| keys.first().cloned())
+            .or_else(|| {
+                self.global
+                    .get(command)
+                    .and_then(|keys| keys.first().cloned())
+            })
     }
 }
 
@@ -265,13 +289,25 @@ pub fn format_key_for_display(key_str: &str) -> String {
 pub fn default_keybindings() -> KeybindingsConfig {
     let mut config = KeybindingsConfig::default();
 
-    // Default context bindings
-    let mut default = HashMap::new();
-    default.insert(
+    // Global keybindings - available in all contexts (as fallback)
+    let mut global = HashMap::new();
+    global.insert(
         "quit.show".to_string(),
         vec!["q".to_string(), "esc".to_string()],
     );
-    default.insert("help.toggle".to_string(), vec!["?".to_string()]);
+    global.insert("help.toggle".to_string(), vec!["?".to_string()]);
+    global.insert(
+        "connection.palette.toggle".to_string(),
+        vec!["ctrl+p".to_string()],
+    );
+    global.insert(
+        "connection.form.open".to_string(),
+        vec!["ctrl+n".to_string()],
+    );
+    config.global = global;
+
+    // Default context bindings (when connected and browsing)
+    let mut default = HashMap::new();
     default.insert("search.start".to_string(), vec!["/".to_string()]);
     default.insert("navigation.next_panel".to_string(), vec!["tab".to_string()]);
     default.insert(
@@ -287,14 +323,6 @@ pub fn default_keybindings() -> KeybindingsConfig {
         vec!["up".to_string(), "k".to_string()],
     );
     default.insert("navigation.enter".to_string(), vec!["enter".to_string()]);
-    default.insert(
-        "connection.palette.toggle".to_string(),
-        vec!["ctrl+p".to_string()],
-    );
-    default.insert(
-        "connection.form.open".to_string(),
-        vec!["ctrl+n".to_string()],
-    );
     default.insert(
         "connection.tab.next".to_string(),
         vec!["ctrl+right".to_string()],
@@ -359,16 +387,6 @@ pub fn default_keybindings() -> KeybindingsConfig {
     connection_palette.insert(
         "connection.palette.delete".to_string(),
         vec!["d".to_string()],
-    );
-    connection_palette.insert("quit.show".to_string(), vec!["q".to_string()]);
-    connection_palette.insert("help.toggle".to_string(), vec!["?".to_string()]);
-    connection_palette.insert(
-        "connection.palette.toggle".to_string(),
-        vec!["ctrl+p".to_string()],
-    );
-    connection_palette.insert(
-        "connection.form.open".to_string(),
-        vec!["ctrl+n".to_string()],
     );
     config.connection_palette = connection_palette;
 
@@ -473,19 +491,17 @@ mod tests {
     fn test_merge_keybindings() {
         let defaults = default_keybindings();
         let mut user = KeybindingsConfig::default();
-        let mut user_default = HashMap::new();
-        user_default.insert("quit.show".to_string(), vec!["x".to_string()]);
-        user.default = user_default;
+        let mut user_global = HashMap::new();
+        user_global.insert("quit.show".to_string(), vec!["x".to_string()]);
+        user.global = user_global;
 
         let merged = KeybindingsConfig::merge(defaults.clone(), user);
 
-        // User override should be present
-        assert_eq!(
-            merged.default.get("quit.show"),
-            Some(&vec!["x".to_string()])
-        );
+        // User override should be present in global
+        assert_eq!(merged.global.get("quit.show"), Some(&vec!["x".to_string()]));
 
-        // Other defaults should still be there
-        assert!(merged.default.contains_key("help.toggle"));
+        // Other global defaults should still be there
+        assert!(merged.global.contains_key("help.toggle"));
+        assert!(merged.global.contains_key("connection.palette.toggle"));
     }
 }

@@ -121,7 +121,8 @@ pub fn render(
             let mut warning_component = WarningMessage::new();
             let warning_props = WarningMessageProps {
                 kind: MessageKind::Warning,
-                message: "Memcached doesn't provide native key listing. Keys may not be consistent.",
+                message:
+                    "Memcached doesn't provide native key listing. Keys may not be consistent.",
             };
             warning_component.render(f, warning_chunks[chunk_idx], warning_props);
         }

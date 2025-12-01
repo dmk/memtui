@@ -20,13 +20,48 @@ pub struct WelcomeScreenProps<'a> {
 
 pub struct WelcomeScreen {
     pub state: ListState,
+    /// Area where the recent connections list is rendered (for click handling)
+    pub last_list_area: Option<Rect>,
 }
 
 impl WelcomeScreen {
     pub fn new() -> Self {
         let mut state = ListState::default();
         state.select(Some(0));
-        Self { state }
+        Self {
+            state,
+            last_list_area: None,
+        }
+    }
+
+    /// Get the index of the item at the given position (for click handling)
+    pub fn index_at_position(
+        &self,
+        area: Rect,
+        column: u16,
+        row: u16,
+        total: usize,
+    ) -> Option<usize> {
+        if total == 0 || area.height == 0 || area.width == 0 {
+            return None;
+        }
+
+        // Check if click is within the list area
+        if column < area.x
+            || column >= area.x + area.width
+            || row < area.y
+            || row >= area.y + area.height
+        {
+            return None;
+        }
+
+        // Calculate which item was clicked
+        let relative_row = row.saturating_sub(area.y) as usize;
+        if relative_row < total {
+            Some(relative_row)
+        } else {
+            None
+        }
     }
 
     pub fn next(&mut self, len: usize) {
@@ -135,6 +170,7 @@ impl Component for WelcomeScreen {
 
         // 2. Recent connections list
         if props.recent_configs.is_empty() {
+            self.last_list_area = None;
             let no_recent = Paragraph::new(vec![
                 Line::from(""),
                 Line::from(Span::styled(
@@ -167,6 +203,9 @@ impl Component for WelcomeScreen {
                 .split(chunks[1]);
 
             f.render_widget(title, list_area_chunks[0]);
+
+            // Store the list area for click handling
+            self.last_list_area = Some(list_area_chunks[1]);
 
             let list_width = list_area_chunks[1].width as usize;
 

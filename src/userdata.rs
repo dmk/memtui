@@ -270,6 +270,20 @@ pub fn record_recent_connection_id_with_config(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// JSON WITH COMMENTS SUPPORT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Strip comment lines (starting with //) from JSON content
+/// This allows users to add comments to JSON config files
+fn strip_json_comments(content: &str) -> String {
+    content
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // THEME CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -295,17 +309,20 @@ pub fn load_theme() -> ThemeConfig {
     }
 
     match fs::read_to_string(&file_path) {
-        Ok(contents) => match serde_json::from_str(&contents) {
-            Ok(theme) => theme,
-            Err(e) => {
-                eprintln!(
-                    "Warning: Invalid theme file ({}), using defaults: {}",
-                    file_path.display(),
-                    e
-                );
-                ThemeConfig::default()
+        Ok(contents) => {
+            let stripped = strip_json_comments(&contents);
+            match serde_json::from_str(&stripped) {
+                Ok(theme) => theme,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Invalid theme file ({}), using defaults: {}",
+                        file_path.display(),
+                        e
+                    );
+                    ThemeConfig::default()
+                }
             }
-        },
+        }
         Err(e) => {
             eprintln!(
                 "Warning: Could not read theme file ({}), using defaults: {}",
@@ -319,66 +336,67 @@ pub fn load_theme() -> ThemeConfig {
 
 /// Generate default theme file content with comments
 fn generate_default_theme_json() -> String {
-    r#"{
-  "// Theme Configuration": "Customize the colors of memtui",
-  "// Colors are specified as RGB objects: { \"r\": 0-255, \"g\": 0-255, \"b\": 0-255 }",
-
+    r#"// Theme Configuration for memtui
+// Customize the colors by editing this file.
+// Colors are specified as RGB objects: { "r": 0-255, "g": 0-255, "b": 255 }
+// Lines starting with // are comments and will be ignored.
+{
   "accent": {
-    "// primary": "Main accent color (used for active borders, highlights)",
+    // Main accent color (used for active borders, highlights)
     "primary": { "r": 80, "g": 200, "b": 220 },
-    "// dim": "Dimmed accent for secondary elements",
+    // Dimmed accent for secondary elements
     "dim": { "r": 60, "g": 150, "b": 170 },
-    "// bright": "Bright accent for emphasis",
+    // Bright accent for emphasis
     "bright": { "r": 100, "g": 220, "b": 240 }
   },
 
   "neon": {
-    "// green": "Success, connected status",
+    // Success, connected status
     "green": { "r": 57, "g": 255, "b": 20 },
-    "// amber": "Warnings, connecting status",
+    // Warnings, connecting status
     "amber": { "r": 255, "g": 191, "b": 0 },
-    "// red": "Errors",
+    // Errors
     "red": { "r": 255, "g": 80, "b": 80 },
-    "// purple": "Special elements, palette borders",
+    // Special elements, palette borders
     "purple": { "r": 160, "g": 100, "b": 220 },
-    "// cyan": "Key bindings, accents",
+    // Key bindings, accents
     "cyan": { "r": 0, "g": 255, "b": 255 },
-    "// pink": "Logo gradient, special highlights",
+    // Logo gradient, special highlights
     "pink": { "r": 255, "g": 100, "b": 150 },
-    "// electric_blue": "JSON values",
+    // JSON values
     "electric_blue": { "r": 80, "g": 180, "b": 255 }
   },
 
   "background": {
-    "// deep": "Main background color",
+    // Main background color
     "deep": { "r": 12, "g": 14, "b": 22 },
-    "// panel": "Panel backgrounds",
+    // Panel backgrounds
     "panel": { "r": 18, "g": 21, "b": 32 },
-    "// surface": "Elevated surfaces, cards",
+    // Elevated surfaces, cards
     "surface": { "r": 26, "g": 30, "b": 44 },
-    "// selected": "Selected item background",
+    // Selected item background
     "selected": { "r": 35, "g": 45, "b": 65 },
-    "// elevated": "Elevated/highlighted state",
+    // Elevated/highlighted state
     "elevated": { "r": 40, "g": 50, "b": 70 },
-    "// hover": "Hover state",
+    // Hover state
     "hover": { "r": 45, "g": 55, "b": 75 }
   },
 
   "text": {
-    "// dim": "Least important text",
+    // Least important text
     "dim": { "r": 90, "g": 100, "b": 120 },
-    "// secondary": "Secondary text",
+    // Secondary text
     "secondary": { "r": 140, "g": 150, "b": 170 },
-    "// primary": "Main text color",
+    // Main text color
     "primary": { "r": 210, "g": 215, "b": 230 },
-    "// bright": "Most important text",
+    // Most important text
     "bright": { "r": 245, "g": 248, "b": 255 }
   },
 
   "border": {
-    "// dim": "Inactive borders",
+    // Inactive borders
     "dim": { "r": 50, "g": 58, "b": 78 },
-    "// active": "Active/focused borders",
+    // Active/focused borders
     "active": { "r": 80, "g": 200, "b": 220 }
   }
 }
@@ -434,17 +452,20 @@ pub fn load_keybindings() -> KeybindingsConfig {
     }
 
     match fs::read_to_string(&file_path) {
-        Ok(contents) => match serde_json::from_str::<KeybindingsConfig>(&contents) {
-            Ok(user_config) => KeybindingsConfig::merge(defaults, user_config),
-            Err(e) => {
-                eprintln!(
-                    "Warning: Invalid keybindings file ({}), using defaults: {}",
-                    file_path.display(),
-                    e
-                );
-                defaults
+        Ok(contents) => {
+            let stripped = strip_json_comments(&contents);
+            match serde_json::from_str::<KeybindingsConfig>(&stripped) {
+                Ok(user_config) => KeybindingsConfig::merge(defaults, user_config),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Invalid keybindings file ({}), using defaults: {}",
+                        file_path.display(),
+                        e
+                    );
+                    defaults
+                }
             }
-        },
+        }
         Err(e) => {
             eprintln!(
                 "Warning: Could not read keybindings file ({}), using defaults: {}",
@@ -458,8 +479,14 @@ pub fn load_keybindings() -> KeybindingsConfig {
 
 /// Generate default keybindings file content with comments
 fn generate_default_keybindings_json() -> String {
-    r#"{
-  "_comment": "Customize keyboard shortcuts for memtui. Commands use dot-separated names (e.g., 'quit.show', 'search.start'). Keys can be simple ('q', 'esc') or with modifiers ('ctrl+p', 'shift+tab'). Only specify bindings you want to override; others will use defaults.",
+    r#"// Keybindings Configuration for memtui
+// Customize keyboard shortcuts by editing this file.
+// Commands use dot-separated names (e.g., 'quit.show', 'search.start').
+// Keys can be simple ('q', 'esc') or with modifiers ('ctrl+p', 'shift+tab').
+// Only specify bindings you want to override; others will use defaults.
+// Lines starting with // are comments and will be ignored.
+{
+  // Default context - active when no overlay is shown
   "default": {
     "quit.show": ["q", "esc"],
     "help.toggle": ["?"],
@@ -476,18 +503,24 @@ fn generate_default_keybindings_json() -> String {
     "pane.resize.left": ["ctrl+h"],
     "pane.resize.right": ["ctrl+l"]
   },
+
+  // Search mode - active when search input is focused
   "search": {
     "search.clear": ["esc"],
     "search.next_result": ["down", "j", "tab"],
     "search.prev_result": ["up", "k", "shift+tab"],
     "search.confirm": ["enter"]
   },
+
+  // Connection form - active when adding/editing a connection
   "connection_form": {
     "connection.form.submit": ["enter"],
     "connection.form.close": ["esc"],
     "connection.form.next_field": ["tab"],
     "connection.form.prev_field": ["shift+tab"]
   },
+
+  // Connection palette - active when the connection palette is open
   "connection_palette": {
     "connection.palette.close": ["esc"],
     "connection.palette.select": ["enter"],
@@ -499,10 +532,14 @@ fn generate_default_keybindings_json() -> String {
     "connection.palette.toggle": ["ctrl+p"],
     "connection.form.open": ["ctrl+n"]
   },
+
+  // Quit confirmation dialog
   "quit_confirmation": {
     "quit.confirm": ["y", "Y", "enter"],
     "quit.cancel": ["n", "N", "esc"]
   },
+
+  // Welcome screen - shown on startup
   "welcome": {
     "navigation.next_item": ["down", "j"],
     "navigation.prev_item": ["up", "k"],

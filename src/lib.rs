@@ -1,6 +1,7 @@
 pub mod action;
 pub mod app;
 pub mod backend;
+pub mod cli;
 pub mod config;
 pub mod formatter;
 pub mod keybindings;

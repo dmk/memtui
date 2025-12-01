@@ -1,3 +1,4 @@
+use clap::Parser;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
@@ -10,6 +11,7 @@ use ratatui::layout::Rect;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Once};
 use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -19,6 +21,7 @@ use tracing_subscriber::EnvFilter;
 use memtui::action::Action;
 use memtui::app::{AppState, ConnectionStatus};
 use memtui::backend::{Backend, EtcdBackend, MemcachedBackend, RedisBackend};
+use memtui::cli::{parse_connection_string, Cli, LogLevel};
 use memtui::config::Config;
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
 use memtui::search::fuzzy_search_keys;
@@ -34,20 +37,22 @@ pub struct App {
     pub config: Config,
     pub keybindings: KeybindingsConfig,
     needs_render: bool,
-}
-
-impl Default for App {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// ID of temporary connection (from CLI connection string), if any
+    temp_connection_id: Option<String>,
+    /// Connection name to auto-connect to on startup
+    auto_connect_name: Option<String>,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(cli: &Cli) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
 
-        // Load configuration
-        let config = userdata::load_config();
+        // Load configuration from custom path or default
+        let config = if let Some(ref config_path) = cli.config {
+            userdata::load_config_from_path(config_path)
+        } else {
+            userdata::load_config()
+        };
 
         // Load keybindings
         let keybindings = userdata::load_keybindings();
@@ -64,6 +69,43 @@ impl App {
             ui_state.recent_connection_ids = recents;
         }
 
+        let mut temp_connection_id = None;
+        let mut auto_connect_name = None;
+
+        // Handle CLI connection string (temporary, unsaved connection)
+        if let Some(ref conn_str) = cli.connection_string {
+            match parse_connection_string(conn_str) {
+                Ok(parsed) => {
+                    let temp_config = parsed.to_config(config.connection.default_timeout);
+                    temp_connection_id = Some(temp_config.id.clone());
+                    ui_state.show_temp_connection_warning = true;
+                    app_state.connection_manager.add_connection(temp_config.clone());
+                    // Auto-connect to this temporary connection
+                    auto_connect_name = Some(temp_config.id.clone());
+                }
+                Err(e) => {
+                    eprintln!("Error parsing connection string: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        // Handle CLI connect by name
+        if let Some(ref name) = cli.connect {
+            // Find connection by name
+            let configs = app_state.connection_manager.get_configs();
+            if let Some(cfg) = configs.iter().find(|c| c.name == *name) {
+                auto_connect_name = Some(cfg.id.clone());
+            } else {
+                eprintln!("Connection not found: {}", name);
+                eprintln!("Available connections:");
+                for cfg in configs {
+                    eprintln!("  - {}", cfg.name);
+                }
+                std::process::exit(1);
+            }
+        }
+
         let configs = app_state.connection_manager.get_configs();
         if !configs.is_empty() {
             ui_state.connection_list.state.select(Some(0));
@@ -77,7 +119,19 @@ impl App {
             config,
             keybindings,
             needs_render: true, // Render on first loop iteration
+            temp_connection_id,
+            auto_connect_name,
         }
+    }
+
+    /// Get the auto-connect target, if any
+    pub fn take_auto_connect(&mut self) -> Option<String> {
+        self.auto_connect_name.take()
+    }
+
+    /// Check if a connection is temporary (from CLI, not saved)
+    pub fn is_temp_connection(&self, id: &str) -> bool {
+        self.temp_connection_id.as_deref() == Some(id)
     }
 
     pub async fn run(
@@ -1609,18 +1663,25 @@ impl App {
     }
 }
 
-fn init_tracing() {
+fn init_tracing(log_file: Option<&PathBuf>, log_level: LogLevel) {
     static TRACING: Once = Once::new();
     TRACING.call_once(|| {
+        // Only initialize tracing if a log file is specified
+        let Some(log_path) = log_file else {
+            return;
+        };
+
+        // Build filter from CLI log level, but allow RUST_LOG to override
+        let level_str = format!("memtui={}", log_level);
         let env_filter = EnvFilter::try_from_default_env()
-            .or_else(|_| EnvFilter::try_new("memtui=info,memtui::ui=debug"))
+            .or_else(|_| EnvFilter::try_new(&level_str))
             .unwrap_or_else(|_| EnvFilter::new("info"));
 
-        // Write logs directly to file
+        // Write logs to specified file
         if let Ok(file) = OpenOptions::new()
             .create(true)
             .append(true)
-            .open("memtui.log")
+            .open(log_path)
         {
             tracing_subscriber::fmt()
                 .with_env_filter(env_filter)
@@ -1630,20 +1691,18 @@ fn init_tracing() {
                 .try_init()
                 .ok();
         } else {
-            // Fallback to stderr if file can't be opened
-            tracing_subscriber::fmt()
-                .with_env_filter(env_filter)
-                .with_target(true)
-                .with_ansi(false)
-                .try_init()
-                .ok();
+            eprintln!("Warning: Could not open log file: {}", log_path.display());
         }
     });
 }
 
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
-    init_tracing();
+    // Parse CLI arguments
+    let cli = Cli::parse();
+
+    // Initialize tracing (only if log file specified)
+    init_tracing(cli.log_file.as_ref(), cli.log_level);
 
     // Load and initialize the theme before any rendering
     let theme = userdata::load_theme();
@@ -1665,8 +1724,14 @@ async fn main() -> Result<(), io::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new();
+    let mut app = App::new(&cli);
     info!("memtui initialized");
+
+    // Handle auto-connect from CLI
+    if let Some(id) = app.take_auto_connect() {
+        let _ = app.action_tx.send(Action::FocusConnection(id));
+    }
+
     let res = app.run(&mut terminal).await;
 
     // Restore terminal

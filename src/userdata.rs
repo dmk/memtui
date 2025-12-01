@@ -123,15 +123,28 @@ pub fn load_config() -> Config {
         Err(_) => return Config::default(),
     };
 
+    load_config_from_path(&file_path)
+}
+
+/// Load configuration from a specific path
+/// Returns default config if file doesn't exist or is invalid
+pub fn load_config_from_path(file_path: &PathBuf) -> Config {
     if !file_path.exists() {
-        // Create default config file for user reference
-        if let Err(e) = save_config(&Config::default()) {
-            eprintln!("Warning: Could not create default config file: {}", e);
+        // Only create default if using standard path
+        if file_path == &get_config_file().unwrap_or_default() {
+            if let Err(e) = save_config(&Config::default()) {
+                eprintln!("Warning: Could not create default config file: {}", e);
+            }
+        } else {
+            eprintln!(
+                "Warning: Config file not found: {}",
+                file_path.display()
+            );
         }
         return Config::default();
     }
 
-    match fs::read_to_string(&file_path) {
+    match fs::read_to_string(file_path) {
         Ok(contents) => match toml::from_str(&contents) {
             Ok(config) => config,
             Err(e) => {

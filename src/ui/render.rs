@@ -52,11 +52,18 @@ pub fn render(
         .map(|config| config.backend_type == BackendType::Memcached)
         .unwrap_or(false);
 
+    // Check for temporary connection warning (from CLI connection string)
+    let show_temp_connection_warning = ui_state.show_temp_connection_warning;
+
+    // Calculate warning height (can show multiple warnings)
+    let warning_height = if show_memcached_warning { 1 } else { 0 }
+        + if show_temp_connection_warning { 1 } else { 0 };
+
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(if show_tabs { 3 } else { 0 }), // Tabs with more space
-            Constraint::Length(if show_memcached_warning { 1 } else { 0 }),
+            Constraint::Length(warning_height),
             Constraint::Min(0),    // Body
             Constraint::Length(2), // Status bar with more space
         ])
@@ -74,13 +81,50 @@ pub fn render(
         render_tabs(f, app_state, ui_state, tab_area);
     }
 
-    if show_memcached_warning {
-        let mut warning_component = WarningMessage::new();
-        let warning_props = WarningMessageProps {
-            kind: MessageKind::Warning,
-            message: "Memcached doesn't provide native key listing. Keys may not be consistent.",
-        };
-        warning_component.render(f, warning_area, warning_props);
+    // Render warnings
+    if warning_height > 0 {
+        let warning_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(
+                [
+                    if show_temp_connection_warning {
+                        Constraint::Length(1)
+                    } else {
+                        Constraint::Length(0)
+                    },
+                    if show_memcached_warning {
+                        Constraint::Length(1)
+                    } else {
+                        Constraint::Length(0)
+                    },
+                ]
+                .iter()
+                .filter(|c| !matches!(c, Constraint::Length(0)))
+                .cloned()
+                .collect::<Vec<_>>(),
+            )
+            .split(warning_area);
+
+        let mut chunk_idx = 0;
+
+        if show_temp_connection_warning {
+            let mut warning_component = WarningMessage::new();
+            let warning_props = WarningMessageProps {
+                kind: MessageKind::Warning,
+                message: "Temporary connection (from CLI) — this connection will not be saved.",
+            };
+            warning_component.render(f, warning_chunks[chunk_idx], warning_props);
+            chunk_idx += 1;
+        }
+
+        if show_memcached_warning && chunk_idx < warning_chunks.len() {
+            let mut warning_component = WarningMessage::new();
+            let warning_props = WarningMessageProps {
+                kind: MessageKind::Warning,
+                message: "Memcached doesn't provide native key listing. Keys may not be consistent.",
+            };
+            warning_component.render(f, warning_chunks[chunk_idx], warning_props);
+        }
     }
 
     if app_state.connection_manager.get_active_id().is_some() {

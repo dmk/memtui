@@ -49,6 +49,9 @@ pub struct UiState {
     pub is_resizing: bool,
     /// Last body area for resize calculations
     pub last_body_area: Option<Rect>,
+
+    /// Show warning for temporary CLI connection (won't be saved)
+    pub show_temp_connection_warning: bool,
 }
 
 impl UiState {
@@ -78,6 +81,8 @@ impl UiState {
             pane_split: PaneSplit::default(),
             is_resizing: false,
             last_body_area: None,
+
+            show_temp_connection_warning: false,
         }
     }
 

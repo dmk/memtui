@@ -27,11 +27,12 @@ impl EventRunner {
         let event_bus = EventBus::new(action_tx);
         let cancel_token = CancellationToken::new();
 
-        // Spawn the event poller
+        // Spawn the event poller with cancel token
         let _poller = spawn_event_poller(
             raw_tx,
             config.performance.event_poll_timeout,
             config.performance.event_loop_sleep,
+            cancel_token.clone(),
         );
 
         Self {

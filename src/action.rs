@@ -1,6 +1,5 @@
 use crate::backend::Backend;
 use crate::types::{ConnectionConfig, KeyMetadata, KeyScanResult, Value};
-use crossterm::event::{KeyEvent, MouseEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -14,15 +13,6 @@ pub enum Action {
     ShowQuitConfirmation,
     ConfirmQuit,
     CancelQuit,
-
-    // User Inputs
-    Key(KeyEvent),
-    Mouse(MouseEvent),
-    Scroll {
-        column: u16,
-        row: u16,
-        delta: isize,
-    },
 
     // Navigation
     NextPanel,

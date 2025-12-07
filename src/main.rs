@@ -1,7 +1,7 @@
 use clap::Parser;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
+        self, DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, MouseButton,
         MouseEvent, MouseEventKind,
     },
     execute,
@@ -14,16 +14,15 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Once;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
 use memtui::action::Action;
 use memtui::actions::{async_handlers, sync_handlers};
-use memtui::app::{sync_event_context, AppState};
+use memtui::app::{sync_event_context, AppState, EventRunner};
 use memtui::cli::{parse_connection_string, Cli, LogLevel};
 use memtui::config::Config;
-use memtui::events::EventContext;
+use memtui::events::{Event, EventKind};
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
 use memtui::types::ConnectionConfig;
 use memtui::ui::{self, init_theme, Panel, UiState};
@@ -41,8 +40,6 @@ pub struct App {
     temp_connection_id: Option<String>,
     /// Connection name to auto-connect to on startup
     auto_connect_name: Option<String>,
-    /// Event context for the new event system
-    event_context: EventContext,
 }
 
 impl App {
@@ -125,7 +122,6 @@ impl App {
             needs_render: true, // Render on first loop iteration
             temp_connection_id,
             auto_connect_name,
-            event_context: EventContext::default(),
         }
     }
 
@@ -144,86 +140,16 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     ) -> io::Result<()> {
         let tick_interval = self.config.performance.tick_interval;
-        let event_poll_timeout = self.config.performance.event_poll_timeout;
-        let event_loop_sleep = self.config.performance.event_loop_sleep;
 
         info!(
             tick_interval=?tick_interval,
-            event_poll_timeout=?event_poll_timeout,
-            event_loop_sleep=?event_loop_sleep,
-            "Starting app event loop"
+            "Starting app event loop with EventRunner"
         );
 
         let mut interval = tokio::time::interval(tick_interval);
 
-        let tx = self.action_tx.clone();
-
-        // Create a cancellation token for clean shutdown
-        let cancel_token = CancellationToken::new();
-        let cancel_token_clone = cancel_token.clone();
-
-        let event_loop_handle = tokio::spawn(async move {
-            // Maximum events to process in a single batch to prevent starvation
-            const MAX_EVENTS_PER_BATCH: usize = 20;
-
-            loop {
-                tokio::select! {
-                    _ = cancel_token_clone.cancelled() => {
-                        info!("Event loop task cancelled");
-                        // Drain any remaining events from crossterm buffer before exiting
-                        while event::poll(std::time::Duration::ZERO).unwrap_or(false) {
-                            let _ = event::read();
-                        }
-                        break;
-                    }
-                    _ = tokio::time::sleep(event_loop_sleep) => {
-                        // Process up to MAX_EVENTS_PER_BATCH events per iteration
-                        // This prevents event pile-up during aggressive scrolling
-                        let mut events_processed = 0;
-                        while events_processed < MAX_EVENTS_PER_BATCH
-                            && event::poll(event_poll_timeout).unwrap_or(false)
-                        {
-                            events_processed += 1;
-                            if let Ok(event) = event::read() {
-                                match event {
-                                    Event::Key(key) => {
-                                        let _ = tx.send(Action::Key(key));
-                                    }
-                                    Event::Mouse(mouse) => {
-                                        match mouse.kind {
-                                            MouseEventKind::ScrollDown => {
-                                                // Send scroll events immediately for responsive scrolling
-                                                let _ = tx.send(Action::Scroll {
-                                                    column: mouse.column,
-                                                    row: mouse.row,
-                                                    delta: 1,
-                                                });
-                                            }
-                                            MouseEventKind::ScrollUp => {
-                                                // Send scroll events immediately for responsive scrolling
-                                                let _ = tx.send(Action::Scroll {
-                                                    column: mouse.column,
-                                                    row: mouse.row,
-                                                    delta: -1,
-                                                });
-                                            }
-                                            _ => {
-                                                // Forward non-scroll mouse events as normal
-                                                let _ = tx.send(Action::Mouse(mouse));
-                                            }
-                                        }
-                                    }
-                                    Event::Resize(w, h) => {
-                                        let _ = tx.send(Action::Resize(w, h));
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        // Create EventRunner for event-based architecture
+        let mut event_runner = EventRunner::new(self.action_tx.clone(), &self.config);
 
         loop {
             // Only render when state has changed
@@ -238,22 +164,43 @@ impl App {
                 })?;
                 self.needs_render = false;
 
-                // Sync event context with current UI state (for new event system)
-                sync_event_context(&mut self.event_context, &self.ui_state, &self.app_state);
+                // Sync event context with current UI state
+                event_runner.update_context(|ctx| {
+                    sync_event_context(ctx, &self.ui_state, &self.app_state);
+                });
             }
 
+            // Wait for events, actions from async tasks, or tick
             let action = tokio::select! {
-                _ = interval.tick() => Action::Tick,
+                biased;
+                // Priority 1: Actions from async tasks (LoadKeys results, etc.)
                 Some(action) = self.action_rx.recv() => action,
+                // Priority 2: Input events from EventRunner
+                Some(event) = event_runner.poll() => {
+                    let actions = self.dispatch_event(&event);
+                    // Process all actions from this event
+                    for action in actions {
+                        // Check for quit before processing
+                        if matches!(action, Action::ConfirmQuit) {
+                            info!("Quit confirmed from event dispatch, cancelling event runner");
+                            event_runner.cancel();
+                            return Ok(());
+                        }
+                        self.update(action).await;
+                    }
+                    // Continue loop without waiting for tick
+                    self.needs_render = true;
+                    continue;
+                },
+                // Priority 3: Tick for animations
+                _ = interval.tick() => Action::Tick,
             };
 
             if let Action::ConfirmQuit = action {
                 // Drain any pending actions from the channel to ensure clean shutdown
-                // This prevents stale events from interfering
                 let mut drained = 0;
                 while let Ok(pending) = self.action_rx.try_recv() {
                     drained += 1;
-                    // Log non-tick/quit actions that are being drained
                     if !matches!(pending, Action::ConfirmQuit | Action::Tick) {
                         debug!("Draining pending action during quit");
                     }
@@ -262,12 +209,8 @@ impl App {
                     debug!(drained, "Drained pending actions before quit");
                 }
 
-                info!("Quit confirmed, cancelling event loop task");
-                cancel_token.cancel();
-                // Wait for the event loop task to finish
-                if let Err(e) = event_loop_handle.await {
-                    warn!("Event loop task join error: {}", e);
-                }
+                info!("Quit confirmed, cancelling event runner");
+                event_runner.cancel();
                 break;
             }
 
@@ -276,6 +219,392 @@ impl App {
         info!("Event loop finished");
         Ok(())
     }
+
+    /// Dispatch an event to the appropriate component based on focus
+    /// This is the central hub for all event handling and keybinding translation
+    fn dispatch_event(&mut self, event: &Event) -> Vec<Action> {
+        use memtui::ui::components::Component;
+
+        // Handle non-key events first (mouse, scroll, resize)
+        match &event.kind {
+            EventKind::Mouse(mouse) => {
+                return self.dispatch_mouse_event(*mouse);
+            }
+            EventKind::Scroll { column, row, delta } => {
+                return self.dispatch_scroll_event(*column, *row, *delta);
+            }
+            EventKind::Resize(w, h) => {
+                return vec![Action::Resize(*w, *h)];
+            }
+            EventKind::Tick => {
+                return vec![Action::Tick];
+            }
+            EventKind::Key(_) => {} // Handle below
+        }
+
+        // Key events - route based on focused component
+        let EventKind::Key(key) = &event.kind else {
+            return vec![];
+        };
+
+        // 1. Connection Form - handles text input directly
+        if self.ui_state.show_connection_form {
+            return self.dispatch_connection_form_key(*key);
+        }
+
+        // 2. Help screen - any key closes it
+        if self.ui_state.show_help {
+            return vec![Action::ToggleHelp];
+        }
+
+        // 3. Quit confirmation
+        if self.ui_state.show_quit_confirmation {
+            return self.dispatch_quit_confirmation_key(*key);
+        }
+
+        // 4. Connection palette
+        if self.ui_state.show_connection_palette {
+            return self.dispatch_connection_palette_key(*key);
+        }
+
+        // 5. No active connection - welcome screen
+        if self.app_state.connection_manager.get_active_id().is_none() {
+            let configs = self.app_state.connection_manager.get_configs();
+            let recent_configs: Vec<_> = self
+                .ui_state
+                .recent_connection_ids
+                .iter()
+                .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
+                .collect();
+
+            let props = memtui::ui::components::welcome::WelcomeScreenProps {
+                recent_configs,
+                animation: &self.ui_state.animation,
+                keybindings: &self.keybindings,
+            };
+
+            let actions = self.ui_state.welcome_screen.handle_event(event, props);
+            if !actions.is_empty() {
+                return actions;
+            }
+            // Fall through to keybinding lookup
+            return self.dispatch_keybinding(*key, BindingContext::Welcome);
+        }
+
+        // 6. Search mode - special handling
+        if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
+            return self.dispatch_search_key(*key);
+        }
+
+        // 7. Main panels - key_list or value_viewer based on active panel
+        match self.ui_state.active_panel {
+            Panel::Keys => {
+                let backend_type = self
+                    .app_state
+                    .connection_manager
+                    .get_active_id()
+                    .and_then(|id| self.app_state.connection_manager.get_config(id))
+                    .map(|config| config.backend_type);
+
+                let active_search_query =
+                    if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
+                        Some(self.app_state.search_query.as_str())
+                    } else {
+                        None
+                    };
+
+                let props = memtui::ui::components::key_list::KeyListProps {
+                    keys: &self.app_state.keys,
+                    total_count: self.app_state.total_key_count,
+                    is_loading: self.app_state.is_loading_keys,
+                    active_search_query,
+                    is_active: true,
+                    backend_type,
+                    is_searching: self.app_state.is_searching,
+                    search_results_local: &self.app_state.search_results_local,
+                    search_results_server: &self.app_state.search_results_server,
+                    is_server_searching: self.app_state.is_server_searching,
+                    search_selection_index: self.app_state.search_selection_index,
+                    animation: &self.ui_state.animation,
+                    search_match_positions: &self.app_state.search_match_positions,
+                };
+
+                let actions = self.ui_state.key_list.handle_event(event, props);
+                if !actions.is_empty() {
+                    return actions;
+                }
+            }
+            Panel::Value => {
+                // Value viewer scroll handling
+                if let KeyCode::Down | KeyCode::Up | KeyCode::Char('j') | KeyCode::Char('k') = key.code {
+                    return self.dispatch_value_viewer_key(*key);
+                }
+            }
+        }
+
+        // Fall back to default keybinding lookup
+        self.dispatch_keybinding(*key, BindingContext::Default)
+    }
+
+    /// Dispatch key event for connection form
+    fn dispatch_connection_form_key(&mut self, key: event::KeyEvent) -> Vec<Action> {
+        // Handle text input directly on form fields
+        self.ui_state.connection_form.handle_key_event(key);
+
+        // Also check keybindings for form commands (Tab, Shift+Tab, Enter, Escape)
+        self.dispatch_keybinding(key, BindingContext::ConnectionForm)
+    }
+
+    /// Dispatch key event for quit confirmation
+    fn dispatch_quit_confirmation_key(&mut self, key: event::KeyEvent) -> Vec<Action> {
+        self.dispatch_keybinding(key, BindingContext::QuitConfirmation)
+    }
+
+    /// Dispatch key event for connection palette
+    fn dispatch_connection_palette_key(&mut self, key: event::KeyEvent) -> Vec<Action> {
+        // Handle navigation directly
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                let len = self.app_state.connection_manager.get_configs().len();
+                if len > 0 {
+                    self.ui_state.connection_list.next(len);
+                }
+                return vec![Action::Tick]; // Indicate handled
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                let len = self.app_state.connection_manager.get_configs().len();
+                if len > 0 {
+                    self.ui_state.connection_list.prev(len);
+                }
+                return vec![Action::Tick]; // Indicate handled
+            }
+            KeyCode::Enter => {
+                if let Some(idx) = self.ui_state.connection_list.state.selected() {
+                    let configs = self.app_state.connection_manager.get_configs();
+                    if let Some(config) = configs.get(idx) {
+                        let id = config.id.clone();
+                        self.ui_state.close_connection_palette();
+                        return vec![Action::FocusConnection(id)];
+                    }
+                }
+                return vec![];
+            }
+            _ => {}
+        }
+
+        // Fall back to keybindings
+        self.dispatch_keybinding(key, BindingContext::ConnectionPalette)
+    }
+
+    /// Dispatch key event for search mode
+    fn dispatch_search_key(&mut self, key: event::KeyEvent) -> Vec<Action> {
+        // Handle text input
+        match key.code {
+            KeyCode::Backspace if self.app_state.is_searching => {
+                return vec![Action::SearchDeleteChar];
+            }
+            KeyCode::Char(c) if self.app_state.is_searching && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return vec![Action::SearchAddChar(c)];
+            }
+            _ => {}
+        }
+
+        // Check keybindings
+        self.dispatch_keybinding(key, BindingContext::Search)
+    }
+
+    /// Dispatch key event for value viewer
+    fn dispatch_value_viewer_key(&mut self, key: event::KeyEvent) -> Vec<Action> {
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.ui_state.value_viewer.scroll_down();
+                vec![Action::Tick]
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.ui_state.value_viewer.scroll_up();
+                vec![Action::Tick]
+            }
+            _ => vec![],
+        }
+    }
+
+    /// Dispatch mouse event
+    fn dispatch_mouse_event(&mut self, mouse: MouseEvent) -> Vec<Action> {
+        // Skip mouse handling for modals
+        if self.ui_state.show_connection_form
+            || self.ui_state.show_help
+            || self.ui_state.show_quit_confirmation
+        {
+            return vec![];
+        }
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Check resize handle
+                if let Some(body_area) = self.ui_state.last_body_area {
+                    if self.ui_state.pane_split.is_on_handle(body_area, mouse.column)
+                        && mouse.row >= body_area.y
+                        && mouse.row < body_area.y + body_area.height
+                    {
+                        self.ui_state.start_resize();
+                        return vec![Action::Tick];
+                    }
+                }
+                // Delegate to existing click handler
+                self.handle_mouse_click(mouse.column, mouse.row);
+                vec![Action::Tick]
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.ui_state.end_resize();
+                vec![Action::Tick]
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.ui_state.is_resizing {
+                    if let Some(body_area) = self.ui_state.last_body_area {
+                        // Calculate new ratio based on mouse position
+                        let relative_x = mouse.column.saturating_sub(body_area.x) as f32;
+                        let new_ratio = relative_x / body_area.width as f32;
+                        self.ui_state.pane_split.ratio = new_ratio.clamp(
+                            self.ui_state.pane_split.min,
+                            self.ui_state.pane_split.max,
+                        );
+                    }
+                }
+                vec![Action::Tick]
+            }
+            _ => vec![],
+        }
+    }
+
+    /// Dispatch scroll event
+    fn dispatch_scroll_event(&mut self, column: u16, row: u16, delta: isize) -> Vec<Action> {
+        // Determine which component to scroll based on mouse position
+        if let Some(key_area) = self.ui_state.last_key_area {
+            if column >= key_area.x
+                && column < key_area.x + key_area.width
+                && row >= key_area.y
+                && row < key_area.y + key_area.height
+            {
+                // Scroll in key list
+                let total_count = self
+                    .app_state
+                    .total_key_count
+                    .map(|t| t as usize)
+                    .unwrap_or(self.app_state.keys.len());
+
+                if total_count > 0 {
+                    let current = self.ui_state.key_list.state.selected().unwrap_or(0);
+                    let new_index = if delta > 0 {
+                        let next = current.saturating_add(delta.unsigned_abs());
+                        if next >= total_count {
+                            0
+                        } else {
+                            next
+                        }
+                    } else {
+                        let amount = delta.unsigned_abs();
+                        if amount > current {
+                            total_count.saturating_sub(1)
+                        } else {
+                            current - amount
+                        }
+                    };
+
+                    if new_index != current {
+                        self.ui_state.key_list.select(Some(new_index));
+                        return vec![Action::SelectKey(new_index)];
+                    }
+                }
+                return vec![Action::Tick];
+            }
+        }
+
+        if let Some(value_area) = self.ui_state.last_value_area {
+            if column >= value_area.x
+                && column < value_area.x + value_area.width
+                && row >= value_area.y
+                && row < value_area.y + value_area.height
+            {
+                // Scroll in value viewer
+                if delta > 0 {
+                    for _ in 0..delta.unsigned_abs() {
+                        self.ui_state.value_viewer.scroll_down();
+                    }
+                } else {
+                    for _ in 0..delta.unsigned_abs() {
+                        self.ui_state.value_viewer.scroll_up();
+                    }
+                }
+                return vec![Action::Tick];
+            }
+        }
+
+        vec![]
+    }
+
+    /// Translate key to action via keybindings config
+    fn dispatch_keybinding(&self, key: event::KeyEvent, context: BindingContext) -> Vec<Action> {
+        if let Some(command) = self.keybindings.get_command(key, context) {
+            if let Some(action) = self.command_to_action(&command) {
+                return vec![action];
+            }
+        }
+        vec![]
+    }
+
+    /// Convert a command string to an Action
+    fn command_to_action(&self, command: &str) -> Option<Action> {
+        match command {
+            // Quit commands
+            "quit.show" => Some(Action::ShowQuitConfirmation),
+            "quit.confirm" => Some(Action::ConfirmQuit),
+            "quit.cancel" => Some(Action::CancelQuit),
+
+            // Help
+            "help.toggle" => Some(Action::ToggleHelp),
+
+            // Search commands
+            "search.start" => {
+                if self.app_state.connection_manager.get_active_id().is_some()
+                    && !self.app_state.keys.is_empty()
+                {
+                    Some(Action::StartSearch)
+                } else {
+                    None
+                }
+            }
+            "search.clear" => Some(Action::ClearSearch),
+            "search.confirm" => Some(Action::Tick), // Just render, is_searching handled by update
+
+            // Navigation commands
+            "navigation.next_panel" => Some(Action::NextPanel),
+            "navigation.prev_panel" => Some(Action::PrevPanel),
+            "navigation.next_item" => Some(Action::NextItem),
+            "navigation.prev_item" => Some(Action::PrevItem),
+            "navigation.enter" => Some(Action::Enter),
+
+            // Connection commands
+            "connection.palette.toggle" => {
+                if self.ui_state.show_connection_palette {
+                    Some(Action::CloseConnectionPalette)
+                } else {
+                    Some(Action::OpenConnectionPalette)
+                }
+            }
+            "connection.palette.open" => Some(Action::OpenConnectionPalette),
+            "connection.palette.close" => Some(Action::CloseConnectionPalette),
+            "connection.form.open" => Some(Action::OpenConnectionForm),
+            "connection.form.close" => Some(Action::CloseConnectionForm),
+            "connection.form.submit" => Some(Action::Enter),
+            "connection.form.next_field" => Some(Action::ConnectionFormNextField),
+            "connection.form.prev_field" => Some(Action::ConnectionFormPrevField),
+            "connection.tab.next" => Some(Action::NextConnectionTab),
+            "connection.tab.prev" => Some(Action::PrevConnectionTab),
+
+            _ => None,
+        }
+    }
+
 
     async fn update(&mut self, action: Action) {
         use async_handlers::*;
@@ -287,19 +616,6 @@ impl App {
             Action::Quit => false,
             Action::ConfirmQuit => false,
             Action::Resize(_, _) => true,
-
-            // Input events
-            Action::Key(key) => {
-                self.handle_key(key);
-                true
-            }
-            Action::Mouse(mouse) => {
-                self.handle_mouse(mouse);
-                true
-            }
-            Action::Scroll { column, row, delta } => {
-                self.handle_scroll_coalesced(column, row, delta)
-            }
 
             // UI toggles - delegated to sync_handlers
             Action::ShowQuitConfirmation
@@ -525,419 +841,8 @@ impl App {
         }
     }
 
-    /// Handle scroll with coalescing (drains pending scroll events)
-    fn handle_scroll_coalesced(&mut self, column: u16, row: u16, delta: isize) -> bool {
-        let mut total_delta = delta;
-        let mut last_col = column;
-        let mut last_row = row;
-
-        // Drain and coalesce pending scroll events
-        while let Ok(pending) = self.action_rx.try_recv() {
-            match pending {
-                Action::Scroll {
-                    column: c,
-                    row: r,
-                    delta: d,
-                } => {
-                    let same_direction = (total_delta > 0 && d > 0) || (total_delta < 0 && d < 0);
-                    if same_direction {
-                        total_delta += d;
-                    } else {
-                        total_delta = d;
-                    }
-                    last_col = c;
-                    last_row = r;
-                }
-                other => {
-                    let _ = self.action_tx.send(other);
-                    break;
-                }
-            }
-        }
-
-        self.handle_scroll_delta(last_col, last_row, total_delta)
-    }
-
-    /// Get the current binding context based on UI state
-    fn get_binding_context(&self) -> BindingContext {
-        if self.ui_state.show_connection_form {
-            BindingContext::ConnectionForm
-        } else if self.ui_state.show_quit_confirmation {
-            BindingContext::QuitConfirmation
-        } else if self.ui_state.show_connection_palette {
-            BindingContext::ConnectionPalette
-        } else if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
-            BindingContext::Search
-        } else if self.app_state.connection_manager.get_active_id().is_none()
-            && !self.ui_state.show_connection_palette
-        {
-            BindingContext::Welcome
-        } else {
-            BindingContext::Default
-        }
-    }
-
-    /// Map a command name to an Action and execute it
-    fn execute_command(&mut self, command: &str) -> bool {
-        match command {
-            // Quit commands
-            "quit.show" => {
-                let _ = self.action_tx.send(Action::ShowQuitConfirmation);
-                true
-            }
-            "quit.confirm" => {
-                let _ = self.action_tx.send(Action::ConfirmQuit);
-                true
-            }
-            "quit.cancel" => {
-                let _ = self.action_tx.send(Action::CancelQuit);
-                true
-            }
-
-            // Help
-            "help.toggle" => {
-                let _ = self.action_tx.send(Action::ToggleHelp);
-                true
-            }
-
-            // Search commands
-            "search.start" => {
-                // Only start search when there's an active connection with keys
-                if self.app_state.connection_manager.get_active_id().is_some()
-                    && !self.app_state.keys.is_empty()
-                {
-                    let _ = self.action_tx.send(Action::StartSearch);
-                }
-                true
-            }
-            "search.clear" => {
-                let _ = self.action_tx.send(Action::ClearSearch);
-                true
-            }
-            "search.next_result" => {
-                let results_len = self.app_state.search_results_local.len();
-                if results_len > 0 {
-                    let current = self.app_state.search_selection_index.unwrap_or(0);
-                    let next = if current + 1 >= results_len {
-                        0
-                    } else {
-                        current + 1
-                    };
-                    self.app_state.search_selection_index = Some(next);
-                    if let Some(&key_idx) = self.app_state.search_results_local.get(next) {
-                        let _ = self.action_tx.send(Action::SelectKey(key_idx));
-                    }
-                }
-                true
-            }
-            "search.prev_result" => {
-                let results_len = self.app_state.search_results_local.len();
-                if results_len > 0 {
-                    let current = self.app_state.search_selection_index.unwrap_or(0);
-                    let prev = if current == 0 {
-                        results_len - 1
-                    } else {
-                        current - 1
-                    };
-                    self.app_state.search_selection_index = Some(prev);
-                    if let Some(&key_idx) = self.app_state.search_results_local.get(prev) {
-                        let _ = self.action_tx.send(Action::SelectKey(key_idx));
-                    }
-                }
-                true
-            }
-            "search.confirm" => {
-                // Confirm search and keep results, exit search input mode
-                if self.app_state.is_searching {
-                    self.app_state.is_searching = false;
-                }
-                true
-            }
-
-            // Navigation commands
-            "navigation.next_panel" => {
-                let _ = self.action_tx.send(Action::NextPanel);
-                true
-            }
-            "navigation.prev_panel" => {
-                let _ = self.action_tx.send(Action::PrevPanel);
-                true
-            }
-            "navigation.next_item" => {
-                let context = self.get_binding_context();
-                if context == BindingContext::Welcome {
-                    let configs = self.app_state.connection_manager.get_configs();
-                    let recent_configs: Vec<&ConnectionConfig> = self
-                        .ui_state
-                        .recent_connection_ids
-                        .iter()
-                        .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
-                        .collect();
-                    if !recent_configs.is_empty() {
-                        self.ui_state.welcome_screen.next(recent_configs.len());
-                    }
-                } else if context == BindingContext::ConnectionPalette {
-                    let configs = self.app_state.connection_manager.get_configs();
-                    if !configs.is_empty() {
-                        self.ui_state.connection_list.next(configs.len());
-                    }
-                } else {
-                    let _ = self.action_tx.send(Action::NextItem);
-                }
-                true
-            }
-            "navigation.prev_item" => {
-                let context = self.get_binding_context();
-                if context == BindingContext::Welcome {
-                    let configs = self.app_state.connection_manager.get_configs();
-                    let recent_configs: Vec<&ConnectionConfig> = self
-                        .ui_state
-                        .recent_connection_ids
-                        .iter()
-                        .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
-                        .collect();
-                    if !recent_configs.is_empty() {
-                        self.ui_state.welcome_screen.prev(recent_configs.len());
-                    }
-                } else if context == BindingContext::ConnectionPalette {
-                    let configs = self.app_state.connection_manager.get_configs();
-                    if !configs.is_empty() {
-                        self.ui_state.connection_list.prev(configs.len());
-                    }
-                } else {
-                    let _ = self.action_tx.send(Action::PrevItem);
-                }
-                true
-            }
-            "navigation.enter" => {
-                let context = self.get_binding_context();
-                if context == BindingContext::Welcome {
-                    let configs = self.app_state.connection_manager.get_configs();
-                    let recent_configs: Vec<&ConnectionConfig> = self
-                        .ui_state
-                        .recent_connection_ids
-                        .iter()
-                        .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
-                        .collect();
-                    if let Some(idx) = self.ui_state.welcome_screen.state.selected() {
-                        if let Some(config) = recent_configs.get(idx) {
-                            let _ = self
-                                .action_tx
-                                .send(Action::FocusConnection(config.id.clone()));
-                        }
-                    }
-                } else if context == BindingContext::ConnectionPalette {
-                    let configs = self.app_state.connection_manager.get_configs();
-                    if let Some(idx) = self.ui_state.connection_list.state.selected() {
-                        if let Some(config) = configs.get(idx) {
-                            let _ = self
-                                .action_tx
-                                .send(Action::FocusConnection(config.id.clone()));
-                        }
-                    }
-                } else {
-                    let _ = self.action_tx.send(Action::Enter);
-                }
-                true
-            }
-
-            // Connection commands
-            "connection.palette.toggle" => {
-                let action = if self.ui_state.show_connection_palette {
-                    Action::CloseConnectionPalette
-                } else {
-                    Action::OpenConnectionPalette
-                };
-                let _ = self.action_tx.send(action);
-                true
-            }
-            "connection.palette.open" => {
-                let _ = self.action_tx.send(Action::OpenConnectionPalette);
-                true
-            }
-            "connection.palette.close" => {
-                let _ = self.action_tx.send(Action::CloseConnectionPalette);
-                true
-            }
-            "connection.palette.select" => {
-                let configs = self.app_state.connection_manager.get_configs();
-                if let Some(idx) = self.ui_state.connection_list.state.selected() {
-                    if let Some(config) = configs.get(idx) {
-                        let _ = self
-                            .action_tx
-                            .send(Action::FocusConnection(config.id.clone()));
-                    }
-                }
-                true
-            }
-            "connection.palette.next" => {
-                let configs = self.app_state.connection_manager.get_configs();
-                if !configs.is_empty() {
-                    self.ui_state.connection_list.next(configs.len());
-                }
-                true
-            }
-            "connection.palette.prev" => {
-                let configs = self.app_state.connection_manager.get_configs();
-                if !configs.is_empty() {
-                    self.ui_state.connection_list.prev(configs.len());
-                }
-                true
-            }
-            "connection.palette.delete" => {
-                let configs = self.app_state.connection_manager.get_configs();
-                if let Some(idx) = self.ui_state.connection_list.state.selected() {
-                    if let Some(config) = configs.get(idx) {
-                        let _ = self
-                            .action_tx
-                            .send(Action::DeleteConnection(config.id.clone()));
-                    }
-                }
-                true
-            }
-            "connection.form.open" => {
-                if self.ui_state.show_connection_palette {
-                    let _ = self.action_tx.send(Action::CloseConnectionPalette);
-                }
-                let _ = self.action_tx.send(Action::OpenConnectionForm);
-                true
-            }
-            "connection.form.close" => {
-                let _ = self.action_tx.send(Action::CloseConnectionForm);
-                true
-            }
-            "connection.form.submit" => {
-                let _ = self.action_tx.send(Action::Enter);
-                true
-            }
-            "connection.form.next_field" => {
-                let _ = self.action_tx.send(Action::ConnectionFormNextField);
-                true
-            }
-            "connection.form.prev_field" => {
-                let _ = self.action_tx.send(Action::ConnectionFormPrevField);
-                true
-            }
-            "connection.tab.next" => {
-                let _ = self.action_tx.send(Action::NextConnectionTab);
-                true
-            }
-            "connection.tab.prev" => {
-                let _ = self.action_tx.send(Action::PrevConnectionTab);
-                true
-            }
-
-            // Pane resizing
-            "pane.resize.left" => {
-                self.ui_state.resize_panes(0.05);
-                true
-            }
-            "pane.resize.right" => {
-                self.ui_state.resize_panes(-0.05);
-                true
-            }
-
-            _ => false,
-        }
-    }
-
-    fn handle_key(&mut self, key: event::KeyEvent) {
-        // Handle connection form input - needs direct key event handling for text input
-        if self.ui_state.show_connection_form {
-            self.ui_state.connection_form.handle_key_event(key);
-            // Check keybindings for form-specific commands
-            let context = BindingContext::ConnectionForm;
-            if let Some(command) = self.keybindings.get_command(key, context) {
-                let _ = self.execute_command(&command);
-            }
-            return;
-        }
-
-        // Help screen - any key toggles it
-        if self.ui_state.show_help {
-            let _ = self.action_tx.send(Action::ToggleHelp);
-            return;
-        }
-
-        // Handle search mode input - special handling for character input
-        if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
-            // Handle text input directly
-            match key.code {
-                KeyCode::Backspace if self.app_state.is_searching => {
-                    let _ = self.action_tx.send(Action::SearchDeleteChar);
-                    return;
-                }
-                KeyCode::Char(c)
-                    if self.app_state.is_searching
-                        && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
-                    // Only handle plain character input here, let keybindings handle special keys
-                    let _ = self.action_tx.send(Action::SearchAddChar(c));
-                    return;
-                }
-                _ => {}
-            }
-
-            // Check keybindings for search commands
-            let context = BindingContext::Search;
-            if let Some(command) = self.keybindings.get_command(key, context) {
-                let _ = self.execute_command(&command);
-            }
-            return;
-        }
-
-        // Determine context and look up command in keybindings
-        let context = self.get_binding_context();
-        if let Some(command) = self.keybindings.get_command(key, context) {
-            let _ = self.execute_command(&command);
-        }
-    }
-
-    fn handle_mouse(&mut self, event: MouseEvent) {
-        if self.ui_state.show_connection_form
-            || self.ui_state.show_help
-            || self.ui_state.show_quit_confirmation
-        {
-            return;
-        }
-
-        match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                // Check if clicking on resize handle
-                if let Some(body_area) = self.ui_state.last_body_area {
-                    if self
-                        .ui_state
-                        .pane_split
-                        .is_on_handle(body_area, event.column)
-                        && event.row >= body_area.y
-                        && event.row < body_area.y + body_area.height
-                    {
-                        self.ui_state.start_resize();
-                        return;
-                    }
-                }
-                self.handle_left_click(event.column, event.row);
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                self.ui_state.end_resize();
-            }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                if self.ui_state.is_resizing {
-                    if let Some(body_area) = self.ui_state.last_body_area {
-                        // Calculate new ratio based on mouse position
-                        let relative_x = event.column.saturating_sub(body_area.x) as f32;
-                        let new_ratio = relative_x / body_area.width as f32;
-                        let clamped = new_ratio
-                            .clamp(self.ui_state.pane_split.min, self.ui_state.pane_split.max);
-                        self.ui_state.pane_split.ratio = clamped;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_left_click(&mut self, column: u16, row: u16) {
+    /// Handle mouse click events (called from dispatch_mouse_event)
+    fn handle_mouse_click(&mut self, column: u16, row: u16) {
         if self.ui_state.show_connection_palette {
             if let Some(area) = self.ui_state.connection_palette_area {
                 if Self::point_in_rect(area, column, row) {
@@ -1105,169 +1010,6 @@ impl App {
         };
 
         self.focus_connection(target_id);
-    }
-
-    #[tracing::instrument(skip(self), level = "trace")]
-    fn handle_scroll_delta(&mut self, column: u16, row: u16, delta: isize) -> bool {
-        if delta == 0 {
-            trace!("Scroll delta is zero; ignoring");
-            return false;
-        }
-
-        // Ignore scrolls when modal dialogs are open
-        if self.ui_state.show_quit_confirmation
-            || self.ui_state.show_help
-            || self.ui_state.show_connection_form
-        {
-            return false;
-        }
-
-        if self.ui_state.show_connection_palette {
-            if let Some(area) = self.ui_state.connection_palette_area {
-                if Self::point_in_rect(area, column, row) {
-                    let len = self.app_state.connection_manager.get_configs().len();
-                    if len > 0 {
-                        if delta > 0 {
-                            // Scroll Down (next)
-                            trace!(len, "Scrolling connection palette down");
-                            for _ in 0..delta {
-                                self.ui_state.connection_list.next(len);
-                            }
-                        } else {
-                            // Scroll Up (prev)
-                            trace!(len, "Scrolling connection palette up");
-                            for _ in 0..(-delta) {
-                                self.ui_state.connection_list.prev(len);
-                            }
-                        }
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
-
-        let upward = delta < 0;
-        // We want magnitude for repeated actions
-        let count = delta.unsigned_abs();
-
-        let target_panel = if let Some(area) = self.ui_state.last_key_area {
-            if Self::point_in_rect(area, column, row) {
-                Some(Panel::Keys)
-            } else if let Some(value_area) = self.ui_state.last_value_area {
-                if Self::point_in_rect(value_area, column, row) {
-                    Some(Panel::Value)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else if let Some(area) = self.ui_state.last_value_area {
-            if Self::point_in_rect(area, column, row) {
-                Some(Panel::Value)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if let Some(panel) = target_panel {
-            self.ui_state.active_panel = panel;
-
-            if panel == Panel::Value {
-                // Check if we're at a boundary before processing scroll
-                let scroll_delta = if upward {
-                    -(count as isize)
-                } else {
-                    count as isize
-                };
-
-                if let Some(at_bottom) = self.ui_state.value_viewer.is_at_boundary(scroll_delta) {
-                    if at_bottom {
-                        trace!("Already at bottom; dropping scroll events");
-                    } else {
-                        trace!("Already at top; dropping scroll events");
-                    }
-                    return false; // Drop scroll events when at boundary
-                }
-
-                debug!(?panel, scroll_delta, "Scrolling panel");
-                self.ui_state.scroll_value_by(scroll_delta)
-            } else {
-                // Check if we're in search mode
-                let in_search_mode = !self.app_state.search_query.is_empty();
-
-                if in_search_mode {
-                    // Scroll through search results
-                    let results_len = self.app_state.search_results_local.len();
-                    if results_len == 0 {
-                        trace!("No search results; ignoring scroll");
-                        return false;
-                    }
-
-                    let current = self.app_state.search_selection_index.unwrap_or(0);
-                    let new_index = if upward {
-                        // Scroll up
-                        if current == 0 {
-                            results_len - 1
-                        } else {
-                            current.saturating_sub(count)
-                        }
-                    } else {
-                        // Scroll down
-                        let next = current + count;
-                        if next >= results_len {
-                            0
-                        } else {
-                            next
-                        }
-                    };
-
-                    if new_index != current {
-                        self.app_state.search_selection_index = Some(new_index);
-                        // Load value for selected key
-                        if let Some(&key_idx) = self.app_state.search_results_local.get(new_index) {
-                            let _ = self.action_tx.send(Action::SelectKey(key_idx));
-                        }
-                        return true;
-                    }
-                    false
-                } else {
-                    // Normal mode: scroll through all keys
-                    let keys_len = self
-                        .app_state
-                        .total_key_count
-                        .map(|t| t as usize)
-                        .unwrap_or(self.app_state.keys.len());
-
-                    let scroll_delta = if upward {
-                        -(count as isize)
-                    } else {
-                        count as isize
-                    };
-                    if keys_len == 0 {
-                        trace!("No keys loaded yet; ignoring key scroll");
-                        return false;
-                    }
-                    debug!(?panel, scroll_delta, keys_len, "Scrolling panel");
-                    let changed = self.ui_state.scroll_keys_by(keys_len, scroll_delta);
-
-                    // If selection changed, trigger key selection action
-                    if changed {
-                        if let Some(idx) = self.ui_state.key_list.state.selected() {
-                            let _ = self.action_tx.send(Action::SelectKey(idx));
-                        }
-                    }
-
-                    changed
-                }
-            }
-        } else {
-            trace!("Scroll ignored because cursor was not over a scrollable area");
-            false // No state change if scroll wasn't in a valid area
-        }
     }
 
     fn key_index_from_position(&self, column: u16, row: u16) -> Option<usize> {

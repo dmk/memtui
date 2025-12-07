@@ -265,24 +265,6 @@ pub fn handle_enter_connection_palette(
     true
 }
 
-/// Handle SelectKey action
-pub fn handle_select_key(
-    app_state: &mut AppState,
-    ui_state: &mut UiState,
-    action_tx: &mpsc::UnboundedSender<Action>,
-    idx: usize,
-    schedule_value_load: impl FnOnce(usize),
-) {
-    app_state.selected_key_index = Some(idx);
-    app_state.selected_value = None;
-    ui_state.value_viewer.reset_scroll();
-
-    if app_state.needs_loading_around(idx) {
-        let _ = action_tx.send(Action::LoadMoreKeys(idx));
-    }
-    schedule_value_load(idx);
-}
-
 /// Handle error actions
 pub fn handle_error(app_state: &mut AppState, error: String) {
     app_state.error_message = Some(error);

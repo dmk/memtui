@@ -283,11 +283,13 @@ impl Component for WelcomeScreen {
             match key.code {
                 KeyCode::Down | KeyCode::Char('j') => {
                     self.next(props.recent_configs.len());
-                    vec![]
+                    // Return Tick to indicate event was handled (prevents double-processing)
+                    vec![Action::Tick]
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.prev(props.recent_configs.len());
-                    vec![]
+                    // Return Tick to indicate event was handled (prevents double-processing)
+                    vec![Action::Tick]
                 }
                 KeyCode::Enter => {
                     if let Some(idx) = self.state.selected() {

@@ -6,7 +6,8 @@ use crossterm::event::{self, KeyModifiers, MouseEventKind};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::debug;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, info};
 
 /// Raw event from crossterm before processing
 #[derive(Debug)]
@@ -123,34 +124,46 @@ impl EventBus {
     }
 }
 
-/// Spawn the event polling task
+/// Spawn the event polling task with cancellation support
 pub fn spawn_event_poller(
     tx: mpsc::UnboundedSender<RawEvent>,
     poll_timeout: Duration,
     loop_sleep: Duration,
+    cancel_token: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         const MAX_EVENTS_PER_BATCH: usize = 20;
 
         loop {
-            tokio::time::sleep(loop_sleep).await;
-
-            let mut events_processed = 0;
-            while events_processed < MAX_EVENTS_PER_BATCH
-                && event::poll(poll_timeout).unwrap_or(false)
-            {
-                events_processed += 1;
-                if let Ok(evt) = event::read() {
-                    let raw = match evt {
-                        event::Event::Key(key) => Some(RawEvent::Key(key)),
-                        event::Event::Mouse(mouse) => Some(RawEvent::Mouse(mouse)),
-                        event::Event::Resize(w, h) => Some(RawEvent::Resize(w, h)),
-                        _ => None,
-                    };
-                    if let Some(raw) = raw {
-                        if tx.send(raw).is_err() {
-                            debug!("Event channel closed, stopping poller");
-                            return;
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    info!("Event poller cancelled, draining buffer");
+                    // Drain any remaining events from crossterm buffer before exiting
+                    while event::poll(Duration::ZERO).unwrap_or(false) {
+                        let _ = event::read();
+                    }
+                    break;
+                }
+                _ = tokio::time::sleep(loop_sleep) => {
+                    // Process up to MAX_EVENTS_PER_BATCH events per iteration
+                    let mut events_processed = 0;
+                    while events_processed < MAX_EVENTS_PER_BATCH
+                        && event::poll(poll_timeout).unwrap_or(false)
+                    {
+                        events_processed += 1;
+                        if let Ok(evt) = event::read() {
+                            let raw = match evt {
+                                event::Event::Key(key) => Some(RawEvent::Key(key)),
+                                event::Event::Mouse(mouse) => Some(RawEvent::Mouse(mouse)),
+                                event::Event::Resize(w, h) => Some(RawEvent::Resize(w, h)),
+                                _ => None,
+                            };
+                            if let Some(raw) = raw {
+                                if tx.send(raw).is_err() {
+                                    debug!("Event channel closed, stopping poller");
+                                    return;
+                                }
+                            }
                         }
                     }
                 }

@@ -8,7 +8,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -97,26 +97,6 @@ impl WelcomeScreen {
         };
         self.state.select(Some(i));
     }
-
-    fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage((100 - percent_y) / 2),
-                Constraint::Percentage(percent_y),
-                Constraint::Percentage((100 - percent_y) / 2),
-            ])
-            .split(r);
-
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage((100 - percent_x) / 2),
-                Constraint::Percentage(percent_x),
-                Constraint::Percentage((100 - percent_x) / 2),
-            ])
-            .split(popup_layout[1])[1]
-    }
 }
 
 impl Default for WelcomeScreen {
@@ -134,14 +114,10 @@ impl Component for WelcomeScreen {
         let bg = Block::default().style(Style::default().bg(theme::BG_DEEP()));
         f.render_widget(bg, area);
 
-        let card_area = Self::centered_rect(75, 75, area);
+        let card_area = theme::centered_rect(75, 75, area);
 
-        // Static fancy border
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Double)
-            .border_style(Style::default().fg(theme::NEON_PURPLE()))
-            .style(Style::default().bg(theme::BG_PANEL()));
+        // Use unified modal block style for consistency
+        let block = Block::default();
 
         let inner_area = block.inner(card_area);
         f.render_widget(block, card_area);

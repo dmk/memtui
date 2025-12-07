@@ -1,14 +1,14 @@
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    layout::{Alignment, Constraint, Direction, Layout},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Clear, Paragraph},
     Frame,
 };
 use tui_input::{backend::crossterm::EventHandler, Input};
 
 use crate::types::{Auth, BackendType, ConnectionConfig};
+use crate::ui::theme::{self, raw};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,7 +218,7 @@ impl Default for ConnectionForm {
 }
 
 pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Option<&str>) {
-    let area = centered_rect(70, 70, f.area());
+    let area = theme::centered_rect(70, 70, f.area());
 
     let show_database = matches!(form.backend_type, BackendType::Redis);
 
@@ -238,59 +238,23 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
     constraints.push(Constraint::Min(2)); // Instructions
     constraints.push(Constraint::Length(2)); // Error (if any)
 
+    // Render modal block with raw (undimmed) colors
+    let block = raw::modal_block(format!("New {} Connection", form.backend_type));
+    let inner = block.inner(area);
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(constraints)
-        .margin(1)
-        .split(area);
+        .split(inner);
 
     let mut chunk_idx = 0;
 
-    // Title
+    // Title (use raw colors for modal content)
     let title = Paragraph::new(format!("Add New {} Connection", form.backend_type))
-        .style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
+        .style(raw::form_title())
         .alignment(Alignment::Center);
-
-    // Input fields
-    let backend_type_style = if form.active_field == FormField::BackendType {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-
-    let name_style = if form.active_field == FormField::Name {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-
-    let host_style = if form.active_field == FormField::Host {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-
-    let port_style = if form.active_field == FormField::Port {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-
-    let password_style = if form.active_field == FormField::Password {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-
-    let database_style = if form.active_field == FormField::Database {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
 
     // Backend type horizontal selector
     let backends = [
@@ -299,29 +263,18 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
         (BackendType::Etcd, "etcd"),
     ];
 
+    let is_backend_active = form.active_field == FormField::BackendType;
+
     let backend_spans: Vec<Span> = backends
         .iter()
         .enumerate()
         .flat_map(|(i, (backend, label))| {
             let is_selected = *backend == form.backend_type;
-            let is_field_active = form.active_field == FormField::BackendType;
 
             let style = if is_selected {
-                if is_field_active {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
-                }
-            } else if is_field_active {
-                Style::default().fg(Color::Yellow)
+                raw::selector_option_selected(is_backend_active)
             } else {
-                Style::default().fg(Color::DarkGray)
+                raw::selector_option_unselected(is_backend_active)
             };
 
             let mut spans = vec![Span::styled(format!(" {} ", label), style)];
@@ -332,12 +285,8 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
         })
         .collect();
 
-    let backend_type_field = Paragraph::new(Line::from(backend_spans)).block(
-        Block::default()
-            .title("Backend Type (←/→)")
-            .borders(Borders::ALL)
-            .border_style(backend_type_style),
-    );
+    let backend_type_field = Paragraph::new(Line::from(backend_spans))
+        .block(raw::input_block("Backend Type (←/→)", is_backend_active));
 
     // Use tui-input for name
     let name_scroll = form
@@ -345,39 +294,33 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
         .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
     let name_field = Paragraph::new(form.name.value())
         .scroll((0, name_scroll as u16))
-        .style(Style::default().fg(Color::White))
-        .block(
-            Block::default()
-                .title("Name (required)")
-                .borders(Borders::ALL)
-                .border_style(name_style),
-        );
+        .style(raw::input_text())
+        .block(raw::input_block(
+            "Name (required)",
+            form.active_field == FormField::Name,
+        ));
 
     let host_scroll = form
         .host
         .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
     let host_field = Paragraph::new(form.host.value())
         .scroll((0, host_scroll as u16))
-        .style(Style::default().fg(Color::White))
-        .block(
-            Block::default()
-                .title("Host")
-                .borders(Borders::ALL)
-                .border_style(host_style),
-        );
+        .style(raw::input_text())
+        .block(raw::input_block(
+            "Host",
+            form.active_field == FormField::Host,
+        ));
 
     let port_scroll = form
         .port
         .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
     let port_field = Paragraph::new(form.port.value())
         .scroll((0, port_scroll as u16))
-        .style(Style::default().fg(Color::White))
-        .block(
-            Block::default()
-                .title("Port")
-                .borders(Borders::ALL)
-                .border_style(port_style),
-        );
+        .style(raw::input_text())
+        .block(raw::input_block(
+            "Port",
+            form.active_field == FormField::Port,
+        ));
 
     let password_val = form.password.value();
     let password_display = if password_val.is_empty() {
@@ -385,71 +328,52 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
     } else {
         "*".repeat(password_val.len())
     };
-    // Password scrolling is tricky with masking, for simplicity we might not scroll perfectly or just show end
-    // But tui-input doesn't support masked value out of box for visual_scroll easily unless we implement it.
-    // For now, just show masked string.
     let password_field = Paragraph::new(password_display)
-        .style(Style::default().fg(Color::White))
-        .block(
-            Block::default()
-                .title("Password (optional)")
-                .borders(Borders::ALL)
-                .border_style(password_style),
-        );
+        .style(raw::input_text())
+        .block(raw::input_block(
+            "Password (optional)",
+            form.active_field == FormField::Password,
+        ));
 
     let database_scroll = form
         .database
         .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
     let database_field = Paragraph::new(form.database.value())
         .scroll((0, database_scroll as u16))
-        .style(Style::default().fg(Color::White))
-        .block(
-            Block::default()
-                .title("Database")
-                .borders(Borders::ALL)
-                .border_style(database_style),
-        );
+        .style(raw::input_text())
+        .block(raw::input_block(
+            "Database",
+            form.active_field == FormField::Database,
+        ));
 
     let mut instructions = vec![Line::from("")];
 
     if matches!(form.backend_type, BackendType::Memcached) {
         instructions.push(Line::from(vec![Span::styled(
             "Note: Memcached doesn't use database field",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
+            raw::form_note(),
         )]));
     } else if matches!(form.backend_type, BackendType::Etcd) {
         instructions.push(Line::from(vec![Span::styled(
             "Note: etcd doesn't use database field",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
+            raw::form_note(),
         )]));
     }
 
     instructions.push(Line::from(vec![
-        Span::styled("Tab/↓", Style::default().fg(Color::Yellow)),
-        Span::raw(" Next  "),
-        Span::styled("Shift+Tab/↑", Style::default().fg(Color::Yellow)),
-        Span::raw(" Prev  "),
-        Span::styled("Enter", Style::default().fg(Color::Yellow)),
-        Span::raw(" Save  "),
-        Span::styled("Esc", Style::default().fg(Color::Yellow)),
-        Span::raw(" Cancel"),
+        Span::styled("Tab/↓", raw::keybind_key_style()),
+        Span::styled(" Next  ", raw::form_hint()),
+        Span::styled("Shift+Tab/↑", raw::keybind_key_style()),
+        Span::styled(" Prev  ", raw::form_hint()),
+        Span::styled("Enter", raw::keybind_key_style()),
+        Span::styled(" Save  ", raw::form_hint()),
+        Span::styled("Esc", raw::keybind_key_style()),
+        Span::styled(" Cancel", raw::form_hint()),
     ]));
 
     let instructions_widget = Paragraph::new(instructions)
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::DarkGray));
-
-    // Render everything
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
-
-    f.render_widget(Clear, area);
-    f.render_widget(block, area);
+        .style(raw::form_hint());
 
     f.render_widget(title, chunks[chunk_idx]);
     chunk_idx += 1;
@@ -480,7 +404,7 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
     // Render error if present
     if let Some(err) = error {
         let error_widget = Paragraph::new(err)
-            .style(Style::default().fg(Color::Red))
+            .style(raw::form_error())
             .alignment(Alignment::Center);
         f.render_widget(error_widget, chunks[chunk_idx]);
     }
@@ -523,24 +447,4 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
         }
         _ => {}
     }
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }

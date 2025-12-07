@@ -1,7 +1,6 @@
 use crossterm::event::KeyEvent;
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
@@ -9,6 +8,7 @@ use ratatui::{
 
 use super::Component;
 use crate::app::{ConnectionManager, ConnectionStatus};
+use crate::ui::theme;
 
 pub struct StatusBarProps<'a> {
     pub connection_manager: &'a ConnectionManager,
@@ -35,7 +35,7 @@ impl Component for StatusBar {
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         // Build connection status (always shown on the left)
-        let (conn_style, conn_symbol, conn_text) =
+        let (conn_symbol, conn_style, conn_text) =
             if let Some(status) = props.connection_manager.get_active_status() {
                 match status {
                     ConnectionStatus::Connected => {
@@ -48,37 +48,32 @@ impl Component for StatusBar {
                         } else {
                             "Connected".to_string()
                         };
-                        (Style::default().fg(Color::Green), "● ", text)
+                        let (symbol, style) = theme::status_indicator_connected();
+                        (symbol, style, text)
                     }
-                    ConnectionStatus::Connecting => (
-                        Style::default().fg(Color::Yellow),
-                        "◐ ",
-                        "Connecting...".to_string(),
-                    ),
-                    ConnectionStatus::Disconnected => (
-                        Style::default().fg(Color::DarkGray),
-                        "○ ",
-                        "Not connected".to_string(),
-                    ),
-                    ConnectionStatus::Error(ref msg) => (
-                        Style::default().fg(Color::Red),
-                        "✗ ",
-                        format!("Error: {}", msg),
-                    ),
+                    ConnectionStatus::Connecting => {
+                        let (symbol, style) = theme::status_indicator_connecting();
+                        (symbol, style, "Connecting...".to_string())
+                    }
+                    ConnectionStatus::Disconnected => {
+                        let (symbol, style) = theme::status_indicator_disconnected();
+                        (symbol, style, "Not connected".to_string())
+                    }
+                    ConnectionStatus::Error(ref msg) => {
+                        let (symbol, style) = theme::status_indicator_error();
+                        (symbol, style, format!("Error: {}", msg))
+                    }
                 }
             } else {
-                (
-                    Style::default().fg(Color::DarkGray),
-                    "○ ",
-                    "No connection selected".to_string(),
-                )
+                let (symbol, style) = theme::status_indicator_disconnected();
+                (symbol, style, "No connection selected".to_string())
             };
 
         // Build operation indicator (shown on the right if visible)
         let operation_spans = if let Some(msg) = props.loading_message {
             Some(vec![
                 Span::raw("  "),
-                Span::styled(msg, Style::default().fg(Color::Cyan)),
+                Span::styled(msg, theme::status_operation()),
             ])
         } else {
             None
@@ -89,8 +84,8 @@ impl Component for StatusBar {
         let op_width = operation_spans.as_ref().map_or(0, |spans| {
             spans.iter().map(|s| s.content.len()).sum::<usize>()
         });
-        let total_reserved = conn_symbol.len() + help_text.len() + op_width;
-        let available = area.width as usize - total_reserved;
+        let total_reserved = conn_symbol.len() + 1 + help_text.len() + op_width;
+        let available = (area.width as usize).saturating_sub(total_reserved);
 
         // Truncate connection text if needed
         let truncated_conn_text = if conn_text.len() > available {
@@ -101,9 +96,9 @@ impl Component for StatusBar {
 
         // Build final status line
         let mut status_spans = vec![
-            Span::styled(conn_symbol, conn_style),
-            Span::raw(truncated_conn_text),
-            Span::raw(help_text),
+            Span::styled(format!("{} ", conn_symbol), conn_style),
+            Span::styled(truncated_conn_text, theme::status_hint()),
+            Span::styled(help_text, theme::status_hint()),
         ];
 
         // Add operation indicator on the right if present
@@ -112,7 +107,7 @@ impl Component for StatusBar {
         }
 
         let status_line = Line::from(status_spans);
-        let status_bar = Paragraph::new(status_line).style(Style::default().bg(Color::Black));
+        let status_bar = Paragraph::new(status_line).style(theme::util_bg());
 
         f.render_widget(status_bar, area);
     }

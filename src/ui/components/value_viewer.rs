@@ -6,14 +6,17 @@ use crate::ui::theme::{self, AnimationState};
 use crossterm::event::KeyEvent;
 use ratatui::{
     layout::{Alignment, Constraint, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
-        TableState, Wrap,
-    },
+    widgets::{Cell, Paragraph, Row, ScrollbarState, Table, TableState, Wrap},
     Frame,
 };
+
+/// Get current dim factor as a cache key component
+fn dim_cache_key() -> u8 {
+    // Convert dim to a u8 to use as part of cache key
+    (theme::get_dim() * 255.0) as u8
+}
 
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
@@ -23,6 +26,7 @@ use unicode_width::UnicodeWidthChar;
 pub struct ValueViewerProps<'a> {
     pub selected_value: Option<&'a Value>,
     pub selected_key_type: Option<ValueType>,
+    pub selected_key_name: Option<&'a str>,
     pub error_message: Option<&'a String>,
     pub json_formatter: &'a JsonFormatter,
     pub text_formatter: &'a TextFormatter,
@@ -42,6 +46,8 @@ struct TextCache {
     source_len: usize,
     wrap_width: u16,
     kind: TextContentKind,
+    // Dim factor when cache was created (invalidate if changed)
+    dim_key: u8,
     // Store UNWRAPPED lines - wrap on-demand only for visible portion
     unwrapped_lines: Vec<Line<'static>>,
     paragraph_style: Style,
@@ -90,6 +96,7 @@ impl TextCache {
             source_len: value.data.len(),
             wrap_width: wrap_width.max(1),
             kind,
+            dim_key: dim_cache_key(),
             unwrapped_lines,
             paragraph_style,
             total_wrapped_lines,
@@ -205,6 +212,7 @@ impl TextCache {
             && self.wrap_width == width.max(1)
             && self.kind == kind
             && self.paragraph_style == paragraph_style
+            && self.dim_key == dim_cache_key()
     }
 }
 
@@ -404,16 +412,22 @@ impl ValueViewer {
         self.text_cache = None;
     }
 
-    fn viewer_block(
-        is_active: bool,
-        title: impl Into<String>,
-        _animation: &AnimationState,
-    ) -> Block<'static> {
-        theme::panel_block(title, is_active)
+    fn render_header(f: &mut Frame, area: Rect, title: &str, is_active: bool) -> Rect {
+        theme::render_panel_header(f, area, title, is_active)
     }
 
-    fn render_scrollbar_for_offset(&mut self, f: &mut Frame, area: Rect) {
-        if self.total_rows <= self.viewport_height as usize {
+    fn render_header_split(
+        f: &mut Frame,
+        area: Rect,
+        title_left: &str,
+        title_right: &str,
+        is_active: bool,
+    ) -> Rect {
+        theme::render_panel_header_split(f, area, title_left, title_right, is_active)
+    }
+
+    fn render_scrollbar_for_offset(&mut self, f: &mut Frame, area: Rect, is_active: bool) {
+        if self.total_rows <= self.viewport_height as usize || area.width < 2 {
             return;
         }
 
@@ -446,11 +460,8 @@ impl ValueViewer {
             .position(scrollbar_position);
 
         f.render_stateful_widget(
-            Scrollbar::default()
-                .orientation(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("▲"))
-                .end_symbol(Some("▼")),
-            area,
+            theme::scrollbar(is_active),
+            theme::scrollbar_area(area),
             &mut self.scrollbar_state,
         );
     }
@@ -464,10 +475,9 @@ impl ValueViewer {
         title: &str,
         lines: Vec<Line<'static>>,
         style: Style,
-        animation: &AnimationState,
+        _animation: &AnimationState,
     ) {
-        let block = Self::viewer_block(is_active, title, animation);
-        let inner = block.inner(area);
+        let inner = Self::render_header(f, area, title, is_active);
 
         // Update dimensions for scroll handling
         self.viewport_height = inner.height;
@@ -491,13 +501,12 @@ impl ValueViewer {
 
         let widget = Paragraph::new(lines)
             .style(style)
-            .block(block)
             .wrap(Wrap { trim: false })
             .scroll((self.scroll_offset, 0));
 
-        f.render_widget(widget, area);
+        f.render_widget(widget, inner);
 
-        self.render_scrollbar_for_offset(f, area);
+        self.render_scrollbar_for_offset(f, inner, is_active);
     }
 
     fn render_plain_value(
@@ -533,13 +542,12 @@ impl ValueViewer {
         value: &Value,
         kind: TextContentKind,
         paragraph_style: Style,
-        animation: &AnimationState,
+        _animation: &AnimationState,
         lines_builder: F,
     ) where
         F: FnOnce() -> Vec<Line<'static>>,
     {
-        let block = Self::viewer_block(is_active, title, animation);
-        let inner = block.inner(area);
+        let inner = Self::render_header(f, area, title, is_active);
         let content_width = inner.width.max(1);
 
         self.viewport_height = inner.height;
@@ -565,10 +573,6 @@ impl ValueViewer {
         // Get style before borrow
         let paragraph_style = cache_mut.paragraph_style;
 
-        // Render block first
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-
         // CRITICAL: Render directly from cache without intermediate Vec
         // This avoids cloning lines on every frame
         let buf = f.buffer_mut();
@@ -580,7 +584,7 @@ impl ValueViewer {
             paragraph_style,
         );
 
-        self.render_scrollbar_for_offset(f, area);
+        self.render_scrollbar_for_offset(f, inner, is_active);
     }
 
     fn ensure_text_cache<F>(
@@ -656,22 +660,25 @@ impl ValueViewer {
         headers: Vec<&str>,
         rows_data: Vec<Vec<String>>,
         json_formatter: &JsonFormatter,
-        animation: &AnimationState,
+        _animation: &AnimationState,
     ) {
+        let entry_count = rows_data.len();
+        let entry_info = if entry_count == 1 {
+            "1 entry".to_string()
+        } else {
+            format!("{} entries", Self::format_number(entry_count))
+        };
+
+        // Render header and get content area
+        let content_area = Self::render_header_split(f, area, base_title, &entry_info, is_active);
+
         // Update total rows and viewport for scroll handling
         self.total_rows = rows_data.len();
-        self.viewport_height = area.height.saturating_sub(2);
+        self.viewport_height = content_area.height.saturating_sub(1);
 
         let header_style = Style::default()
             .fg(theme::NEON_CYAN())
             .add_modifier(Modifier::BOLD);
-
-        let entry_count = rows_data.len();
-        let table_title = if entry_count == 1 {
-            format!("{base_title} | 1 item")
-        } else {
-            format!("{base_title} | {} items", entry_count)
-        };
 
         // Calculate widths
         let mut constraints = Vec::new();
@@ -764,8 +771,7 @@ impl ValueViewer {
 
         let mut table = Table::new(rows, constraints)
             .column_spacing(2)
-            .highlight_style(highlight_style)
-            .block(Self::viewer_block(is_active, table_title, animation));
+            .highlight_style(highlight_style);
 
         if !headers.is_empty() {
             let header_cells: Vec<Cell> = headers
@@ -775,29 +781,19 @@ impl ValueViewer {
             table = table.header(Row::new(header_cells).bottom_margin(0));
         }
 
-        f.render_stateful_widget(table, area, &mut self.table_state);
+        f.render_stateful_widget(table, content_area, &mut self.table_state);
 
         if self.total_rows > self.viewport_height as usize {
-            if let Some(selected) = self.table_state.selected() {
-                self.scrollbar_state = self
-                    .scrollbar_state
-                    .content_length(self.total_rows)
-                    .viewport_content_length(self.viewport_height as usize)
-                    .position(selected);
-            } else {
-                self.scrollbar_state = self
-                    .scrollbar_state
-                    .content_length(self.total_rows)
-                    .viewport_content_length(self.viewport_height as usize)
-                    .position(0);
-            }
+            let position = self.table_state.selected().unwrap_or(0);
+            self.scrollbar_state = self
+                .scrollbar_state
+                .content_length(self.total_rows)
+                .viewport_content_length(self.viewport_height as usize)
+                .position(position);
 
             f.render_stateful_widget(
-                Scrollbar::default()
-                    .orientation(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(Some("▲"))
-                    .end_symbol(Some("▼")),
-                area,
+                theme::scrollbar(is_active),
+                theme::scrollbar_area(content_area),
                 &mut self.scrollbar_state,
             );
         }
@@ -805,10 +801,11 @@ impl ValueViewer {
 
     fn format_plain_text(value: &Value, props: &ValueViewerProps<'_>) -> (String, Style) {
         match props.text_formatter.format(value) {
-            Ok(text) => (text, Style::default()),
+            // Use theme color so it participates in dimming
+            Ok(text) => (text, Style::default().fg(theme::TEXT_PRIMARY())),
             Err(_) => (
                 "<formatting error>".to_string(),
-                Style::default().fg(Color::Red),
+                Style::default().fg(theme::NEON_RED()),
             ),
         }
     }
@@ -1071,11 +1068,27 @@ impl ValueViewer {
     }
 
     fn title_for(
+        key_name: Option<&str>,
         _value_type: Option<ValueType>,
         _backend_type: Option<crate::types::BackendType>,
     ) -> String {
-        // Keep it simple - type info is already shown in the key list
-        "Value".to_string()
+        // Show the key name as the title - much more useful!
+        key_name
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Value".to_string())
+    }
+
+    /// Format a number with thousand separators (e.g., 1,414)
+    fn format_number(n: usize) -> String {
+        let s = n.to_string();
+        let mut result = String::with_capacity(s.len() + s.len() / 3);
+        for (i, c) in s.chars().rev().enumerate() {
+            if i > 0 && i % 3 == 0 {
+                result.push(',');
+            }
+            result.push(c);
+        }
+        result.chars().rev().collect()
     }
 }
 
@@ -1090,7 +1103,11 @@ impl Component for ValueViewer {
     type Msg = Action;
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
-        let base_title = ValueViewer::title_for(props.selected_key_type, props.backend_type);
+        let base_title = ValueViewer::title_for(
+            props.selected_key_name,
+            props.selected_key_type,
+            props.backend_type,
+        );
         let animation = props.animation;
 
         if let Some(err) = props.error_message {

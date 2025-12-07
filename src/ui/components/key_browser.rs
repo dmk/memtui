@@ -1,9 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    layout::{Margin, Rect},
-    style::{Color, Modifier, Style},
+    layout::Rect,
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{List, ListItem, ListState, ScrollbarState},
     Frame,
 };
 
@@ -95,14 +95,23 @@ impl Component for KeyBrowser {
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         let is_active = props.is_active;
-        self.viewport_height = area.height.saturating_sub(2) as usize;
-        let content_width = area.width.saturating_sub(4) as usize;
 
         // Check if we're in search mode (has query)
         let has_search = props
             .active_search_query
             .map(|q| !q.is_empty())
             .unwrap_or(false);
+
+        // Build title parts (left title, right info)
+        let (title_left, title_right) = self.build_title_parts(&props, has_search, 0);
+
+        // Render full-width header and get content area
+        let content_area =
+            theme::render_panel_header_split(f, area, &title_left, &title_right, is_active);
+
+        self.viewport_height = content_area.height.saturating_sub(1) as usize;
+        // Subtract: 3 for highlight symbol " ▸ " + 2 for scrollbar and padding
+        let content_width = content_area.width.saturating_sub(5) as usize;
 
         // Build the display list - either filtered or full
         // Returns: (items, total_count, relative_selection_in_view, absolute_selection_for_scrollbar)
@@ -118,45 +127,26 @@ impl Component for KeyBrowser {
             (items, count, sel, abs_pos)
         };
 
-        // Build title
-        let title = self.build_title(&props, has_search, display_count);
-
-        // Create the block with theme styling
-        let block = Self::themed_block(&title, is_active, props.animation, props.is_loading);
-
         let keys_list = List::new(key_items)
-            .block(block)
             .highlight_style(theme::list_selected().add_modifier(Modifier::BOLD))
-            .highlight_symbol("▸ ");
+            .highlight_symbol(" ▸ ");
 
         let mut view_state = ListState::default();
         view_state.select(selected_display_idx);
-        f.render_stateful_widget(keys_list, area, &mut view_state);
+        f.render_stateful_widget(keys_list, content_area, &mut view_state);
 
         // Render scrollbar with themed styling
-        if display_count > 0 {
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("▲"))
-                .end_symbol(Some("▼"))
-                .track_symbol(Some("│"))
-                .thumb_symbol("█")
-                .style(Style::default().fg(if is_active {
-                    theme::NEON_CYAN()
-                } else {
-                    Color::Rgb(60, 70, 90)
-                }));
-
-            let scrollbar_area = area.inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            });
-
+        if display_count > 0 && content_area.width > 2 {
             self.scrollbar_state = self
                 .scrollbar_state
                 .content_length(display_count)
                 .position(scrollbar_position);
 
-            f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.scrollbar_state);
+            f.render_stateful_widget(
+                theme::scrollbar(is_active),
+                theme::scrollbar_area(content_area),
+                &mut self.scrollbar_state,
+            );
         }
     }
 
@@ -345,37 +335,41 @@ impl KeyBrowser {
     }
 
     /// Build the title based on current mode
-    fn build_title(
+    /// Returns (left_title, right_info)
+    fn build_title_parts(
         &self,
         props: &KeyBrowserProps<'_>,
         has_search: bool,
         display_count: usize,
-    ) -> String {
+    ) -> (String, String) {
         if props.is_searching {
             // Active search input mode
             if let Some(query) = props.active_search_query {
                 if query.is_empty() {
-                    "Keys │ ▍".to_string()
+                    ("Keys │ ▍".to_string(), String::new())
                 } else {
                     let server_indicator = if props.is_server_searching {
                         format!(" {}", theme::spinner(props.animation))
                     } else {
                         String::new()
                     };
-                    format!(
-                        "Keys │ {}▍{} ({} found)",
-                        query, server_indicator, display_count
+                    (
+                        format!("Keys │ {}▍{}", query, server_indicator),
+                        format!("{} found", display_count),
                     )
                 }
             } else {
-                "Keys │ ▍".to_string()
+                ("Keys │ ▍".to_string(), String::new())
             }
         } else if has_search {
             // Has search filter but not actively typing
             if let Some(query) = props.active_search_query {
-                format!("Keys │ /{} ({} results)", query, display_count)
+                (
+                    format!("Keys │ /{}", query),
+                    format!("{} results", display_count),
+                )
             } else {
-                "Keys".to_string()
+                ("Keys".to_string(), String::new())
             }
         } else {
             // Normal mode
@@ -383,11 +377,6 @@ impl KeyBrowser {
                 .total_count
                 .map(|t| t as usize)
                 .unwrap_or(props.keys.len());
-            let position = self
-                .state
-                .selected()
-                .map(|i| format!(" [{}/{}]", i.saturating_add(1), total_count))
-                .unwrap_or_else(|| " [—]".to_string());
 
             let loading_indicator = if props.is_loading {
                 format!(" {}", theme::spinner(props.animation))
@@ -395,8 +384,32 @@ impl KeyBrowser {
                 String::new()
             };
 
-            format!("Keys{}{}", position, loading_indicator)
+            let right = if let Some(i) = self.state.selected() {
+                format!(
+                    "{} of {}{}",
+                    Self::format_number(i.saturating_add(1)),
+                    Self::format_number(total_count),
+                    loading_indicator
+                )
+            } else {
+                format!("{}{}", Self::format_number(total_count), loading_indicator)
+            };
+
+            ("Keys".to_string(), right)
         }
+    }
+
+    /// Format a number with thousand separators (e.g., 1,414)
+    fn format_number(n: usize) -> String {
+        let s = n.to_string();
+        let mut result = String::with_capacity(s.len() + s.len() / 3);
+        for (i, c) in s.chars().rev().enumerate() {
+            if i > 0 && i % 3 == 0 {
+                result.push(',');
+            }
+            result.push(c);
+        }
+        result.chars().rev().collect()
     }
 
     fn compute_view_window(&mut self, selected_abs: usize, total_count: usize) -> (usize, usize) {
@@ -626,14 +639,5 @@ impl KeyBrowser {
         let mut truncated: String = text.chars().take(max_chars - 3).collect();
         truncated.push_str("...");
         truncated
-    }
-
-    fn themed_block(
-        title: &str,
-        is_active: bool,
-        _animation: &AnimationState,
-        _is_loading: bool,
-    ) -> Block<'static> {
-        theme::panel_block(title, is_active)
     }
 }

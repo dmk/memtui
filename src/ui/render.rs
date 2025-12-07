@@ -1,10 +1,12 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph},
+    widgets::{Block, Clear, Paragraph},
     Frame,
 };
+
+use super::components::modal::{confirm_block_raw, render_modal};
 
 use super::components::{
     connection_list::ConnectionListProps,
@@ -29,6 +31,16 @@ pub fn render(
     ui_state: &mut UiState,
     keybindings: &KeybindingsConfig,
 ) {
+    // Check if any modal is active and dim the theme for background content
+    let modal_active = ui_state.show_connection_palette
+        || ui_state.show_connection_form
+        || ui_state.show_help
+        || ui_state.show_quit_confirmation;
+
+    if modal_active {
+        theme::dim_theme(0.7); // 70% dimming for background
+    }
+
     // Render the deep background
     let bg_block = Block::default().style(Style::default().bg(theme::BG_DEEP()));
     f.render_widget(bg_block, f.area());
@@ -62,10 +74,10 @@ pub fn render(
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(if show_tabs { 3 } else { 0 }), // Tabs with more space
+            Constraint::Length(if show_tabs { 1 } else { 0 }), // Tabs - single line
             Constraint::Length(warning_height),
             Constraint::Min(0),    // Body
-            Constraint::Length(2), // Status bar with more space
+            Constraint::Length(1), // Status bar - single line
         ])
         .split(f.area());
 
@@ -152,18 +164,14 @@ pub fn render(
     if ui_state.show_quit_confirmation {
         render_quit_confirmation(f, &ui_state.animation);
     }
+
+    // Restore theme to normal state after render
+    theme::restore_theme();
 }
 
 fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area: Rect) {
     ui_state.tab_regions.clear();
     ui_state.tab_bar_area = Some(area);
-
-    // Background for tab bar
-    let tab_bg = Block::default()
-        .style(Style::default().bg(theme::BG_PANEL()))
-        .borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(Color::Rgb(40, 50, 70)));
-    f.render_widget(tab_bg, area);
 
     let mut spans = Vec::new();
     let mut cursor_x = area.x + 1;
@@ -179,73 +187,50 @@ fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area
         .collect();
 
     if open_configs.is_empty() {
+        let tabs_line = Paragraph::new(Line::from(vec![Span::styled(
+            " Ctrl+P to open connections",
+            Style::default().fg(theme::TEXT_DIM()),
+        )]))
+        .style(theme::util_bg());
+        f.render_widget(tabs_line, area);
         return;
     }
 
-    for config in open_configs {
-        let status = app_state.connection_manager.get_status(&config.id);
-        let (icon, tone) = match status {
-            ConnectionStatus::Connected => (theme::INDICATOR_CONNECTED, theme::NEON_GREEN()),
-            ConnectionStatus::Connecting => {
-                let spinner = theme::spinner_pulse(&ui_state.animation);
-                (spinner, theme::NEON_AMBER())
-            }
-            ConnectionStatus::Disconnected => (theme::INDICATOR_DISCONNECTED, theme::TEXT_DIM()),
-            ConnectionStatus::Error(_) => (theme::INDICATOR_ERROR, theme::NEON_RED()),
-        };
+    spans.push(Span::raw(" "));
 
+    for config in open_configs {
         let is_active = app_state
             .connection_manager
             .get_active_id()
             .map(|id| id == config.id.as_str())
             .unwrap_or(false);
 
-        let label = format!(" {} {} ", icon, config.name);
+        let label = format!(" {} ", config.name);
         let width = label.chars().count() as u16;
         if cursor_x.saturating_add(width + 2) > max_x {
             break;
         }
 
-        let (style, bg_style) = if is_active {
-            (
-                Style::default()
-                    .fg(theme::BG_DEEP())
-                    .add_modifier(Modifier::BOLD),
-                Some(theme::ACCENT()),
-            )
-        } else {
-            (Style::default().fg(tone), None)
-        };
-
-        let tab_area = Rect::new(cursor_x, area.y + 1, width.max(1), 1);
+        let tab_area = Rect::new(cursor_x, area.y, width.max(1), 1);
         ui_state.tab_regions.push(TabRegion {
             id: config.id.clone(),
             area: tab_area,
         });
 
-        if let Some(bg) = bg_style {
-            spans.push(Span::styled(label, style.bg(bg)));
+        if is_active {
+            spans.push(Span::styled(label, theme::tab_active()));
         } else {
-            // Create a subtle background for inactive tabs
-            spans.push(Span::styled(label, style.bg(theme::BG_SURFACE())));
+            spans.push(Span::styled(
+                label,
+                Style::default().fg(theme::TEXT_SECONDARY()),
+            ));
         }
-        spans.push(Span::styled(" ", Style::default()));
+        spans.push(Span::raw(" "));
         cursor_x = cursor_x.saturating_add(width + 1);
     }
 
-    if spans.is_empty() {
-        spans.push(Span::styled(
-            "  Ctrl+P to open connections",
-            Style::default().fg(theme::TEXT_DIM()),
-        ));
-    }
-
-    let tabs_line = Paragraph::new(Line::from(spans))
-        .alignment(Alignment::Left)
-        .style(Style::default().bg(theme::BG_PANEL()));
-
-    let inner_area = Rect::new(area.x, area.y + 1, area.width, 1);
-    f.render_widget(tabs_line, inner_area);
+    let tabs_line = Paragraph::new(Line::from(spans)).style(theme::util_bg());
+    f.render_widget(tabs_line, area);
 }
 
 fn render_body(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, area: Rect) {
@@ -257,7 +242,7 @@ fn render_body(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, 
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(left_percent),
-            Constraint::Length(1), // Resize handle
+            Constraint::Length(1), // Vertical separator
             Constraint::Percentage(right_percent),
         ])
         .split(area);
@@ -265,37 +250,28 @@ fn render_body(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, 
     ui_state.last_key_area = Some(body_chunks[0]);
     ui_state.last_value_area = Some(body_chunks[2]);
 
-    // Render resize handle
-    render_resize_handle(f, body_chunks[1], ui_state.is_resizing, &ui_state.animation);
+    // Render vertical separator
+    render_separator(f, body_chunks[1]);
 
     render_keys(f, ui_state, app_state, body_chunks[0]);
     render_value(f, ui_state, app_state, body_chunks[2]);
 }
 
-fn render_resize_handle(f: &mut Frame, area: Rect, is_active: bool, _animation: &AnimationState) {
-    let style = if is_active {
-        Style::default().fg(theme::NEON_CYAN())
-    } else {
-        Style::default().fg(Color::Rgb(50, 60, 80))
-    };
+fn render_separator(f: &mut Frame, area: Rect) {
+    let top_style = Style::default()
+        .fg(theme::BG_PANEL())
+        .bg(theme::tab_inactive_bg());
+    let rest_style = Style::default().fg(theme::BG_PANEL());
+    const BORDER_CHAR: &str = "│";
 
-    // Draw vertical separator with handle indicator
-    let mut lines = Vec::new();
-    for i in 0..area.height {
-        let char = if i == area.height / 2 {
-            if is_active {
-                "◀▶"
-            } else {
-                "┃"
-            }
-        } else {
-            "│"
-        };
-        lines.push(Line::from(Span::styled(char, style)));
-    }
-
-    let handle = Paragraph::new(lines).alignment(Alignment::Center);
-    f.render_widget(handle, area);
+    let lines: Vec<Line> = std::iter::once(Line::from(Span::styled(BORDER_CHAR, top_style)))
+        .chain(std::iter::repeat_n(
+            Line::from(Span::styled(BORDER_CHAR, rest_style)),
+            (area.height as usize).saturating_sub(1),
+        ))
+        .collect();
+    let separator = Paragraph::new(lines);
+    f.render_widget(separator, area);
 }
 
 fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, area: Rect) {
@@ -333,11 +309,13 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, 
 }
 
 fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, area: Rect) {
-    let selected_key_type = app_state
+    let selected_key = app_state
         .selected_key_index
         .and_then(|idx| app_state.keys.get(idx))
-        .and_then(|k| k.as_ref())
-        .map(|k| k.value_type);
+        .and_then(|k| k.as_ref());
+
+    let selected_key_type = selected_key.map(|k| k.value_type);
+    let selected_key_name = selected_key.map(|k| k.name.as_str());
 
     let backend_type = app_state
         .connection_manager
@@ -348,6 +326,7 @@ fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, are
     let props = ValueViewerProps {
         selected_value: app_state.selected_value.as_ref(),
         selected_key_type,
+        selected_key_name,
         error_message: app_state.error_message.as_ref(),
         json_formatter: &app_state.json_formatter,
         text_formatter: &app_state.text_formatter,
@@ -382,12 +361,17 @@ fn render_welcome(
 }
 
 fn render_connection_palette(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState) {
+    use theme::raw;
+
     let area = centered_rect(60, 70, f.area());
+
+    // Render modal (uses raw colors internally)
+    let inner = render_modal(f, area, "Connections");
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(6), Constraint::Length(3)])
-        .margin(1)
-        .split(area);
+        .split(inner);
 
     ui_state.connection_palette_area = Some(chunks[0]);
 
@@ -399,48 +383,34 @@ fn render_connection_palette(f: &mut Frame, app_state: &AppState, ui_state: &mut
         animation: &ui_state.animation,
     };
 
-    // Glass effect background with title
-    let glass_bg = Block::default()
-        .title(Line::from(vec![Span::styled(
-            " Connections ",
-            Style::default()
-                .fg(theme::TEXT_BRIGHT())
-                .add_modifier(Modifier::BOLD),
-        )]))
-        .style(Style::default().bg(Color::Rgb(15, 18, 30)))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Double)
-        .border_style(Style::default().fg(theme::NEON_PURPLE()));
-
-    f.render_widget(Clear, area);
-    f.render_widget(glass_bg, area);
     ui_state.connection_list.render(f, chunks[0], props);
 
+    // Use raw colors for modal content
     let instructions = Paragraph::new(Line::from(vec![
         Span::styled(
             " Enter ",
             Style::default()
-                .fg(theme::BG_DEEP())
-                .bg(theme::NEON_CYAN())
+                .fg(raw::BG_DEEP())
+                .bg(raw::NEON_CYAN())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" connect ", Style::default().fg(theme::TEXT_SECONDARY())),
+        Span::styled(" connect ", Style::default().fg(raw::TEXT_SECONDARY())),
         Span::styled(
             " d ",
             Style::default()
-                .fg(theme::BG_DEEP())
-                .bg(theme::NEON_AMBER())
+                .fg(raw::BG_DEEP())
+                .bg(raw::NEON_AMBER())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" delete ", Style::default().fg(theme::TEXT_SECONDARY())),
+        Span::styled(" delete ", Style::default().fg(raw::TEXT_SECONDARY())),
         Span::styled(
             " Esc ",
             Style::default()
-                .fg(theme::BG_DEEP())
-                .bg(theme::NEON_PINK())
+                .fg(raw::BG_DEEP())
+                .bg(raw::NEON_PINK())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" close ", Style::default().fg(theme::TEXT_SECONDARY())),
+        Span::styled(" close ", Style::default().fg(raw::TEXT_SECONDARY())),
     ]))
     .alignment(Alignment::Center);
 
@@ -454,17 +424,15 @@ fn render_status_bar(
     keybindings: &KeybindingsConfig,
     area: Rect,
 ) {
-    // Background
-    let bg = Block::default()
-        .style(Style::default().bg(theme::BG_PANEL()))
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::Rgb(40, 50, 70)));
-    f.render_widget(bg, area);
+    // Get selected key name for left side
+    let selected_key_name = app_state
+        .selected_key_index
+        .and_then(|idx| app_state.keys.get(idx))
+        .and_then(|k| k.as_ref())
+        .map(|k| k.name.as_str());
 
-    let inner_area = Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), 1);
-
-    // Left side: connection status
-    let (status_text, status_style, status_icon) =
+    // Get connection info for right side
+    let (conn_text, conn_style, conn_icon) =
         if let Some(status) = app_state.connection_manager.get_active_status() {
             match status {
                 ConnectionStatus::Connected => {
@@ -472,7 +440,7 @@ fn render_status_bar(
                         .connection_manager
                         .get_active_id()
                         .and_then(|id| app_state.connection_manager.get_config(id))
-                        .map(|config| format!("{} ({}:{})", config.name, config.host, config.port))
+                        .map(|config| format!("{}:{}", config.host, config.port))
                         .unwrap_or_else(|| "Connected".to_string());
                     (
                         config_info,
@@ -490,11 +458,15 @@ fn render_status_bar(
                     theme::status_disconnected(),
                     theme::INDICATOR_DISCONNECTED,
                 ),
-                ConnectionStatus::Error(ref msg) => (
-                    format!("Error: {}", msg),
-                    theme::status_error(),
-                    theme::INDICATOR_ERROR,
-                ),
+                ConnectionStatus::Error(ref msg) => {
+                    // Truncate error messages
+                    let short_msg = if msg.len() > 20 {
+                        format!("{}...", &msg[..17])
+                    } else {
+                        msg.clone()
+                    };
+                    (short_msg, theme::status_error(), theme::INDICATOR_ERROR)
+                }
             }
         } else {
             (
@@ -504,77 +476,79 @@ fn render_status_bar(
             )
         };
 
-    // Right side: keybindings - get from config
+    // Build keybindings string (center section - always at fixed center position)
     let context = BindingContext::Default;
-    let keybinds: Vec<(String, &str)> = vec![
-        (
-            keybindings
-                .get_first_keybinding("navigation.next_panel", context)
-                .map(|k| format_key_for_display(&k))
-                .unwrap_or_else(|| "Tab".to_string()),
-            "tabs",
-        ),
-        (
-            keybindings
-                .get_first_keybinding("connection.palette.toggle", context)
-                .map(|k| format_key_for_display(&k))
-                .unwrap_or_else(|| "^P".to_string()),
-            "palette",
-        ),
-        (
-            keybindings
-                .get_first_keybinding("connection.form.open", context)
-                .map(|k| format_key_for_display(&k))
-                .unwrap_or_else(|| "^N".to_string()),
-            "new",
-        ),
-        (
-            keybindings
-                .get_first_keybinding("help.toggle", context)
-                .map(|k| format_key_for_display(&k))
-                .unwrap_or_else(|| "?".to_string()),
-            "help",
-        ),
-        (
-            keybindings
-                .get_first_keybinding("quit.show", context)
-                .map(|k| format_key_for_display(&k))
-                .unwrap_or_else(|| "q".to_string()),
-            "quit",
-        ),
-    ];
+    let help_key = keybindings
+        .get_first_keybinding("help.toggle", context)
+        .map(|k| format_key_for_display(&k))
+        .unwrap_or_else(|| "?".to_string());
+    let quit_key = keybindings
+        .get_first_keybinding("quit.show", context)
+        .map(|k| format_key_for_display(&k))
+        .unwrap_or_else(|| "Q".to_string());
 
-    let mut right_spans: Vec<Span> = Vec::new();
-    for (key, desc) in keybinds.iter() {
-        right_spans.push(Span::styled(
-            key.as_str(),
-            Style::default().fg(theme::NEON_CYAN()),
-        ));
-        right_spans.push(Span::styled(
-            format!(" {}  ", desc),
+    let keybinds_str = format!("{} help  {} quit", help_key, quit_key);
+    let keybinds_len = keybinds_str.chars().count();
+
+    // Connection info string
+    let conn_str = format!("{} {}", conn_icon, conn_text);
+    let conn_len = conn_str.chars().count();
+
+    // Use fixed 3-section layout: [left 35%] [center 30%] [right 35%]
+    // This keeps the help text at a stable position
+    let total_width = area.width as usize;
+    let left_width = total_width * 35 / 100;
+    let center_width = total_width * 30 / 100;
+    let right_width = total_width.saturating_sub(left_width + center_width);
+
+    // Left section: key name (truncate if needed)
+    let key_display = if let Some(name) = selected_key_name {
+        let max_len = left_width.saturating_sub(2); // leave some margin
+        if name.chars().count() > max_len {
+            let truncated: String = name.chars().take(max_len.saturating_sub(1)).collect();
+            format!(" {}…", truncated)
+        } else {
+            format!(" {}", name)
+        }
+    } else {
+        String::new()
+    };
+    let left_len = key_display.chars().count();
+    let left_padding = left_width.saturating_sub(left_len);
+
+    // Center section: keybindings (centered within center section)
+    let center_left_pad = center_width.saturating_sub(keybinds_len) / 2;
+    let center_right_pad = center_width.saturating_sub(keybinds_len + center_left_pad);
+
+    // Right section: connection info (right-aligned)
+    let right_padding = right_width.saturating_sub(conn_len + 1);
+
+    // Build the status line with fixed positions
+    let spans = vec![
+        // Left section
+        Span::styled(&key_display, Style::default().fg(theme::TEXT_PRIMARY())),
+        Span::raw(" ".repeat(left_padding)),
+        // Center section
+        Span::raw(" ".repeat(center_left_pad)),
+        Span::styled(&keybinds_str, Style::default().fg(theme::TEXT_DIM())),
+        Span::raw(" ".repeat(center_right_pad)),
+        // Right section
+        Span::raw(" ".repeat(right_padding)),
+        Span::styled(conn_icon, conn_style),
+        Span::styled(
+            format!(" {}", conn_text),
             Style::default().fg(theme::TEXT_DIM()),
-        ));
-    }
-
-    // Calculate spacing
-    let left_content = format!("{} {}", status_icon, status_text);
-    let right_content_len: usize = keybinds.iter().map(|(k, d)| k.len() + d.len() + 3).sum();
-    let padding = inner_area
-        .width
-        .saturating_sub(left_content.chars().count() as u16 + right_content_len as u16);
-
-    let mut spans = vec![
-        Span::styled(format!("{} ", status_icon), status_style),
-        Span::styled(status_text, Style::default().fg(theme::TEXT_PRIMARY())),
-        Span::raw(" ".repeat(padding as usize)),
+        ),
+        Span::raw(" "),
     ];
-    spans.extend(right_spans);
 
-    let status_line = Paragraph::new(Line::from(spans));
-    f.render_widget(status_line, inner_area);
+    let status_line = Paragraph::new(Line::from(spans)).style(theme::util_bg());
+    f.render_widget(status_line, area);
 }
 
 fn render_quit_confirmation(f: &mut Frame, _animation: &AnimationState) {
+    use theme::raw;
+
     let area = centered_rect(45, 25, f.area());
     let area = Rect {
         x: area.x,
@@ -589,12 +563,13 @@ fn render_quit_confirmation(f: &mut Frame, _animation: &AnimationState) {
         height: area.height,
     };
 
+    // Use raw (undimmed) colors for modal content
     let text = vec![
         Line::from(""),
         Line::from(Span::styled(
             "Are you sure you want to quit?",
             Style::default()
-                .fg(theme::TEXT_BRIGHT())
+                .fg(raw::TEXT_BRIGHT())
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -602,41 +577,25 @@ fn render_quit_confirmation(f: &mut Frame, _animation: &AnimationState) {
             Span::styled(
                 " y ",
                 Style::default()
-                    .fg(theme::BG_DEEP())
-                    .bg(theme::NEON_GREEN())
+                    .fg(raw::BG_DEEP())
+                    .bg(raw::NEON_GREEN())
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" yes  ", Style::default().fg(theme::TEXT_SECONDARY())),
+            Span::styled(" yes  ", Style::default().fg(raw::TEXT_SECONDARY())),
             Span::styled(
                 " n ",
                 Style::default()
-                    .fg(theme::BG_DEEP())
-                    .bg(theme::NEON_RED())
+                    .fg(raw::BG_DEEP())
+                    .bg(raw::NEON_RED())
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" no ", Style::default().fg(theme::TEXT_SECONDARY())),
+            Span::styled(" no ", Style::default().fg(raw::TEXT_SECONDARY())),
         ]),
     ];
 
     let dialog = Paragraph::new(text)
-        .block(
-            Block::default()
-                .title(Line::from(vec![
-                    Span::styled(" ", Style::default()),
-                    Span::styled(
-                        "Quit",
-                        Style::default()
-                            .fg(theme::NEON_AMBER())
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" ", Style::default()),
-                ]))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(theme::NEON_AMBER())),
-        )
-        .alignment(Alignment::Center)
-        .style(Style::default().bg(theme::BG_SURFACE()));
+        .block(confirm_block_raw("Quit"))
+        .alignment(Alignment::Center);
 
     f.render_widget(Clear, area);
     f.render_widget(dialog, area);

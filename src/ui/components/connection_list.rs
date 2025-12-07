@@ -2,7 +2,7 @@ use super::Component;
 use crate::action::Action;
 use crate::app::ConnectionStatus;
 use crate::types::ConnectionConfig;
-use crate::ui::theme::{self, AnimationState};
+use crate::ui::theme::{self, raw, AnimationState};
 use crossterm::event::KeyEvent;
 use ratatui::{
     layout::Rect,
@@ -104,6 +104,7 @@ impl Component for ConnectionList {
     type Msg = Action;
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
+        // Use raw (undimmed) colors since this is rendered inside a modal
         let connections: Vec<ListItem> = props
             .configs
             .iter()
@@ -115,26 +116,24 @@ impl Component for ConnectionList {
                     .unwrap_or(ConnectionStatus::Disconnected);
 
                 let (status_indicator, status_color) = match status {
-                    ConnectionStatus::Connected => {
-                        (theme::INDICATOR_CONNECTED, theme::NEON_GREEN())
-                    }
+                    ConnectionStatus::Connected => (theme::INDICATOR_CONNECTED, raw::NEON_GREEN()),
                     ConnectionStatus::Connecting => {
-                        (theme::spinner_pulse(props.animation), theme::NEON_AMBER())
+                        (theme::spinner_pulse(props.animation), raw::NEON_AMBER())
                     }
                     ConnectionStatus::Disconnected => {
-                        (theme::INDICATOR_DISCONNECTED, theme::TEXT_DIM())
+                        (theme::INDICATOR_DISCONNECTED, raw::TEXT_DIM())
                     }
-                    ConnectionStatus::Error(_) => (theme::INDICATOR_ERROR, theme::NEON_RED()),
+                    ConnectionStatus::Error(_) => (theme::INDICATOR_ERROR, raw::NEON_RED()),
                 };
 
                 let is_active = props.active_id.map(|id| id == config.id).unwrap_or(false);
 
                 let name_style = if is_active {
                     Style::default()
-                        .fg(theme::NEON_CYAN())
+                        .fg(raw::NEON_CYAN())
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(theme::TEXT_PRIMARY())
+                    Style::default().fg(raw::TEXT_PRIMARY())
                 };
 
                 ListItem::new(Line::from(vec![
@@ -145,14 +144,19 @@ impl Component for ConnectionList {
                     Span::styled(&config.name, name_style),
                     Span::styled(
                         format!(" ({}:{})", config.host, config.port),
-                        Style::default().fg(theme::TEXT_DIM()),
+                        Style::default().fg(raw::TEXT_DIM()),
                     ),
                 ]))
             })
             .collect();
 
+        // Use raw colors for highlight style too
+        let highlight_style = Style::default()
+            .bg(raw::BG_SELECTED())
+            .add_modifier(Modifier::BOLD);
+
         let connections_list = List::new(connections)
-            .highlight_style(theme::list_selected().add_modifier(Modifier::BOLD))
+            .highlight_style(highlight_style)
             .highlight_symbol("▸ ");
 
         f.render_stateful_widget(connections_list, area, &mut self.state);

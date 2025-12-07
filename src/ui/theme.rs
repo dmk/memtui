@@ -10,6 +10,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders},
 };
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -29,6 +30,58 @@ pub fn theme() -> &'static ThemeConfig {
 /// Should be called once at startup before any rendering
 pub fn init_theme(config: ThemeConfig) {
     let _ = THEME.set(config);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DIMMING SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Current dim factor - only lives during a single render frame
+/// Using AtomicU8 for thread-safety (0-255 maps to 0.0-1.0)
+static DIM_FACTOR: AtomicU8 = AtomicU8::new(0);
+
+/// Apply dimming to all theme colors for this render frame.
+/// Call this at the start of render when a modal is active.
+/// The dim is automatically used by all color getters.
+pub fn dim_theme(factor: f32) {
+    let clamped = (factor.clamp(0.0, 1.0) * 255.0) as u8;
+    DIM_FACTOR.store(clamped, Ordering::Relaxed);
+}
+
+/// Restore theme to normal (no dimming).
+/// Call this at the end of render to ensure clean state.
+pub fn restore_theme() {
+    DIM_FACTOR.store(0, Ordering::Relaxed);
+}
+
+/// Get current dim factor (0.0 to 1.0)
+pub fn get_dim() -> f32 {
+    DIM_FACTOR.load(Ordering::Relaxed) as f32 / 255.0
+}
+
+/// Apply current dim factor to a color
+fn apply_dim(color: Color) -> Color {
+    let factor = get_dim();
+    if factor == 0.0 {
+        return color;
+    }
+    dim_color_by(color, factor)
+}
+
+/// Dim a color by a factor (0.0 = original, 1.0 = black)
+fn dim_color_by(color: Color, factor: f32) -> Color {
+    match color {
+        Color::Rgb(r, g, b) => {
+            let inv = 1.0 - factor;
+            Color::Rgb(
+                (r as f32 * inv) as u8,
+                (g as f32 * inv) as u8,
+                (b as f32 * inv) as u8,
+            )
+        }
+        // For non-RGB colors, we can't easily dim, return as-is
+        _ => color,
+    }
 }
 
 /// RGB color representation for JSON serialization
@@ -302,119 +355,320 @@ fn default_border_active() -> RgbColor {
 // ═══════════════════════════════════════════════════════════════════════════════
 // COLOR PALETTE (backward compatible functions that read from theme)
 // These use SCREAMING_CASE to match the original const-based API
+// All colors are automatically dimmed based on the global dim factor
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[allow(non_snake_case)]
 /// Primary accent - cyan
 pub fn ACCENT() -> Color {
-    theme().accent.primary.to_color()
+    apply_dim(theme().accent.primary.to_color())
 }
 #[allow(non_snake_case)]
 /// Secondary accent - lighter cyan
 pub fn ACCENT_DIM() -> Color {
-    theme().accent.dim.to_color()
+    apply_dim(theme().accent.dim.to_color())
 }
 #[allow(non_snake_case)]
 /// Highlight accent
 pub fn ACCENT_BRIGHT() -> Color {
-    theme().accent.bright.to_color()
+    apply_dim(theme().accent.bright.to_color())
 }
 
 #[allow(non_snake_case)]
 /// Neon green for success/connected
 pub fn NEON_GREEN() -> Color {
-    theme().neon.green.to_color()
+    apply_dim(theme().neon.green.to_color())
 }
 #[allow(non_snake_case)]
 /// Amber for warnings
 pub fn NEON_AMBER() -> Color {
-    theme().neon.amber.to_color()
+    apply_dim(theme().neon.amber.to_color())
 }
 #[allow(non_snake_case)]
 /// Red for errors
 pub fn NEON_RED() -> Color {
-    theme().neon.red.to_color()
+    apply_dim(theme().neon.red.to_color())
 }
 #[allow(non_snake_case)]
 /// Purple for special elements
 pub fn NEON_PURPLE() -> Color {
-    theme().neon.purple.to_color()
+    apply_dim(theme().neon.purple.to_color())
 }
 #[allow(non_snake_case)]
 /// Cyan for accents
 pub fn NEON_CYAN() -> Color {
-    theme().neon.cyan.to_color()
+    apply_dim(theme().neon.cyan.to_color())
 }
 #[allow(non_snake_case)]
 /// Pink for logo gradient
 pub fn NEON_PINK() -> Color {
-    theme().neon.pink.to_color()
+    apply_dim(theme().neon.pink.to_color())
 }
 #[allow(non_snake_case)]
 /// Electric blue
 pub fn ELECTRIC_BLUE() -> Color {
-    theme().neon.electric_blue.to_color()
+    apply_dim(theme().neon.electric_blue.to_color())
 }
 
 #[allow(non_snake_case)]
 /// Deep background
 pub fn BG_DEEP() -> Color {
-    theme().background.deep.to_color()
+    apply_dim(theme().background.deep.to_color())
 }
 #[allow(non_snake_case)]
 /// Panel background
 pub fn BG_PANEL() -> Color {
-    theme().background.panel.to_color()
+    apply_dim(theme().background.panel.to_color())
 }
 #[allow(non_snake_case)]
 /// Surface background - for cards/elevated areas
 pub fn BG_SURFACE() -> Color {
-    theme().background.surface.to_color()
+    apply_dim(theme().background.surface.to_color())
 }
 #[allow(non_snake_case)]
 /// Selected item background
 pub fn BG_SELECTED() -> Color {
-    theme().background.selected.to_color()
+    apply_dim(theme().background.selected.to_color())
 }
 #[allow(non_snake_case)]
 /// Hover/elevated state
 pub fn BG_ELEVATED() -> Color {
-    theme().background.elevated.to_color()
+    apply_dim(theme().background.elevated.to_color())
 }
 #[allow(non_snake_case)]
 pub fn BG_HOVER() -> Color {
-    theme().background.hover.to_color()
+    apply_dim(theme().background.hover.to_color())
 }
 
 #[allow(non_snake_case)]
 /// Dim text
 pub fn TEXT_DIM() -> Color {
-    theme().text.dim.to_color()
+    apply_dim(theme().text.dim.to_color())
 }
 #[allow(non_snake_case)]
 /// Secondary text
 pub fn TEXT_SECONDARY() -> Color {
-    theme().text.secondary.to_color()
+    apply_dim(theme().text.secondary.to_color())
 }
 #[allow(non_snake_case)]
 /// Primary text
 pub fn TEXT_PRIMARY() -> Color {
-    theme().text.primary.to_color()
+    apply_dim(theme().text.primary.to_color())
 }
 #[allow(non_snake_case)]
 /// Bright/white text
 pub fn TEXT_BRIGHT() -> Color {
-    theme().text.bright.to_color()
+    apply_dim(theme().text.bright.to_color())
 }
 
 #[allow(non_snake_case)]
 /// Border colors
 pub fn BORDER_DIM() -> Color {
-    theme().border.dim.to_color()
+    apply_dim(theme().border.dim.to_color())
 }
 #[allow(non_snake_case)]
 pub fn BORDER_ACTIVE() -> Color {
-    theme().border.active.to_color()
+    apply_dim(theme().border.active.to_color())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RAW COLORS (undimmed - for modal content)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Raw colors module - bypasses dimming for modal/overlay content
+pub mod raw {
+    use super::*;
+
+    #[allow(non_snake_case)]
+    pub fn ACCENT() -> Color {
+        theme().accent.primary.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn ACCENT_DIM() -> Color {
+        theme().accent.dim.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn ACCENT_BRIGHT() -> Color {
+        theme().accent.bright.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn NEON_GREEN() -> Color {
+        theme().neon.green.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn NEON_AMBER() -> Color {
+        theme().neon.amber.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn NEON_RED() -> Color {
+        theme().neon.red.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn NEON_PURPLE() -> Color {
+        theme().neon.purple.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn NEON_CYAN() -> Color {
+        theme().neon.cyan.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn NEON_PINK() -> Color {
+        theme().neon.pink.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn ELECTRIC_BLUE() -> Color {
+        theme().neon.electric_blue.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn BG_DEEP() -> Color {
+        theme().background.deep.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn BG_PANEL() -> Color {
+        theme().background.panel.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn BG_SURFACE() -> Color {
+        theme().background.surface.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn BG_SELECTED() -> Color {
+        theme().background.selected.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn BG_ELEVATED() -> Color {
+        theme().background.elevated.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn BG_HOVER() -> Color {
+        theme().background.hover.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn TEXT_DIM() -> Color {
+        theme().text.dim.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn TEXT_SECONDARY() -> Color {
+        theme().text.secondary.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn TEXT_PRIMARY() -> Color {
+        theme().text.primary.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn TEXT_BRIGHT() -> Color {
+        theme().text.bright.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn BORDER_DIM() -> Color {
+        theme().border.dim.to_color()
+    }
+    #[allow(non_snake_case)]
+    pub fn BORDER_ACTIVE() -> Color {
+        theme().border.active.to_color()
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // RAW STYLE HELPERS (for modal content)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Modal/dialog block using raw (undimmed) colors
+    pub fn modal_block(title: impl Into<String>) -> Block<'static> {
+        let title_str = title.into();
+        Block::default()
+            .title(format!(" {} ", title_str))
+            .title_style(
+                Style::default()
+                    .fg(TEXT_BRIGHT())
+                    .add_modifier(Modifier::BOLD),
+            )
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(BORDER_DIM()))
+            .style(Style::default().bg(BG_DEEP()))
+    }
+
+    /// Input field block for forms (raw colors)
+    pub fn input_block(label: impl Into<String>, is_focused: bool) -> Block<'static> {
+        let label_str = label.into();
+        if is_focused {
+            Block::default()
+                .title(format!(" {} ", label_str))
+                .title_style(
+                    Style::default()
+                        .fg(ACCENT_BRIGHT())
+                        .add_modifier(Modifier::BOLD),
+                )
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT()))
+        } else {
+            Block::default()
+                .title(format!(" {} ", label_str))
+                .title_style(Style::default().fg(TEXT_DIM()))
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(BORDER_DIM()))
+        }
+    }
+
+    /// Form title style (raw)
+    pub fn form_title() -> Style {
+        Style::default()
+            .fg(NEON_CYAN())
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// Form hint style (raw)
+    pub fn form_hint() -> Style {
+        Style::default().fg(TEXT_DIM())
+    }
+
+    /// Form error style (raw)
+    pub fn form_error() -> Style {
+        Style::default().fg(NEON_RED())
+    }
+
+    /// Form note style (raw)
+    pub fn form_note() -> Style {
+        Style::default()
+            .fg(TEXT_DIM())
+            .add_modifier(Modifier::ITALIC)
+    }
+
+    /// Input text style (raw)
+    pub fn input_text() -> Style {
+        Style::default().fg(TEXT_PRIMARY())
+    }
+
+    /// Keybind key style (raw)
+    pub fn keybind_key_style() -> Style {
+        Style::default().fg(NEON_AMBER())
+    }
+
+    /// Selector option selected (raw)
+    pub fn selector_option_selected(is_field_active: bool) -> Style {
+        if is_field_active {
+            Style::default()
+                .fg(BG_DEEP())
+                .bg(ACCENT())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(BG_DEEP())
+                .bg(TEXT_SECONDARY())
+                .add_modifier(Modifier::BOLD)
+        }
+    }
+
+    /// Selector option unselected (raw)
+    pub fn selector_option_unselected(is_field_active: bool) -> Style {
+        if is_field_active {
+            Style::default().fg(ACCENT_DIM())
+        } else {
+            Style::default().fg(TEXT_DIM())
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -550,6 +804,36 @@ pub const INDICATOR_DISCONNECTED: &str = "○";
 pub const INDICATOR_ERROR: &str = "✕";
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SCROLLBAR STYLES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+use ratatui::widgets::{Scrollbar, ScrollbarOrientation};
+
+/// Create a consistently styled vertical scrollbar
+pub fn scrollbar(is_active: bool) -> Scrollbar<'static> {
+    Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█")
+        .style(Style::default().fg(if is_active {
+            ACCENT_DIM()
+        } else {
+            BORDER_DIM()
+        }))
+}
+
+/// Scrollbar area positioned at the right edge of a content area
+pub fn scrollbar_area(content_area: Rect) -> Rect {
+    Rect::new(
+        content_area.x + content_area.width.saturating_sub(1),
+        content_area.y,
+        1,
+        content_area.height,
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // BORDER STYLES
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -591,37 +875,84 @@ pub fn status_disconnected() -> Style {
 // BLOCK BUILDERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Create a panel block with clear title styling
-pub fn panel_block(title: impl Into<String>, is_active: bool) -> Block<'static> {
-    let title_str = title.into();
+/// Create a panel block - borderless, no title (header rendered separately)
+pub fn panel_block(_title: impl Into<String>, _is_active: bool) -> Block<'static> {
+    Block::default()
+        .borders(Borders::NONE)
+        .padding(ratatui::widgets::Padding::new(1, 1, 0, 0))
+}
 
-    if is_active {
-        Block::default()
-            .title(Line::from(vec![
-                Span::styled("│", Style::default().fg(BORDER_ACTIVE())),
-                Span::styled(
-                    format!(" {} ", title_str),
-                    Style::default()
-                        .fg(ACCENT_BRIGHT())
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("│", Style::default().fg(BORDER_ACTIVE())),
-            ]))
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(border_focused())
-            .style(Style::default().bg(BG_PANEL()))
+/// Render a full-width panel header line
+/// Returns the content area (below the header)
+pub fn render_panel_header(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    title: &str,
+    is_active: bool,
+) -> Rect {
+    render_panel_header_split(f, area, title, "", is_active)
+}
+
+/// Render a full-width panel header with left title and right info
+/// Returns the content area (below the header)
+pub fn render_panel_header_split(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    title_left: &str,
+    title_right: &str,
+    is_active: bool,
+) -> Rect {
+    let header_area = Rect::new(area.x, area.y, area.width, 1);
+    let content_area = Rect::new(
+        area.x,
+        area.y + 1,
+        area.width,
+        area.height.saturating_sub(1),
+    );
+
+    let (bg_color, fg_color, right_fg) = if is_active {
+        (ACCENT(), BG_DEEP(), BG_DEEP())
     } else {
-        Block::default()
-            .title(Line::from(vec![Span::styled(
-                format!(" {} ", title_str),
-                Style::default().fg(TEXT_SECONDARY()),
-            )]))
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(border_inactive())
-            .style(Style::default().bg(BG_PANEL()))
+        (BG_SURFACE(), TEXT_SECONDARY(), TEXT_DIM())
+    };
+
+    // Build content with exact width to fill header completely
+    let width = area.width as usize;
+    let left_content = format!(" {} ", title_left);
+    let left_len = left_content.chars().count();
+
+    let right_content = if title_right.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", title_right)
+    };
+    let right_len = right_content.chars().count();
+
+    let padding = width.saturating_sub(left_len + right_len);
+
+    let mut spans = vec![
+        Span::styled(
+            left_content,
+            Style::default()
+                .fg(fg_color)
+                .bg(bg_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ".repeat(padding), Style::default().bg(bg_color)),
+    ];
+
+    if !title_right.is_empty() {
+        spans.push(Span::styled(
+            right_content,
+            Style::default().fg(right_fg).bg(bg_color),
+        ));
     }
+
+    let header =
+        ratatui::widgets::Paragraph::new(Line::from(spans)).style(Style::default().bg(bg_color));
+    f.render_widget(header, header_area);
+
+    content_area
 }
 
 /// Alias for backwards compatibility
@@ -637,23 +968,31 @@ pub fn animated_block(
     panel_block(title, is_active)
 }
 
-/// Modal/dialog block
+/// Modal/dialog block - for popups, dialogs, forms
+/// Has its own background since it floats above other content
 pub fn modal_block(title: impl Into<String>) -> Block<'static> {
+    let title_str = title.into();
     Block::default()
-        .title(Line::from(vec![Span::styled(
-            format!(" {} ", title.into()),
+        .title(format!(" {} ", title_str))
+        .title_style(
             Style::default()
                 .fg(TEXT_BRIGHT())
                 .add_modifier(Modifier::BOLD),
-        )]))
+        )
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT()))
-        .style(Style::default().bg(BG_SURFACE()))
+        .border_style(Style::default().fg(BORDER_DIM()))
+        .style(Style::default().bg(BG_DEEP()))
 }
 
 /// Glass-style block for dialogs (kept for compatibility)
 pub fn glass_block(title: impl Into<String>) -> Block<'static> {
+    modal_block(title)
+}
+
+/// Confirmation dialog block (quit, delete, etc.)
+/// Same style as modal_block for consistency
+pub fn confirm_block(title: impl Into<String>) -> Block<'static> {
     modal_block(title)
 }
 
@@ -762,6 +1101,11 @@ pub fn keybind_subtle(key: &str, description: &str) -> Vec<Span<'static>> {
     ]
 }
 
+/// Style for inline keybind hints (just the key part)
+pub fn keybind_key_style() -> Style {
+    Style::default().fg(NEON_AMBER())
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // LOGO
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -816,11 +1160,12 @@ pub fn logo_lines(animation: &AnimationState) -> Vec<Line<'static>> {
                         + (gradient.end.2 as f32 - gradient.start.2 as f32) * t)
                         as u8;
 
+                    // Apply dimming to the computed color
+                    let color = apply_dim(Color::Rgb(r, g, b));
+
                     Span::styled(
                         ch.to_string(),
-                        Style::default()
-                            .fg(Color::Rgb(r, g, b))
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
                     )
                 })
                 .collect();
@@ -828,6 +1173,208 @@ pub fn logo_lines(animation: &AnimationState) -> Vec<Line<'static>> {
             Line::from(chars)
         })
         .collect()
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INPUT/FORM STYLES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Input field block - for form text inputs
+/// No background - inherits from parent
+pub fn input_block(label: impl Into<String>, is_focused: bool) -> Block<'static> {
+    let label_str = label.into();
+    if is_focused {
+        Block::default()
+            .title(format!(" {} ", label_str))
+            .title_style(
+                Style::default()
+                    .fg(ACCENT_BRIGHT())
+                    .add_modifier(Modifier::BOLD),
+            )
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(ACCENT()))
+    } else {
+        Block::default()
+            .title(format!(" {} ", label_str))
+            .title_style(Style::default().fg(TEXT_DIM()))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(BORDER_DIM()))
+    }
+}
+
+/// Input text style
+pub fn input_text() -> Style {
+    Style::default().fg(TEXT_PRIMARY())
+}
+
+/// Placeholder text style
+pub fn input_placeholder() -> Style {
+    Style::default().fg(TEXT_DIM())
+}
+
+/// Style for selected option in a selector (e.g., backend type)
+pub fn selector_option_selected(is_field_active: bool) -> Style {
+    if is_field_active {
+        Style::default()
+            .fg(BG_DEEP())
+            .bg(ACCENT())
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(BG_DEEP())
+            .bg(TEXT_SECONDARY())
+            .add_modifier(Modifier::BOLD)
+    }
+}
+
+/// Style for unselected option in a selector
+pub fn selector_option_unselected(is_field_active: bool) -> Style {
+    if is_field_active {
+        Style::default().fg(ACCENT_DIM())
+    } else {
+        Style::default().fg(TEXT_DIM())
+    }
+}
+
+/// Form title style
+pub fn form_title() -> Style {
+    Style::default()
+        .fg(NEON_CYAN())
+        .add_modifier(Modifier::BOLD)
+}
+
+/// Form instructions/hint style
+pub fn form_hint() -> Style {
+    Style::default().fg(TEXT_DIM())
+}
+
+/// Form error style
+pub fn form_error() -> Style {
+    Style::default().fg(NEON_RED())
+}
+
+/// Form note/info style
+pub fn form_note() -> Style {
+    Style::default()
+        .fg(TEXT_DIM())
+        .add_modifier(Modifier::ITALIC)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STATUS BAR STYLES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Utility background for UI elements (status bar, tab bar, etc.)
+pub fn util_bg() -> Style {
+    Style::default().bg(BG_PANEL())
+}
+
+/// Tab bar active tab style - same as active pane title but darker
+pub fn tab_active() -> Style {
+    Style::default()
+        .fg(BG_DEEP())
+        .bg(ACCENT_DIM())
+        .add_modifier(Modifier::BOLD)
+}
+
+/// Tab bar inactive style background (for the bar itself)
+pub fn tab_inactive_bg() -> Color {
+    BG_PANEL()
+}
+
+/// Status indicator with symbol and color
+pub fn status_indicator_connected() -> (&'static str, Style) {
+    (INDICATOR_CONNECTED, Style::default().fg(NEON_GREEN()))
+}
+
+pub fn status_indicator_connecting() -> (&'static str, Style) {
+    (INDICATOR_CONNECTING, Style::default().fg(NEON_AMBER()))
+}
+
+pub fn status_indicator_disconnected() -> (&'static str, Style) {
+    (INDICATOR_DISCONNECTED, Style::default().fg(TEXT_DIM()))
+}
+
+pub fn status_indicator_error() -> (&'static str, Style) {
+    (INDICATOR_ERROR, Style::default().fg(NEON_RED()))
+}
+
+/// Status bar hint text style
+pub fn status_hint() -> Style {
+    Style::default().fg(TEXT_DIM())
+}
+
+/// Status bar operation indicator
+pub fn status_operation() -> Style {
+    Style::default().fg(NEON_CYAN())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MESSAGE STYLES (warnings, errors, toasts)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Warning message style (icon and text)
+pub fn message_warning() -> (Style, Style) {
+    let style = Style::default().fg(NEON_AMBER());
+    let bg = Style::default().bg(Color::Rgb(35, 30, 15));
+    (style, bg)
+}
+
+/// Error message style (icon and text)
+pub fn message_error() -> (Style, Style) {
+    let style = Style::default().fg(NEON_RED());
+    let bg = Style::default().bg(Color::Rgb(35, 15, 15));
+    (style, bg)
+}
+
+/// Info message style
+pub fn message_info() -> (Style, Style) {
+    let style = Style::default().fg(NEON_CYAN());
+    let bg = Style::default().bg(Color::Rgb(15, 25, 35));
+    (style, bg)
+}
+
+/// Success message style
+pub fn message_success() -> (Style, Style) {
+    let style = Style::default().fg(NEON_GREEN());
+    let bg = Style::default().bg(Color::Rgb(15, 35, 20));
+    (style, bg)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LAYOUT UTILITIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+use ratatui::layout::{Constraint, Direction, Layout};
+
+/// Create a centered rectangle within the given area
+pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+/// Create a fixed-size centered rectangle
+pub fn centered_rect_fixed(width: u16, height: u16, r: Rect) -> Rect {
+    let x = r.x + r.width.saturating_sub(width) / 2;
+    let y = r.y + r.height.saturating_sub(height) / 2;
+    Rect::new(x, y, width.min(r.width), height.min(r.height))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

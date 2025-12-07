@@ -1,16 +1,17 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
+use super::modal::render_modal;
 use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConfig};
-use crate::ui::theme;
+use crate::ui::theme::{self, raw};
 
 pub fn render_help(f: &mut Frame, keybindings: &KeybindingsConfig) {
-    let area = centered_rect(50, 60, f.area());
+    let area = theme::centered_rect(50, 60, f.area());
     let context = BindingContext::Default;
 
     // Helper to get keybinding
@@ -63,24 +64,22 @@ pub fn render_help(f: &mut Frame, keybindings: &KeybindingsConfig) {
         ("General", vec![("Toggle help", help), ("Quit", quit)]),
     ];
 
-    // Calculate inner area (accounting for block borders)
+    // Render modal with dimmed background
+    let block_inner = render_modal(f, area, "Help");
+
+    // Calculate inner area with extra padding
     let inner = Rect {
-        x: area.x + 2,
-        y: area.y + 2,
-        width: area.width.saturating_sub(4),
-        height: area.height.saturating_sub(3),
+        x: block_inner.x + 1,
+        y: block_inner.y + 1,
+        width: block_inner.width.saturating_sub(2),
+        height: block_inner.height.saturating_sub(1),
     };
 
-    // Render background block
-    let block = theme::glass_block("Help");
-    f.render_widget(Clear, area);
-    f.render_widget(block, area);
-
-    // Render title centered
+    // Render title centered (use raw colors for modal content)
     let title = Paragraph::new(Span::styled(
         "Keyboard Shortcuts",
         Style::default()
-            .fg(theme::NEON_CYAN())
+            .fg(raw::NEON_CYAN())
             .add_modifier(Modifier::BOLD),
     ))
     .alignment(Alignment::Center);
@@ -106,7 +105,7 @@ pub fn render_help(f: &mut Frame, keybindings: &KeybindingsConfig) {
         let section_header = Paragraph::new(Span::styled(
             section_name,
             Style::default()
-                .fg(theme::NEON_AMBER())
+                .fg(raw::NEON_AMBER())
                 .add_modifier(Modifier::BOLD),
         ));
         f.render_widget(
@@ -142,9 +141,9 @@ pub fn render_help(f: &mut Frame, keybindings: &KeybindingsConfig) {
 
             // Create the full line: "Description ..... Key"
             let line = Line::from(vec![
-                Span::styled(desc, Style::default().fg(theme::TEXT_DIM())),
+                Span::styled(desc, Style::default().fg(raw::TEXT_DIM())),
                 Span::styled(fill, Style::default().fg(Color::Rgb(55, 60, 70))),
-                Span::styled(&key, Style::default().fg(theme::NEON_CYAN())),
+                Span::styled(&key, Style::default().fg(raw::NEON_CYAN())),
             ]);
 
             let line_widget = Paragraph::new(line);
@@ -168,7 +167,7 @@ pub fn render_help(f: &mut Frame, keybindings: &KeybindingsConfig) {
     let footer = Paragraph::new(Span::styled(
         "Press any key to close",
         Style::default()
-            .fg(theme::TEXT_DIM())
+            .fg(raw::TEXT_DIM())
             .add_modifier(Modifier::ITALIC),
     ))
     .alignment(Alignment::Center);
@@ -181,24 +180,4 @@ pub fn render_help(f: &mut Frame, keybindings: &KeybindingsConfig) {
             height: 1,
         },
     );
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }

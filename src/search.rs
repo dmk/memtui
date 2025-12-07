@@ -4,33 +4,54 @@ use nucleo_matcher::{
     pattern::{CaseMatching, Normalization, Pattern},
     Config, Matcher,
 };
+use std::collections::HashMap;
+
+/// Result of a fuzzy search including match positions for highlighting
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    /// Indices of matching keys (into the original keys array), sorted by score
+    pub indices: Vec<usize>,
+    /// Map from key index to character positions that matched (for highlighting)
+    pub match_positions: HashMap<usize, Vec<u32>>,
+}
 
 /// Performs fuzzy search on a list of key names, returning indices of matches
-/// sorted by match quality (best matches first)
-pub fn fuzzy_search_keys(keys: &[Option<crate::types::KeyMetadata>], pattern: &str) -> Vec<usize> {
+/// sorted by match quality (best matches first), along with match positions for highlighting
+pub fn fuzzy_search_keys_with_positions(
+    keys: &[Option<crate::types::KeyMetadata>],
+    pattern: &str,
+) -> SearchResult {
     if pattern.is_empty() {
         // Empty pattern matches everything - return all indices with loaded keys
-        return keys
+        let indices = keys
             .iter()
             .enumerate()
             .filter_map(|(i, k)| k.as_ref().map(|_| i))
             .collect();
+        return SearchResult {
+            indices,
+            match_positions: HashMap::new(),
+        };
     }
 
     let mut matcher = Matcher::new(Config::DEFAULT);
     let pat = Pattern::parse(pattern, CaseMatching::Ignore, Normalization::Smart);
 
-    let mut scored_matches: Vec<(usize, u32)> = keys
+    let mut scored_matches: Vec<(usize, u32, Vec<u32>)> = keys
         .iter()
         .enumerate()
         .filter_map(|(idx, key_opt)| {
             key_opt.as_ref().and_then(|key| {
                 let mut buf = Vec::new();
-                pat.score(
-                    nucleo_matcher::Utf32Str::new(&key.name, &mut buf),
-                    &mut matcher,
-                )
-                .map(|score| (idx, score))
+                let haystack = nucleo_matcher::Utf32Str::new(&key.name, &mut buf);
+
+                // First check if there's a match
+                pat.score(haystack, &mut matcher).map(|score| {
+                    // Get match positions for highlighting
+                    let mut indices_buf = Vec::new();
+                    pat.indices(haystack, &mut matcher, &mut indices_buf);
+                    (idx, score, indices_buf)
+                })
             })
         })
         .collect();
@@ -38,7 +59,27 @@ pub fn fuzzy_search_keys(keys: &[Option<crate::types::KeyMetadata>], pattern: &s
     // Sort by score descending (higher score = better match)
     scored_matches.sort_by(|a, b| b.1.cmp(&a.1));
 
-    scored_matches.into_iter().map(|(idx, _)| idx).collect()
+    let mut match_positions = HashMap::new();
+    let indices: Vec<usize> = scored_matches
+        .into_iter()
+        .map(|(idx, _, positions)| {
+            if !positions.is_empty() {
+                match_positions.insert(idx, positions);
+            }
+            idx
+        })
+        .collect();
+
+    SearchResult {
+        indices,
+        match_positions,
+    }
+}
+
+/// Performs fuzzy search on a list of key names, returning indices of matches
+/// sorted by match quality (best matches first)
+pub fn fuzzy_search_keys(keys: &[Option<crate::types::KeyMetadata>], pattern: &str) -> Vec<usize> {
+    fuzzy_search_keys_with_positions(keys, pattern).indices
 }
 
 #[cfg(test)]

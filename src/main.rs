@@ -24,7 +24,7 @@ use memtui::backend::{Backend, EtcdBackend, MemcachedBackend, RedisBackend};
 use memtui::cli::{parse_connection_string, Cli, LogLevel};
 use memtui::config::Config;
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
-use memtui::search::fuzzy_search_keys;
+use memtui::search::fuzzy_search_keys_with_positions;
 use memtui::types::{BackendType, ConnectionConfig};
 use memtui::ui::{self, init_theme, Panel, UiState};
 use memtui::userdata;
@@ -849,9 +849,14 @@ impl App {
                 }
             }
 
-            Action::DidSearchLocal { indices, token } => {
+            Action::DidSearchLocal {
+                indices,
+                match_positions,
+                token,
+            } => {
                 if self.app_state.search_token == token && self.app_state.is_searching {
                     self.app_state.search_results_local = indices;
+                    self.app_state.search_match_positions = match_positions;
                     // Auto-select first result if any
                     if !self.app_state.search_results_local.is_empty() {
                         self.app_state.search_selection_index = Some(0);
@@ -1406,16 +1411,18 @@ impl App {
         if query.is_empty() {
             self.app_state.search_results_local.clear();
             self.app_state.search_results_server.clear();
+            self.app_state.search_match_positions.clear();
             self.app_state.is_server_searching = false;
             return;
         }
 
         // 1. Immediate local fuzzy search on loaded keys
         let keys = &self.app_state.keys;
-        let local_results = fuzzy_search_keys(keys, &query);
+        let search_result = fuzzy_search_keys_with_positions(keys, &query);
         let tx = self.action_tx.clone();
         let _ = tx.send(Action::DidSearchLocal {
-            indices: local_results,
+            indices: search_result.indices,
+            match_positions: search_result.match_positions,
             token,
         });
 

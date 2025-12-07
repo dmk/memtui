@@ -6,6 +6,7 @@ use ratatui::{
     widgets::{List, ListItem, ListState, ScrollbarState},
     Frame,
 };
+use std::collections::HashMap;
 
 use super::Component;
 use crate::action::Action;
@@ -30,6 +31,8 @@ pub struct KeyBrowserProps<'a> {
     pub search_selection_index: Option<usize>,
     /// Animation state for visual effects
     pub animation: &'a AnimationState,
+    /// Match positions for highlighting (key index -> char positions)
+    pub search_match_positions: &'a HashMap<usize, Vec<u32>>,
 }
 
 pub struct KeyBrowser {
@@ -102,8 +105,32 @@ impl Component for KeyBrowser {
             .map(|q| !q.is_empty())
             .unwrap_or(false);
 
+        // Calculate search result count upfront for title display
+        let search_result_count = if has_search {
+            // Count local results + unique server results
+            let local_key_names: std::collections::HashSet<&str> = props
+                .search_results_local
+                .iter()
+                .filter_map(|&idx| {
+                    props
+                        .keys
+                        .get(idx)
+                        .and_then(|k| k.as_ref())
+                        .map(|k| k.name.as_str())
+                })
+                .collect();
+            let unique_server_count = props
+                .search_results_server
+                .iter()
+                .filter(|k| !local_key_names.contains(k.name.as_str()))
+                .count();
+            props.search_results_local.len() + unique_server_count
+        } else {
+            0
+        };
+
         // Build title parts (left title, right info)
-        let (title_left, title_right) = self.build_title_parts(&props, has_search, 0);
+        let (title_left, title_right) = self.build_title_parts(&props, has_search, search_result_count);
 
         // Render full-width header and get content area
         let content_area =
@@ -217,10 +244,16 @@ impl KeyBrowser {
     ) -> (Vec<ListItem<'static>>, usize, Option<usize>) {
         let mut items: Vec<ListItem<'static>> = Vec::new();
 
-        // First add local matches (keys we already have loaded)
+        // First add local matches (keys we already have loaded) with highlighting
         for &key_idx in props.search_results_local.iter() {
             if let Some(Some(key)) = props.keys.get(key_idx) {
-                items.push(Self::build_key_item(key, content_width, props.backend_type));
+                let match_positions = props.search_match_positions.get(&key_idx);
+                items.push(Self::build_key_item_highlighted(
+                    key,
+                    content_width,
+                    props.backend_type,
+                    match_positions,
+                ));
             }
         }
 
@@ -639,5 +672,117 @@ impl KeyBrowser {
         let mut truncated: String = text.chars().take(max_chars - 3).collect();
         truncated.push_str("...");
         truncated
+    }
+
+    /// Build a key item with highlighted matching characters for search results
+    fn build_key_item_highlighted(
+        key: &KeyMetadata,
+        content_width: usize,
+        backend_type: Option<crate::types::BackendType>,
+        match_positions: Option<&Vec<u32>>,
+    ) -> ListItem<'static> {
+        let show_type = !matches!(
+            backend_type,
+            Some(crate::types::BackendType::Memcached | crate::types::BackendType::Etcd)
+        );
+
+        if show_type {
+            let type_label = key.value_type.to_string();
+            let type_width = type_label.chars().count();
+            let min_gap = if content_width > type_width { 1 } else { 0 };
+            let available_for_name = content_width.saturating_sub(type_width + min_gap);
+            let name_display = Self::truncate_to_fit(&key.name, available_for_name);
+            let name_width = name_display.chars().count();
+            let spacer_width = content_width.saturating_sub(name_width + type_width);
+            let spacer = if spacer_width > 0 {
+                " ".repeat(spacer_width)
+            } else {
+                String::new()
+            };
+
+            // Type-specific colors
+            let type_color = match key.value_type {
+                crate::types::ValueType::String => theme::NEON_CYAN(),
+                crate::types::ValueType::Hash => theme::NEON_PURPLE(),
+                crate::types::ValueType::List => theme::NEON_GREEN(),
+                crate::types::ValueType::Set => theme::NEON_AMBER(),
+                crate::types::ValueType::SortedSet => theme::NEON_PINK(),
+                crate::types::ValueType::Binary => theme::TEXT_SECONDARY(),
+                crate::types::ValueType::Json => theme::ELECTRIC_BLUE(),
+                crate::types::ValueType::Integer => theme::NEON_GREEN(),
+                crate::types::ValueType::Float => theme::NEON_AMBER(),
+                crate::types::ValueType::Unknown => theme::TEXT_DIM(),
+            };
+
+            // Build highlighted name spans
+            let name_spans = Self::build_highlighted_spans(&name_display, match_positions);
+
+            let mut spans = name_spans;
+            spans.push(Span::raw(spacer));
+            spans.push(Span::styled(
+                type_label,
+                Style::default().fg(type_color).add_modifier(Modifier::DIM),
+            ));
+
+            ListItem::new(Line::from(spans))
+        } else {
+            // For memcached/etcd, just show the key name without type
+            let name_display = Self::truncate_to_fit(&key.name, content_width);
+            let name_spans = Self::build_highlighted_spans(&name_display, match_positions);
+            ListItem::new(Line::from(name_spans))
+        }
+    }
+
+    /// Build spans with highlighted matching characters
+    fn build_highlighted_spans(text: &str, match_positions: Option<&Vec<u32>>) -> Vec<Span<'static>> {
+        let positions: std::collections::HashSet<u32> = match_positions
+            .map(|p| p.iter().copied().collect())
+            .unwrap_or_default();
+
+        if positions.is_empty() {
+            // No highlighting needed
+            return vec![Span::styled(
+                text.to_string(),
+                Style::default().fg(theme::TEXT_PRIMARY()),
+            )];
+        }
+
+        let mut spans = Vec::new();
+        let mut current_segment = String::new();
+        let mut current_is_highlighted = false;
+
+        for (idx, ch) in text.chars().enumerate() {
+            let is_match = positions.contains(&(idx as u32));
+
+            if is_match != current_is_highlighted && !current_segment.is_empty() {
+                // Flush the current segment
+                let style = if current_is_highlighted {
+                    Style::default()
+                        .fg(theme::NEON_AMBER())
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme::TEXT_PRIMARY())
+                };
+                spans.push(Span::styled(current_segment.clone(), style));
+                current_segment.clear();
+            }
+
+            current_segment.push(ch);
+            current_is_highlighted = is_match;
+        }
+
+        // Flush remaining segment
+        if !current_segment.is_empty() {
+            let style = if current_is_highlighted {
+                Style::default()
+                    .fg(theme::NEON_AMBER())
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme::TEXT_PRIMARY())
+            };
+            spans.push(Span::styled(current_segment, style));
+        }
+
+        spans
     }
 }

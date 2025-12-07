@@ -303,6 +303,7 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, 
         is_server_searching: app_state.is_server_searching,
         search_selection_index: app_state.search_selection_index,
         animation: &ui_state.animation,
+        search_match_positions: &app_state.search_match_positions,
     };
 
     ui_state.key_browser.render(f, area, props);

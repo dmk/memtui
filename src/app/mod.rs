@@ -5,6 +5,7 @@ pub use connections::{ConnectionManager, ConnectionStatus};
 use crate::config::Config;
 use crate::formatter::{JsonColorConfig, JsonFormatter, TextFormatter};
 use crate::types::{KeyMetadata, Value};
+use std::collections::HashMap;
 
 /// Main application state (backend connection + data)
 pub struct AppState {
@@ -31,6 +32,7 @@ pub struct AppState {
     pub search_token: u64,                // Token to cancel stale searches
     pub is_server_searching: bool,        // Whether server search is in progress
     pub search_selection_index: Option<usize>, // Selection index within search results (0-based)
+    pub search_match_positions: HashMap<usize, Vec<u32>>, // Match positions for highlighting (key index -> char positions)
 }
 
 impl AppState {
@@ -75,6 +77,7 @@ impl AppState {
             search_token: 0,
             is_server_searching: false,
             search_selection_index: None,
+            search_match_positions: HashMap::new(),
         }
     }
 
@@ -102,6 +105,7 @@ impl AppState {
         self.search_token = self.search_token.wrapping_add(1);
         self.is_server_searching = false;
         self.search_selection_index = None;
+        self.search_match_positions.clear();
     }
 
     pub fn start_search(&mut self) {
@@ -112,6 +116,7 @@ impl AppState {
         self.search_token = self.search_token.wrapping_add(1);
         self.is_server_searching = false;
         self.search_selection_index = None;
+        self.search_match_positions.clear();
     }
 
     /// Calculate which indices in the sparse array are empty and should be filled

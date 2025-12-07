@@ -1,9 +1,7 @@
 use super::Component;
-use crate::action::Action;
 use crate::app::ConnectionStatus;
 use crate::types::ConnectionConfig;
 use crate::ui::theme::{self, raw, AnimationState};
-use crossterm::event::KeyEvent;
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
@@ -101,7 +99,6 @@ impl Default for ConnectionList {
 
 impl Component for ConnectionList {
     type Props<'a> = ConnectionListProps<'a>;
-    type Msg = Action;
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         // Use raw (undimmed) colors since this is rendered inside a modal
@@ -160,10 +157,5 @@ impl Component for ConnectionList {
             .highlight_symbol("▸ ");
 
         f.render_stateful_widget(connections_list, area, &mut self.state);
-    }
-
-    fn handle_input(&mut self, _key: KeyEvent, _props: Self::Props<'_>) -> Option<Self::Msg> {
-        // Input handling is done by App via Actions in this architecture
-        None
     }
 }

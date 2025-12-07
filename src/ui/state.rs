@@ -1,5 +1,5 @@
 use super::components::connection_list::ConnectionList;
-use super::components::key_browser::KeyBrowser;
+use super::components::key_list::KeyList;
 use super::components::value_viewer::ValueViewer;
 use super::components::welcome::WelcomeScreen;
 use super::theme::{AnimationState, PaneSplit};
@@ -28,7 +28,7 @@ pub struct UiState {
     pub form_error: Option<String>,
 
     pub connection_list: ConnectionList,
-    pub key_browser: KeyBrowser,
+    pub key_list: KeyList,
     pub value_viewer: ValueViewer,
     pub welcome_screen: WelcomeScreen,
     pub last_key_area: Option<Rect>,
@@ -64,7 +64,7 @@ impl UiState {
             form_error: None,
 
             connection_list: ConnectionList::new(),
-            key_browser: KeyBrowser::new(),
+            key_list: KeyList::new(),
             value_viewer: ValueViewer::new(),
             welcome_screen: WelcomeScreen::new(),
             last_key_area: None,
@@ -106,7 +106,7 @@ impl UiState {
     }
 
     pub fn key_state(&mut self) -> &mut ratatui::widgets::ListState {
-        &mut self.key_browser.state
+        &mut self.key_list.state
     }
 
     pub fn open_connection_form(&mut self) {
@@ -155,16 +155,16 @@ impl UiState {
         match self.active_panel {
             Panel::Keys => {
                 if keys_len == 0 {
-                    self.key_browser.select(None);
+                    self.key_list.select(None);
                     return false;
                 }
-                let current = self.key_browser.state.selected().unwrap_or(0);
+                let current = self.key_list.state.selected().unwrap_or(0);
                 let next = if current >= keys_len.saturating_sub(1) {
                     0
                 } else {
                     current + 1
                 };
-                self.key_browser.select(Some(next));
+                self.key_list.select(Some(next));
                 true
             }
             Panel::Value => {
@@ -178,16 +178,16 @@ impl UiState {
         match self.active_panel {
             Panel::Keys => {
                 if keys_len == 0 {
-                    self.key_browser.select(None);
+                    self.key_list.select(None);
                     return false;
                 }
-                let current = self.key_browser.state.selected().unwrap_or(0);
+                let current = self.key_list.state.selected().unwrap_or(0);
                 let prev = if current == 0 {
                     keys_len.saturating_sub(1)
                 } else {
                     current - 1
                 };
-                self.key_browser.select(Some(prev));
+                self.key_list.select(Some(prev));
                 true
             }
             Panel::Value => {
@@ -197,16 +197,16 @@ impl UiState {
         }
     }
 
-    /// Scroll key browser by a delta amount (positive = down, negative = up)
+    /// Scroll key list by a delta amount (positive = down, negative = up)
     /// More efficient than calling next_item/previous_item in a loop
     /// Matches the wrapping behavior of next_item/previous_item
     pub fn scroll_keys_by(&mut self, keys_len: usize, delta: isize) -> bool {
         if keys_len == 0 {
-            self.key_browser.select(None);
+            self.key_list.select(None);
             return false;
         }
 
-        let current = self.key_browser.state.selected().unwrap_or(0);
+        let current = self.key_list.state.selected().unwrap_or(0);
         let new_index = if delta > 0 {
             // Scroll down - matches next_item behavior
             let delta_u = delta as usize;
@@ -230,7 +230,7 @@ impl UiState {
             }
         };
 
-        self.key_browser.select(Some(new_index));
+        self.key_list.select(Some(new_index));
         true
     }
 

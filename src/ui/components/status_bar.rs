@@ -1,4 +1,3 @@
-use crossterm::event::KeyEvent;
 use ratatui::{
     layout::Rect,
     text::{Line, Span},
@@ -31,7 +30,6 @@ impl Default for StatusBar {
 
 impl Component for StatusBar {
     type Props<'a> = StatusBarProps<'a>;
-    type Msg = ();
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         // Build connection status (always shown on the left)
@@ -110,9 +108,5 @@ impl Component for StatusBar {
         let status_bar = Paragraph::new(status_line).style(theme::util_bg());
 
         f.render_widget(status_bar, area);
-    }
-
-    fn handle_input(&mut self, _key: KeyEvent, _props: Self::Props<'_>) -> Option<Self::Msg> {
-        None
     }
 }

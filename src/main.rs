@@ -12,20 +12,20 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Once};
-use tokio::sync::{mpsc, RwLock};
+use std::sync::Once;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::EnvFilter;
 
 use memtui::action::Action;
-use memtui::app::{AppState, ConnectionStatus};
-use memtui::backend::{Backend, EtcdBackend, MemcachedBackend, RedisBackend};
+use memtui::actions::{async_handlers, sync_handlers};
+use memtui::app::{sync_event_context, AppState};
 use memtui::cli::{parse_connection_string, Cli, LogLevel};
 use memtui::config::Config;
+use memtui::events::EventContext;
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
-use memtui::search::fuzzy_search_keys_with_positions;
-use memtui::types::{BackendType, ConnectionConfig};
+use memtui::types::ConnectionConfig;
 use memtui::ui::{self, init_theme, Panel, UiState};
 use memtui::userdata;
 
@@ -41,6 +41,8 @@ pub struct App {
     temp_connection_id: Option<String>,
     /// Connection name to auto-connect to on startup
     auto_connect_name: Option<String>,
+    /// Event context for the new event system
+    event_context: EventContext,
 }
 
 impl App {
@@ -123,6 +125,7 @@ impl App {
             needs_render: true, // Render on first loop iteration
             temp_connection_id,
             auto_connect_name,
+            event_context: EventContext::default(),
         }
     }
 
@@ -234,6 +237,9 @@ impl App {
                     );
                 })?;
                 self.needs_render = false;
+
+                // Sync event context with current UI state (for new event system)
+                sync_event_context(&mut self.event_context, &self.ui_state, &self.app_state);
             }
 
             let action = tokio::select! {
@@ -272,22 +278,17 @@ impl App {
     }
 
     async fn update(&mut self, action: Action) {
+        use async_handlers::*;
+        use sync_handlers::*;
+
         let should_render = match action {
-            Action::Tick => true,  // Tick processes debounced scrolls and maintains FPS
-            Action::Quit => false, // Legacy quit (not used with confirmation flow)
-            Action::ConfirmQuit => false, // Handled in main loop
-            Action::ShowQuitConfirmation => {
-                self.ui_state.show_quit_confirmation = true;
-                true
-            }
-            Action::CancelQuit => {
-                self.ui_state.show_quit_confirmation = false;
-                true
-            }
-            Action::Resize(_, _) => {
-                // Resize always needs render
-                true
-            }
+            // Core lifecycle
+            Action::Tick => true,
+            Action::Quit => false,
+            Action::ConfirmQuit => false,
+            Action::Resize(_, _) => true,
+
+            // Input events
             Action::Key(key) => {
                 self.handle_key(key);
                 true
@@ -297,52 +298,31 @@ impl App {
                 true
             }
             Action::Scroll { column, row, delta } => {
-                // Coalesce scroll events: drain pending scrolls from channel,
-                // accumulating same-direction scrolls but resetting on direction change
-                let mut total_delta = delta;
-                let mut last_col = column;
-                let mut last_row = row;
+                self.handle_scroll_coalesced(column, row, delta)
+            }
 
-                // Drain and coalesce pending scroll events
-                while let Ok(pending) = self.action_rx.try_recv() {
-                    match pending {
-                        Action::Scroll {
-                            column: c,
-                            row: r,
-                            delta: d,
-                        } => {
-                            // Check if direction changed (sign differs)
-                            let same_direction =
-                                (total_delta > 0 && d > 0) || (total_delta < 0 && d < 0);
-                            if same_direction {
-                                // Same direction: accumulate
-                                total_delta += d;
-                            } else {
-                                // Direction changed: reset to new direction, drop accumulated
-                                total_delta = d;
-                            }
-                            last_col = c;
-                            last_row = r;
-                        }
-                        other => {
-                            // Non-scroll action: put it back by sending and stop draining
-                            let _ = self.action_tx.send(other);
-                            break;
-                        }
-                    }
-                }
+            // UI toggles - delegated to sync_handlers
+            Action::ShowQuitConfirmation
+            | Action::CancelQuit
+            | Action::ToggleHelp
+            | Action::OpenConnectionForm
+            | Action::CloseConnectionForm
+            | Action::OpenConnectionPalette
+            | Action::CloseConnectionPalette => {
+                handle_ui_toggle(&mut self.ui_state, &self.app_state, &action)
+            }
 
-                // Process the coalesced scroll
-                self.handle_scroll_delta(last_col, last_row, total_delta)
+            // Navigation - delegated to sync_handlers
+            Action::NextPanel | Action::PrevPanel | Action::NextItem | Action::PrevItem => {
+                handle_navigation(
+                    &mut self.ui_state,
+                    &self.app_state,
+                    &self.action_tx,
+                    &action,
+                )
             }
-            Action::NextPanel => {
-                self.ui_state.next_panel();
-                true
-            }
-            Action::PrevPanel => {
-                self.ui_state.prev_panel();
-                true
-            }
+
+            // Connection tabs (kept in App - accesses multiple fields)
             Action::NextConnectionTab => {
                 self.cycle_connection_tab(true);
                 true
@@ -352,317 +332,95 @@ impl App {
                 true
             }
 
-            Action::NextItem => {
-                if self.ui_state.show_connection_palette {
-                    let connections_len = self.app_state.connection_manager.get_configs().len();
-                    if connections_len > 0 {
-                        self.ui_state.connection_list.next(connections_len);
-                    }
-                } else {
-                    let keys_len = self
-                        .app_state
-                        .total_key_count
-                        .map(|t| t as usize)
-                        .unwrap_or(self.app_state.keys.len());
+            // Connection form - delegated to sync_handlers
+            Action::ConnectionFormNextField | Action::ConnectionFormPrevField => {
+                handle_connection_form(
+                    &mut self.ui_state,
+                    &mut self.app_state,
+                    &self.action_tx,
+                    &self.config,
+                    &action,
+                )
+            }
+            Action::SubmitConnectionForm(_) => handle_connection_form(
+                &mut self.ui_state,
+                &mut self.app_state,
+                &self.action_tx,
+                &self.config,
+                &action,
+            ),
 
-                    // Pass true if the key selection actually changed
-                    if self.ui_state.next_item(keys_len)
-                        && self.ui_state.active_panel == Panel::Keys
-                    // Only reload if we moved in the keys panel
-                    {
-                        if let Some(idx) = self.ui_state.key_browser.state.selected() {
-                            let _ = self.action_tx.send(Action::SelectKey(idx));
-                        }
-                    }
-                }
-                true
-            }
-            Action::PrevItem => {
-                if self.ui_state.show_connection_palette {
-                    let connections_len = self.app_state.connection_manager.get_configs().len();
-                    if connections_len > 0 {
-                        self.ui_state.connection_list.prev(connections_len);
-                    }
-                } else {
-                    let keys_len = self
-                        .app_state
-                        .total_key_count
-                        .map(|t| t as usize)
-                        .unwrap_or(self.app_state.keys.len());
-
-                    // Pass true if the key selection actually changed
-                    if self.ui_state.previous_item(keys_len)
-                        && self.ui_state.active_panel == Panel::Keys
-                    // Only reload if we moved in the keys panel
-                    {
-                        if let Some(idx) = self.ui_state.key_browser.state.selected() {
-                            let _ = self.action_tx.send(Action::SelectKey(idx));
-                        }
-                    }
-                }
-                true
-            }
-
-            Action::OpenConnectionForm => {
-                self.ui_state.open_connection_form();
-                true
-            }
-            Action::CloseConnectionForm => {
-                self.ui_state.close_connection_form();
-                true
-            }
-            Action::ToggleHelp => {
-                self.ui_state.show_help = !self.ui_state.show_help;
-                true
-            }
-            Action::OpenConnectionPalette => {
-                self.ui_state.open_connection_palette();
-                let configs = self.app_state.connection_manager.get_configs();
-                if configs.is_empty() {
-                    self.ui_state.connection_list.state.select(None);
-                } else if let Some(active_id) = self.app_state.connection_manager.get_active_id() {
-                    if let Some(idx) = configs.iter().position(|cfg| cfg.id == active_id) {
-                        self.ui_state.connection_list.state.select(Some(idx));
-                    } else {
-                        self.ui_state.connection_list.state.select(Some(0));
-                    }
-                } else {
-                    self.ui_state.connection_list.state.select(Some(0));
-                }
-                true
-            }
-            Action::CloseConnectionPalette => {
-                self.ui_state.close_connection_palette();
-                true
-            }
-
-            Action::ConnectionFormNextField => {
-                self.ui_state.connection_form.next_field();
-                true
-            }
-            Action::ConnectionFormPrevField => {
-                self.ui_state.connection_form.prev_field();
-                true
-            }
-
+            // Enter key - context dependent
             Action::Enter => {
                 if self.ui_state.show_connection_form {
-                    match self
-                        .ui_state
-                        .connection_form
-                        .to_config(self.config.connection.default_timeout)
-                    {
-                        Ok(config) => {
-                            let _ = self.action_tx.send(Action::SubmitConnectionForm(config));
-                        }
-                        Err(e) => self.ui_state.set_form_error(e),
-                    }
+                    handle_connection_form(
+                        &mut self.ui_state,
+                        &mut self.app_state,
+                        &self.action_tx,
+                        &self.config,
+                        &action,
+                    )
                 } else if self.ui_state.show_connection_palette {
-                    if let Some(idx) = self.ui_state.connection_list.state.selected() {
-                        let configs = self.app_state.connection_manager.get_configs();
-                        if let Some(config) = configs.get(idx) {
-                            let _ = self
-                                .action_tx
-                                .send(Action::FocusConnection(config.id.clone()));
-                        }
-                    }
-                    self.ui_state.close_connection_palette();
-                }
-                true
-            }
-
-            Action::SubmitConnectionForm(config) => {
-                self.app_state
-                    .connection_manager
-                    .add_connection(config.clone());
-                let all_configs = self.app_state.connection_manager.get_all_configs();
-                let _ = userdata::save_connections(&all_configs);
-                self.ui_state.close_connection_form();
-                let _ = self
-                    .action_tx
-                    .send(Action::FocusConnection(config.id.clone()));
-                true
-            }
-
-            Action::DeleteConnection(id) => {
-                self.app_state.connection_manager.remove_config(&id);
-                let all_configs = self.app_state.connection_manager.get_all_configs();
-                let _ = userdata::save_connections(&all_configs);
-                if let Ok(ids) = userdata::remove_recent_connection_id(&id) {
-                    self.ui_state.recent_connection_ids = ids;
-                }
-
-                let remaining = self.app_state.connection_manager.get_configs();
-                if remaining.is_empty() {
-                    self.ui_state.connection_list.state.select(None);
-                    self.ui_state.close_connection_palette();
+                    handle_enter_connection_palette(
+                        &mut self.ui_state,
+                        &self.app_state,
+                        &self.action_tx,
+                    )
                 } else {
-                    let current = self
-                        .ui_state
-                        .connection_list
-                        .state
-                        .selected()
-                        .unwrap_or(0)
-                        .min(remaining.len().saturating_sub(1));
-                    self.ui_state.connection_list.state.select(Some(current));
-                }
-                true
-            }
-
-            Action::FocusConnection(id) => {
-                self.focus_connection(id);
-                true
-            }
-
-            Action::Connect(id) => {
-                if let Some(config) = self.app_state.connection_manager.get_config(&id).cloned() {
-                    self.app_state
-                        .connection_manager
-                        .set_status(&id, ConnectionStatus::Connecting);
-                    let tx = self.action_tx.clone();
-
-                    tokio::spawn(async move {
-                        let mut backend: Box<dyn Backend> = match config.backend_type {
-                            BackendType::Redis => Box::new(RedisBackend::new(config.clone())),
-                            BackendType::Memcached => {
-                                Box::new(MemcachedBackend::new(config.clone()))
-                            }
-                            BackendType::Etcd => Box::new(EtcdBackend::new(config.clone())),
-                        };
-
-                        match backend.connect().await {
-                            Ok(_) => {
-                                let backend_arc = Arc::new(RwLock::new(backend));
-                                let _ = tx.send(Action::DidConnect(config.id, backend_arc));
-                            }
-                            Err(e) => {
-                                let _ = tx.send(Action::DidFailConnect(config.id, e.to_string()));
-                            }
-                        }
-                    });
-                }
-                true
-            }
-
-            Action::Disconnect(id) => {
-                let was_focus = self
-                    .app_state
-                    .connection_manager
-                    .get_active_id()
-                    .map(|active| active == id)
-                    .unwrap_or(false);
-                let _ = self.app_state.connection_manager.disconnect(&id).await;
-                if was_focus {
-                    self.app_state.reset_pagination();
-                    self.ui_state.key_browser.select(None);
-                    self.ui_state.active_panel = Panel::Keys;
-                }
-                true
-            }
-
-            Action::DidConnect(id, backend) => {
-                self.app_state
-                    .connection_manager
-                    .register_connection(&id, backend);
-                self.app_state.error_message = None;
-                if let Ok(ids) =
-                    userdata::record_recent_connection_id_with_config(&id, &self.config)
-                {
-                    self.ui_state.recent_connection_ids = ids;
-                }
-                self.ui_state.active_panel = Panel::Keys;
-                let _ = self.action_tx.send(Action::LoadKeys);
-                true
-            }
-
-            Action::DidFailConnect(id, error) => {
-                self.app_state
-                    .connection_manager
-                    .set_status(&id, ConnectionStatus::Error(error.clone()));
-                self.app_state.error_message = Some(format!("Failed to connect: {}", error));
-                true
-            }
-
-            Action::LoadKeys => {
-                self.app_state.is_loading_keys = true;
-                self.app_state.reset_pagination();
-
-                if let Some(backend) = self
-                    .app_state
-                    .connection_manager
-                    .get_active_backend_handle()
-                {
-                    let tx = self.action_tx.clone();
-                    let chunk_size = self.app_state.keys_per_chunk;
-
-                    tokio::spawn(async move {
-                        let backend = backend.read().await;
-                        let total = backend.key_count(None).await.ok();
-
-                        match backend.scan_keys(None, None, chunk_size).await {
-                            Ok(result) => {
-                                let _ = tx.send(Action::DidScanKeys {
-                                    keys: result.keys,
-                                    cursor: result.cursor,
-                                    has_more: result.has_more,
-                                    total_count: total,
-                                    reset: true,
-                                    center: None,
-                                });
-                            }
-                            Err(e) => {
-                                let _ = tx.send(Action::DidFailScanKeys(e.to_string()));
-                            }
-                        }
-                    });
-                }
-                true
-            }
-
-            Action::LoadMoreKeys(center) => {
-                if self.app_state.is_loading_keys || !self.app_state.has_more_keys {
-                    false // No state change, no render needed
-                } else {
-                    self.app_state.is_loading_keys = true;
-
-                    if let Some(backend) = self
-                        .app_state
-                        .connection_manager
-                        .get_active_backend_handle()
-                    {
-                        let tx = self.action_tx.clone();
-                        let chunk_size = self.app_state.keys_per_chunk;
-                        let cursor = self.app_state.keys_cursor.clone();
-
-                        tokio::spawn(async move {
-                            let backend = backend.read().await;
-                            match backend.scan_keys(None, cursor, chunk_size).await {
-                                Ok(result) => {
-                                    let _ = tx.send(Action::DidScanKeys {
-                                        keys: result.keys,
-                                        cursor: result.cursor,
-                                        has_more: result.has_more,
-                                        total_count: None, // don't update total on paged load
-                                        reset: false,
-                                        center: Some(center),
-                                    });
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(Action::DidFailScanKeys(e.to_string()));
-                                }
-                            }
-                        });
-                    }
                     true
                 }
             }
 
+            // Connection management - delegated to sync_handlers
+            Action::DeleteConnection(_) => {
+                handle_connection_management(&mut self.ui_state, &mut self.app_state, &action)
+            }
+
+            // Focus/Connect/Disconnect (kept in App - complex state management)
+            Action::FocusConnection(id) => {
+                self.focus_connection(id);
+                true
+            }
+            Action::Connect(id) => {
+                handle_connect(&mut self.app_state, &self.action_tx, id);
+                true
+            }
+            Action::Disconnect(id) => {
+                handle_disconnect(&mut self.app_state, &mut self.ui_state, &id).await;
+                true
+            }
+
+            // Async results - delegated to async_handlers
+            Action::DidConnect(id, backend) => {
+                handle_did_connect(
+                    &mut self.app_state,
+                    &mut self.ui_state,
+                    &self.config,
+                    &self.action_tx,
+                    id,
+                    backend,
+                );
+                true
+            }
+            Action::DidFailConnect(id, error) => {
+                handle_did_fail_connect(&mut self.app_state, &id, error);
+                true
+            }
+
+            // Key loading - delegated to async_handlers
+            Action::LoadKeys => {
+                handle_load_keys(&mut self.app_state, &self.action_tx);
+                true
+            }
+            Action::LoadMoreKeys(center) => {
+                handle_load_more_keys(&mut self.app_state, &self.action_tx, center)
+            }
+
+            // Key selection (kept in App - needs schedule_value_load)
             Action::SelectKey(idx) => {
                 self.app_state.selected_key_index = Some(idx);
                 self.app_state.selected_value = None;
-                // Reset scroll for value viewer when a new key is selected
                 self.ui_state.value_viewer.reset_scroll();
-
                 if self.app_state.needs_loading_around(idx) {
                     let _ = self.action_tx.send(Action::LoadMoreKeys(idx));
                 }
@@ -675,36 +433,14 @@ impl App {
                 {
                     let _ = self.action_tx.send(Action::LoadValue { index, token });
                 }
-                false // Don't render for debounced actions, wait for actual load
+                false
             }
-
             Action::LoadValue { index, token } => {
-                if let Some(Some(key)) = self.app_state.keys.get(index) {
-                    let key_name = key.name.clone();
-                    if let Some(backend) = self
-                        .app_state
-                        .connection_manager
-                        .get_active_backend_handle()
-                    {
-                        let tx = self.action_tx.clone();
-                        tokio::spawn(async move {
-                            let backend = backend.read().await;
-                            match backend.get(&key_name).await {
-                                Ok(val) => {
-                                    let _ = tx.send(Action::DidLoadValue { value: val, token });
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(Action::DidFailLoadValue(e.to_string()));
-                                }
-                            }
-                        });
-                    }
-                } else {
-                    self.app_state.selected_value = None;
-                }
-                false // Don't render yet, wait for DidLoadValue
+                handle_load_value(&self.app_state, &self.action_tx, index, token);
+                false
             }
 
+            // Scan results - delegated to async_handlers
             Action::DidScanKeys {
                 keys,
                 cursor,
@@ -713,188 +449,113 @@ impl App {
                 reset,
                 center,
             } => {
-                if reset {
-                    if let Some(count) = total_count {
-                        self.app_state.total_key_count = Some(count);
-                        self.app_state.keys = vec![None; count as usize];
-                    } else {
-                        // If total_count is unknown, initialize with the keys we got
-                        self.app_state.total_key_count = None;
-                        self.app_state.keys = vec![None; keys.len()];
-                    }
-                }
-
-                self.app_state.keys_cursor = cursor;
-                self.app_state.has_more_keys = has_more;
-                self.app_state.is_loading_keys = false;
-
-                if reset {
-                    // Simple fill from start
-                    for (i, k) in keys.into_iter().enumerate() {
-                        if i < self.app_state.keys.len() {
-                            self.app_state.keys[i] = Some(k);
-                        } else if self.app_state.total_key_count.is_none() {
-                            // If total is unknown, grow the vector as needed
-                            self.app_state.keys.push(Some(k));
-                        }
-                    }
-
-                    // Auto-select first key if none selected
-                    if self.app_state.selected_key_index.is_none()
-                        && !self.app_state.keys.is_empty()
-                        && self.app_state.keys[0].is_some()
-                    {
-                        self.ui_state.key_browser.select(Some(0));
-                        let _ = self.action_tx.send(Action::SelectKey(0));
-                    }
-                } else if let Some(c) = center {
-                    // Smart fill around center
-                    let preferred = self
-                        .app_state
-                        .get_preferred_indices_for_filling(c, keys.len());
-                    let mut keys_iter = keys.into_iter();
-
-                    // Fill preferred slots
-                    for idx in preferred {
-                        if let Some(key) = keys_iter.next() {
-                            if idx < self.app_state.keys.len() {
-                                self.app_state.keys[idx] = Some(key);
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-
-                    // Fill any other empty slots with remaining keys
-                    for key in keys_iter {
-                        if let Some(empty_idx) =
-                            self.app_state.keys.iter().position(|k| k.is_none())
-                        {
-                            self.app_state.keys[empty_idx] = Some(key);
-                        }
-                    }
-                }
+                handle_did_scan_keys(
+                    &mut self.app_state,
+                    &mut self.ui_state,
+                    &self.action_tx,
+                    keys,
+                    cursor,
+                    has_more,
+                    total_count,
+                    reset,
+                    center,
+                );
                 true
             }
-
             Action::DidFailScanKeys(e) => {
-                self.app_state.error_message = Some(e);
-                self.app_state.is_loading_keys = false;
+                handle_did_fail_scan_keys(&mut self.app_state, e);
                 true
             }
 
+            // Value results - delegated to async_handlers
             Action::DidLoadValue { value, token } => {
-                if self.app_state.value_request_token == token {
-                    self.app_state.selected_value = Some(value);
-                    true
-                } else {
-                    false
-                }
+                handle_did_load_value(&mut self.app_state, value, token)
             }
-
             Action::DidFailLoadValue(e) => {
-                self.app_state.error_message = Some(format!("Error loading value: {}", e));
-                self.app_state.selected_value = None;
+                handle_did_fail_load_value(&mut self.app_state, e);
                 true
             }
 
-            // Search actions
-            Action::StartSearch => {
-                self.app_state.start_search();
-                true
-            }
-
-            Action::ClearSearch => {
-                self.app_state.reset_search();
-                // Reset key browser selection to show all keys
-                if !self.app_state.keys.is_empty() {
-                    self.ui_state.key_browser.select(Some(0));
-                }
-                true
-            }
-
-            Action::SearchAddChar(c) => {
-                if self.app_state.is_searching {
-                    self.app_state.search_query.push(c);
-                    self.trigger_search();
-                    true
-                } else {
-                    false
-                }
-            }
-
-            Action::SearchDeleteChar => {
-                if self.app_state.is_searching {
-                    self.app_state.search_query.pop();
-                    if self.app_state.search_query.is_empty() {
-                        // Clear search results when query is empty
-                        self.app_state.search_results_local.clear();
-                        self.app_state.search_results_server.clear();
-                    } else {
-                        self.trigger_search();
+            // Search - delegated to sync_handlers (with trigger_search callback)
+            Action::StartSearch
+            | Action::ClearSearch
+            | Action::SearchAddChar(_)
+            | Action::SearchDeleteChar
+            | Action::UpdateSearchQuery(_) => {
+                if let Some((render, needs_search)) =
+                    handle_search(&mut self.app_state, &mut self.ui_state, &action)
+                {
+                    if needs_search {
+                        trigger_search(&mut self.app_state, &self.action_tx);
                     }
-                    true
+                    render
                 } else {
                     false
                 }
             }
 
-            Action::UpdateSearchQuery(query) => {
-                if self.app_state.is_searching {
-                    self.app_state.search_query = query;
-                    self.trigger_search();
-                    true
-                } else {
-                    false
-                }
-            }
-
+            // Search results - delegated to async_handlers
             Action::DidSearchLocal {
                 indices,
                 match_positions,
                 token,
-            } => {
-                if self.app_state.search_token == token && self.app_state.is_searching {
-                    self.app_state.search_results_local = indices;
-                    self.app_state.search_match_positions = match_positions;
-                    // Auto-select first result if any
-                    if !self.app_state.search_results_local.is_empty() {
-                        self.app_state.search_selection_index = Some(0);
-                        // Also load the value for the first result
-                        if let Some(&key_idx) = self.app_state.search_results_local.first() {
-                            let _ = self.action_tx.send(Action::SelectKey(key_idx));
-                        }
-                    } else {
-                        self.app_state.search_selection_index = None;
-                    }
-                    true
-                } else {
-                    false
-                }
-            }
-
+            } => handle_did_search_local(
+                &mut self.app_state,
+                &self.action_tx,
+                indices,
+                match_positions,
+                token,
+            ),
             Action::DidSearchServer { result, token } => {
-                if self.app_state.search_token == token {
-                    self.app_state.search_results_server = result.keys;
-                    self.app_state.is_server_searching = false;
-                    true
-                } else {
-                    false
-                }
+                handle_did_search_server(&mut self.app_state, result.keys, token)
             }
 
+            // Error handling
             Action::Error(e) => {
-                self.app_state.error_message = Some(e);
+                handle_error(&mut self.app_state, e);
                 true
             }
 
-            _ => true, // Default: render for unknown actions (better safe than sorry)
+            // Default
+            _ => true,
         };
 
-        // Set the render flag based on whether this action should trigger a render
         if should_render {
             self.needs_render = true;
         }
+    }
+
+    /// Handle scroll with coalescing (drains pending scroll events)
+    fn handle_scroll_coalesced(&mut self, column: u16, row: u16, delta: isize) -> bool {
+        let mut total_delta = delta;
+        let mut last_col = column;
+        let mut last_row = row;
+
+        // Drain and coalesce pending scroll events
+        while let Ok(pending) = self.action_rx.try_recv() {
+            match pending {
+                Action::Scroll {
+                    column: c,
+                    row: r,
+                    delta: d,
+                } => {
+                    let same_direction = (total_delta > 0 && d > 0) || (total_delta < 0 && d < 0);
+                    if same_direction {
+                        total_delta += d;
+                    } else {
+                        total_delta = d;
+                    }
+                    last_col = c;
+                    last_row = r;
+                }
+                other => {
+                    let _ = self.action_tx.send(other);
+                    break;
+                }
+            }
+        }
+
+        self.handle_scroll_delta(last_col, last_row, total_delta)
     }
 
     /// Get the current binding context based on UI state
@@ -1363,7 +1024,7 @@ impl App {
                         // Get the actual key index from search results
                         if let Some(&key_idx) = self.app_state.search_results_local.get(result_idx)
                         {
-                            self.ui_state.key_browser.select(Some(key_idx));
+                            self.ui_state.key_list.select(Some(key_idx));
                             self.app_state.selected_key_index = Some(key_idx);
                             self.app_state.selected_value = None;
                             let _ = self.action_tx.send(Action::SelectKey(key_idx));
@@ -1372,7 +1033,7 @@ impl App {
                 } else {
                     // Normal mode: click on full key list
                     if let Some(index) = self.key_index_from_position(column, row) {
-                        self.ui_state.key_browser.select(Some(index));
+                        self.ui_state.key_list.select(Some(index));
                         self.app_state.selected_key_index = Some(index);
                         self.app_state.selected_value = None;
                         let _ = self.action_tx.send(Action::SelectKey(index));
@@ -1400,72 +1061,6 @@ impl App {
             let _ = tx.send(Action::LoadValueDebounced { index: idx, token });
         });
     }
-
-    /// Trigger search: runs local fuzzy search immediately and schedules background server search
-    fn trigger_search(&mut self) {
-        // Increment token to cancel stale searches
-        self.app_state.search_token = self.app_state.search_token.wrapping_add(1);
-        let token = self.app_state.search_token;
-        let query = self.app_state.search_query.clone();
-
-        if query.is_empty() {
-            self.app_state.search_results_local.clear();
-            self.app_state.search_results_server.clear();
-            self.app_state.search_match_positions.clear();
-            self.app_state.is_server_searching = false;
-            return;
-        }
-
-        // 1. Immediate local fuzzy search on loaded keys
-        let keys = &self.app_state.keys;
-        let search_result = fuzzy_search_keys_with_positions(keys, &query);
-        let tx = self.action_tx.clone();
-        let _ = tx.send(Action::DidSearchLocal {
-            indices: search_result.indices,
-            match_positions: search_result.match_positions,
-            token,
-        });
-
-        // 2. Background server search (debounced)
-        if let Some(backend) = self
-            .app_state
-            .connection_manager
-            .get_active_backend_handle()
-        {
-            // Mark server search as in progress
-            self.app_state.is_server_searching = true;
-
-            let tx = self.action_tx.clone();
-            let search_query = query.clone();
-
-            tokio::spawn(async move {
-                // Debounce: wait 200ms before sending server request
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-                let backend = backend.read().await;
-                // Build pattern for server search (wrap with wildcards for substring match)
-                let pattern = format!("*{}*", search_query);
-                match backend.search_keys(&pattern, 100).await {
-                    Ok(result) => {
-                        let _ = tx.send(Action::DidSearchServer { result, token });
-                    }
-                    Err(e) => {
-                        debug!("Server search failed: {}", e);
-                        // Send empty results to clear loading state
-                        let _ = tx.send(Action::DidSearchServer {
-                            result: memtui::types::KeyScanResult {
-                                keys: vec![],
-                                cursor: None,
-                                has_more: false,
-                            },
-                            token,
-                        });
-                    }
-                }
-            });
-        }
-    }
-
     fn focus_connection(&mut self, id: String) {
         if !self.app_state.connection_manager.set_active(&id) {
             return;
@@ -1473,7 +1068,7 @@ impl App {
 
         self.ui_state.close_connection_palette();
         self.ui_state.active_panel = Panel::Keys;
-        self.ui_state.key_browser.select(None);
+        self.ui_state.key_list.select(None);
         self.app_state.reset_pagination();
         self.app_state.error_message = None;
 
@@ -1661,7 +1256,7 @@ impl App {
 
                     // If selection changed, trigger key selection action
                     if changed {
-                        if let Some(idx) = self.ui_state.key_browser.state.selected() {
+                        if let Some(idx) = self.ui_state.key_list.state.selected() {
                             let _ = self.action_tx.send(Action::SelectKey(idx));
                         }
                     }
@@ -1702,7 +1297,7 @@ impl App {
             return None;
         }
 
-        let (start_index, visible_len) = self.ui_state.key_browser.view_bounds(total_count)?;
+        let (start_index, visible_len) = self.ui_state.key_list.view_bounds(total_count)?;
         let rel = (row - inner_top) as usize;
         if rel >= visible_len {
             return None;

@@ -1,9 +1,10 @@
 use super::Component;
 use crate::action::Action;
+use crate::events::Event;
 use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConfig};
 use crate::types::ConnectionConfig;
 use crate::ui::theme::{self, AnimationState};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyCode;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -107,7 +108,6 @@ impl Default for WelcomeScreen {
 
 impl Component for WelcomeScreen {
     type Props<'a> = WelcomeScreenProps<'a>;
-    type Msg = Action;
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         // Fill background
@@ -272,29 +272,35 @@ impl Component for WelcomeScreen {
         f.render_widget(footer, chunks[2]);
     }
 
-    fn handle_input(&mut self, key: KeyEvent, props: Self::Props<'_>) -> Option<Self::Msg> {
+    fn handle_event(&mut self, event: &Event, props: Self::Props<'_>) -> Vec<Action> {
+        use crate::events::EventKind;
+
         if props.recent_configs.is_empty() {
-            return None;
+            return vec![];
         }
 
-        match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.next(props.recent_configs.len());
-                None
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.prev(props.recent_configs.len());
-                None
-            }
-            KeyCode::Enter => {
-                if let Some(idx) = self.state.selected() {
-                    if let Some(config) = props.recent_configs.get(idx) {
-                        return Some(Action::FocusConnection(config.id.clone()));
-                    }
+        if let EventKind::Key(key) = &event.kind {
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.next(props.recent_configs.len());
+                    vec![]
                 }
-                None
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.prev(props.recent_configs.len());
+                    vec![]
+                }
+                KeyCode::Enter => {
+                    if let Some(idx) = self.state.selected() {
+                        if let Some(config) = props.recent_configs.get(idx) {
+                            return vec![Action::FocusConnection(config.id.clone())];
+                        }
+                    }
+                    vec![]
+                }
+                _ => vec![],
             }
-            _ => None,
+        } else {
+            vec![]
         }
     }
 }

@@ -1,4 +1,3 @@
-use crossterm::event::KeyEvent;
 use ratatui::{
     layout::{Alignment, Rect},
     text::{Line, Span},
@@ -36,7 +35,6 @@ impl Default for WarningMessage {
 
 impl Component for WarningMessage {
     type Props<'a> = WarningMessageProps<'a>;
-    type Msg = ();
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         let (text_style, bg_style) = match props.kind {
@@ -59,9 +57,5 @@ impl Component for WarningMessage {
             .alignment(Alignment::Center);
 
         f.render_widget(paragraph, area);
-    }
-
-    fn handle_input(&mut self, _key: KeyEvent, _props: Self::Props<'_>) -> Option<Self::Msg> {
-        None
     }
 }

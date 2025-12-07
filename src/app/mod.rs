@@ -1,6 +1,10 @@
 mod connections;
+pub mod runner;
 
 pub use connections::{ConnectionManager, ConnectionStatus};
+pub use runner::{
+    get_active_modal, get_focused_component, is_modal_open, sync_event_context, EventRunner,
+};
 
 use crate::config::Config;
 use crate::formatter::{JsonColorConfig, JsonFormatter, TextFormatter};

@@ -11,7 +11,7 @@ use super::components::modal::{confirm_block_raw, render_modal};
 use super::components::{
     connection_list::ConnectionListProps,
     help::render_help,
-    key_browser::KeyBrowserProps,
+    key_list::KeyListProps,
     value_viewer::ValueViewerProps,
     warning_message::{MessageKind, WarningMessage, WarningMessageProps},
     welcome::WelcomeScreenProps,
@@ -20,6 +20,7 @@ use super::components::{
 use super::render_connection_form;
 use super::state::{Panel, TabRegion, UiState};
 use super::theme::{self, AnimationState};
+use super::widgets::{TabBar, TabItem};
 use crate::app::{AppState, ConnectionStatus};
 use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConfig};
 use crate::types::BackendType;
@@ -170,67 +171,38 @@ pub fn render(
 }
 
 fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area: Rect) {
-    ui_state.tab_regions.clear();
     ui_state.tab_bar_area = Some(area);
 
-    let mut spans = Vec::new();
-    let mut cursor_x = area.x + 1;
-    let max_x = area.x.saturating_add(area.width);
-
     let configs = app_state.connection_manager.get_configs();
-    let open_configs: Vec<_> = configs
+    let active_id = app_state.connection_manager.get_active_id();
+
+    // Build tab items from open connections
+    let tabs: Vec<TabItem> = configs
         .iter()
         .filter(|c| {
             let status = app_state.connection_manager.get_status(&c.id);
             !matches!(status, ConnectionStatus::Disconnected)
         })
+        .map(|config| {
+            let is_active = active_id
+                .map(|id| id == config.id.as_str())
+                .unwrap_or(false);
+            TabItem::new(&config.id, &config.name).active(is_active)
+        })
         .collect();
 
-    if open_configs.is_empty() {
-        let tabs_line = Paragraph::new(Line::from(vec![Span::styled(
-            " Ctrl+P to open connections",
-            Style::default().fg(theme::TEXT_DIM()),
-        )]))
-        .style(theme::util_bg());
-        f.render_widget(tabs_line, area);
-        return;
-    }
+    // Use the TabBar widget and store the regions for click handling
+    let tab_bar = TabBar::new(&tabs);
+    let regions = tab_bar.render(f, area);
 
-    spans.push(Span::raw(" "));
-
-    for config in open_configs {
-        let is_active = app_state
-            .connection_manager
-            .get_active_id()
-            .map(|id| id == config.id.as_str())
-            .unwrap_or(false);
-
-        let label = format!(" {} ", config.name);
-        let width = label.chars().count() as u16;
-        if cursor_x.saturating_add(width + 2) > max_x {
-            break;
-        }
-
-        let tab_area = Rect::new(cursor_x, area.y, width.max(1), 1);
-        ui_state.tab_regions.push(TabRegion {
-            id: config.id.clone(),
-            area: tab_area,
-        });
-
-        if is_active {
-            spans.push(Span::styled(label, theme::tab_active()));
-        } else {
-            spans.push(Span::styled(
-                label,
-                Style::default().fg(theme::TEXT_SECONDARY()),
-            ));
-        }
-        spans.push(Span::raw(" "));
-        cursor_x = cursor_x.saturating_add(width + 1);
-    }
-
-    let tabs_line = Paragraph::new(Line::from(spans)).style(theme::util_bg());
-    f.render_widget(tabs_line, area);
+    // Convert widget regions to UiState regions
+    ui_state.tab_regions = regions
+        .into_iter()
+        .map(|r| TabRegion {
+            id: r.id,
+            area: r.area,
+        })
+        .collect();
 }
 
 fn render_body(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, area: Rect) {
@@ -290,7 +262,7 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, 
         None
     };
 
-    let props = KeyBrowserProps {
+    let props = KeyListProps {
         keys: &app_state.keys,
         total_count: app_state.total_key_count,
         is_loading: app_state.is_loading_keys,
@@ -306,7 +278,7 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, 
         search_match_positions: &app_state.search_match_positions,
     };
 
-    ui_state.key_browser.render(f, area, props);
+    ui_state.key_list.render(f, area, props);
 }
 
 fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, area: Rect) {

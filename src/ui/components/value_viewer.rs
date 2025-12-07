@@ -1,12 +1,10 @@
 use super::Component;
-use crate::action::Action;
 use crate::formatter::{Formatter, JsonFormatter, TextFormatter};
 use crate::types::{Value, ValueType};
 use crate::ui::theme::{self, AnimationState};
-use crossterm::event::KeyEvent;
 use ratatui::{
     layout::{Alignment, Constraint, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Cell, Paragraph, Row, ScrollbarState, Table, TableState, Wrap},
     Frame,
@@ -16,6 +14,58 @@ use ratatui::{
 fn dim_cache_key() -> u8 {
     // Convert dim to a u8 to use as part of cache key
     (theme::get_dim() * 255.0) as u8
+}
+
+/// Apply current theme dimming to a color
+fn apply_dim_to_color(color: Color) -> Color {
+    let dim = theme::get_dim();
+    if dim == 0.0 {
+        return color;
+    }
+    match color {
+        Color::Rgb(r, g, b) => {
+            let inv = 1.0 - dim;
+            Color::Rgb(
+                (r as f32 * inv) as u8,
+                (g as f32 * inv) as u8,
+                (b as f32 * inv) as u8,
+            )
+        }
+        // For indexed colors, convert to approximate RGB then dim
+        Color::Cyan => apply_dim_to_color(Color::Rgb(0, 255, 255)),
+        Color::Green => apply_dim_to_color(Color::Rgb(0, 255, 0)),
+        Color::Magenta => apply_dim_to_color(Color::Rgb(255, 0, 255)),
+        Color::Yellow => apply_dim_to_color(Color::Rgb(255, 255, 0)),
+        Color::White => apply_dim_to_color(Color::Rgb(255, 255, 255)),
+        Color::DarkGray => apply_dim_to_color(Color::Rgb(128, 128, 128)),
+        Color::Red => apply_dim_to_color(Color::Rgb(255, 0, 0)),
+        Color::Blue => apply_dim_to_color(Color::Rgb(0, 0, 255)),
+        Color::LightCyan => apply_dim_to_color(Color::Rgb(224, 255, 255)),
+        Color::LightGreen => apply_dim_to_color(Color::Rgb(144, 238, 144)),
+        Color::LightMagenta => apply_dim_to_color(Color::Rgb(255, 119, 255)),
+        Color::LightYellow => apply_dim_to_color(Color::Rgb(255, 255, 224)),
+        Color::LightRed => apply_dim_to_color(Color::Rgb(255, 128, 128)),
+        Color::LightBlue => apply_dim_to_color(Color::Rgb(173, 216, 230)),
+        Color::Gray => apply_dim_to_color(Color::Rgb(192, 192, 192)),
+        Color::Black => color, // Black stays black
+        _ => color, // Reset, Indexed - can't dim easily
+    }
+}
+
+/// Apply current theme dimming to a style's fg and bg colors
+fn apply_dim_to_style(style: Style) -> Style {
+    let dim = theme::get_dim();
+    if dim == 0.0 {
+        return style;
+    }
+    let mut result = style;
+    if let Some(fg) = result.fg {
+        result.fg = Some(apply_dim_to_color(fg));
+    }
+    if let Some(bg) = result.bg {
+        result.bg = Some(apply_dim_to_color(bg));
+    }
+    result
 }
 
 use serde_json::Value as JsonValue;
@@ -171,6 +221,10 @@ impl TextCache {
 
                     let mut x = area.x;
                     for span in &line.spans {
+                        // Apply dimming to the merged style at render time
+                        // This ensures both cached JSON colors and paragraph_style are dimmed
+                        let merged_style = apply_dim_to_style(paragraph_style.patch(span.style));
+
                         for ch in span.content.chars() {
                             // Bounds check before buffer access
                             if x >= area.x + area.width || x >= buf.area().width {
@@ -180,7 +234,7 @@ impl TextCache {
                             // Safe buffer access with bounds check
                             if let Some(cell) = buf.cell_mut((x, y)) {
                                 cell.set_char(ch);
-                                cell.set_style(paragraph_style.patch(span.style));
+                                cell.set_style(merged_style);
                             }
                             x = x.saturating_add(1);
                         }
@@ -1100,7 +1154,6 @@ impl Default for ValueViewer {
 
 impl Component for ValueViewer {
     type Props<'a> = ValueViewerProps<'a>;
-    type Msg = Action;
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         let base_title = ValueViewer::title_for(
@@ -1283,9 +1336,5 @@ impl Component for ValueViewer {
             Style::default(),
             animation,
         );
-    }
-
-    fn handle_input(&mut self, _key: KeyEvent, _props: Self::Props<'_>) -> Option<Self::Msg> {
-        None
     }
 }

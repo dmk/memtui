@@ -95,7 +95,7 @@ pub enum Action {
 
     // Search async results
     DidSearchLocal {
-        indices: Vec<usize>,                        // Indices of matching keys in loaded keys array
+        indices: Vec<usize>, // Indices of matching keys in loaded keys array
         match_positions: HashMap<usize, Vec<u32>>, // Match positions for highlighting (key index -> char positions)
         token: u64,
     },

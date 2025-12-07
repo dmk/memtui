@@ -2,6 +2,7 @@ pub mod components;
 mod render;
 mod state;
 pub mod theme;
+pub mod widgets;
 
 pub use components::connection_form::{render_connection_form, ConnectionForm};
 pub use components::help::render_help;

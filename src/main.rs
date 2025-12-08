@@ -336,7 +336,9 @@ impl App {
             }
             Panel::Value => {
                 // Value viewer scroll handling
-                if let KeyCode::Down | KeyCode::Up | KeyCode::Char('j') | KeyCode::Char('k') = key.code {
+                if let KeyCode::Down | KeyCode::Up | KeyCode::Char('j') | KeyCode::Char('k') =
+                    key.code
+                {
                     return self.dispatch_value_viewer_key(*key);
                 }
             }
@@ -403,7 +405,10 @@ impl App {
             KeyCode::Backspace if self.app_state.is_searching => {
                 return vec![Action::SearchDeleteChar];
             }
-            KeyCode::Char(c) if self.app_state.is_searching && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char(c)
+                if self.app_state.is_searching
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 return vec![Action::SearchAddChar(c)];
             }
             _ => {}
@@ -442,7 +447,10 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => {
                 // Check resize handle
                 if let Some(body_area) = self.ui_state.last_body_area {
-                    if self.ui_state.pane_split.is_on_handle(body_area, mouse.column)
+                    if self
+                        .ui_state
+                        .pane_split
+                        .is_on_handle(body_area, mouse.column)
                         && mouse.row >= body_area.y
                         && mouse.row < body_area.y + body_area.height
                     {
@@ -464,10 +472,8 @@ impl App {
                         // Calculate new ratio based on mouse position
                         let relative_x = mouse.column.saturating_sub(body_area.x) as f32;
                         let new_ratio = relative_x / body_area.width as f32;
-                        self.ui_state.pane_split.ratio = new_ratio.clamp(
-                            self.ui_state.pane_split.min,
-                            self.ui_state.pane_split.max,
-                        );
+                        self.ui_state.pane_split.ratio = new_ratio
+                            .clamp(self.ui_state.pane_split.min, self.ui_state.pane_split.max);
                     }
                 }
                 vec![Action::Tick]
@@ -604,7 +610,6 @@ impl App {
             _ => None,
         }
     }
-
 
     async fn update(&mut self, action: Action) {
         use async_handlers::*;

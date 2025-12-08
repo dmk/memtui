@@ -48,7 +48,7 @@ fn apply_dim_to_color(color: Color) -> Color {
         Color::LightBlue => apply_dim_to_color(Color::Rgb(173, 216, 230)),
         Color::Gray => apply_dim_to_color(Color::Rgb(192, 192, 192)),
         Color::Black => color, // Black stays black
-        _ => color, // Reset, Indexed - can't dim easily
+        _ => color,            // Reset, Indexed - can't dim easily
     }
 }
 

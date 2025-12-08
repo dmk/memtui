@@ -517,7 +517,11 @@ mod tests {
             state: crossterm::event::KeyEventState::empty(),
         };
         let command = bindings.get_command(key_y, BindingContext::QuitConfirmation);
-        assert_eq!(command, Some("quit.confirm".to_string()), "Expected 'y' to map to quit.confirm");
+        assert_eq!(
+            command,
+            Some("quit.confirm".to_string()),
+            "Expected 'y' to map to quit.confirm"
+        );
 
         // Test 'n' for quit.cancel
         let key_n = KeyEvent {
@@ -527,6 +531,10 @@ mod tests {
             state: crossterm::event::KeyEventState::empty(),
         };
         let command = bindings.get_command(key_n, BindingContext::QuitConfirmation);
-        assert_eq!(command, Some("quit.cancel".to_string()), "Expected 'n' to map to quit.cancel");
+        assert_eq!(
+            command,
+            Some("quit.cancel".to_string()),
+            "Expected 'n' to map to quit.cancel"
+        );
     }
 }

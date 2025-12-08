@@ -1,6 +1,6 @@
 [package]
 name = "memtui"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["Dmytro Koval <contact@dkoval.pro>"]
 description = "An interactive TUI (Terminal User Interface) for browsing and inspecting key-value stores (Redis, Memcached, etc.)"

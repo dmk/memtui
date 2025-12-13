@@ -58,6 +58,7 @@ pub enum Action {
     // Search Actions
     StartSearch,               // Open search input
     UpdateSearchQuery(String), // User typed in search
+    SearchConfirm,             // Exit search input (keep filter)
     ClearSearch,               // Reset to normal view (Esc or empty query)
     SearchAddChar(char),       // Add character to search input
     SearchDeleteChar,          // Delete character from search input

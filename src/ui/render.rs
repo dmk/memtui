@@ -12,6 +12,7 @@ use super::components::{
     connection_list::ConnectionListProps,
     help::render_help,
     key_list::KeyListProps,
+    prompt_bar::PromptBarProps,
     value_viewer::ValueViewerProps,
     warning_message::{MessageKind, WarningMessage, WarningMessageProps},
     welcome::WelcomeScreenProps,
@@ -24,6 +25,7 @@ use super::widgets::{TabBar, TabItem};
 use crate::app::{AppState, ConnectionStatus};
 use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConfig};
 use crate::types::BackendType;
+use crate::ui::widgets::PromptKind;
 
 /// Main UI rendering function
 pub fn render(
@@ -78,6 +80,7 @@ pub fn render(
             Constraint::Length(if show_tabs { 1 } else { 0 }), // Tabs - single line
             Constraint::Length(warning_height),
             Constraint::Min(0),    // Body
+            Constraint::Length(1), // Prompt bar - single line
             Constraint::Length(1), // Status bar - single line
         ])
         .split(f.area());
@@ -85,7 +88,8 @@ pub fn render(
     let tab_area = root[0];
     let warning_area = root[1];
     let body_area = root[2];
-    let status_area = root[3];
+    let prompt_area = root[3];
+    let status_area = root[4];
 
     // Store body area for resize calculations
     ui_state.last_body_area = Some(body_area);
@@ -149,6 +153,7 @@ pub fn render(
         render_welcome(f, app_state, ui_state, body_area, keybindings);
     }
 
+    render_prompt_bar(f, app_state, ui_state, keybindings, prompt_area);
     render_status_bar(f, app_state, ui_state, keybindings, status_area);
 
     if ui_state.show_connection_palette {
@@ -168,6 +173,52 @@ pub fn render(
 
     // Restore theme to normal state after render
     theme::restore_theme();
+}
+
+fn render_prompt_bar(
+    f: &mut Frame,
+    app_state: &AppState,
+    ui_state: &mut UiState,
+    keybindings: &KeybindingsConfig,
+    area: Rect,
+) {
+    let has_connection = app_state.connection_manager.get_active_id().is_some();
+    let has_keys = !app_state.keys.is_empty();
+    let has_search = !app_state.search_query.is_empty();
+
+    let hint_string = if !has_search && !app_state.is_searching && has_connection && has_keys {
+        let search_key = keybindings
+            .get_first_keybinding("search.start", BindingContext::Default)
+            .map(|k| format_key_for_display(&k))
+            .unwrap_or_else(|| "/".to_string());
+        Some(format!("{} search", search_key))
+    } else {
+        None
+    };
+
+    let (kind, value, is_focused, placeholder, hint) = if has_search || app_state.is_searching {
+        (
+            Some(PromptKind::Search),
+            app_state.search_query.as_str(),
+            app_state.is_searching,
+            Some("Search keys…"),
+            None,
+        )
+    } else if has_connection && has_keys {
+        (None, "", false, None, hint_string.as_deref())
+    } else {
+        (None, "", false, None, None)
+    };
+
+    let props = PromptBarProps {
+        kind,
+        value,
+        is_focused,
+        placeholder,
+        hint,
+    };
+
+    ui_state.prompt_bar.render(f, area, props);
 }
 
 fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area: Rect) {
@@ -273,7 +324,6 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, 
         search_results_local: &app_state.search_results_local,
         search_results_server: &app_state.search_results_server,
         is_server_searching: app_state.is_server_searching,
-        search_selection_index: app_state.search_selection_index,
         animation: &ui_state.animation,
         search_match_positions: &app_state.search_match_positions,
     };

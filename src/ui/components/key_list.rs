@@ -34,8 +34,6 @@ pub struct KeyListProps<'a> {
     pub search_results_server: &'a [KeyMetadata],
     /// Whether a server search is in progress
     pub is_server_searching: bool,
-    /// Selection index within search results
-    pub search_selection_index: Option<usize>,
     /// Animation state for visual effects
     pub animation: &'a AnimationState,
     /// Match positions for highlighting
@@ -176,33 +174,20 @@ impl KeyList {
         has_search: bool,
         display_count: usize,
     ) -> (String, String) {
-        if props.is_searching {
-            if let Some(query) = props.active_search_query {
-                if query.is_empty() {
-                    ("Keys │ ▍".to_string(), String::new())
-                } else {
-                    let server_indicator = if props.is_server_searching {
-                        format!(" {}", theme::spinner(props.animation))
-                    } else {
-                        String::new()
-                    };
-                    (
-                        format!("Keys │ {}▍{}", query, server_indicator),
-                        format!("{} found", display_count),
-                    )
-                }
+        if props.is_searching || has_search {
+            let server_indicator = if props.is_server_searching {
+                format!(" {}", theme::spinner(props.animation))
             } else {
-                ("Keys │ ▍".to_string(), String::new())
-            }
-        } else if has_search {
-            if let Some(query) = props.active_search_query {
-                (
-                    format!("Keys │ /{}", query),
-                    format!("{} results", display_count),
-                )
+                String::new()
+            };
+
+            let right = if has_search {
+                format!("{} results{}", display_count, server_indicator)
             } else {
-                ("Keys".to_string(), String::new())
-            }
+                server_indicator
+            };
+
+            ("Keys".to_string(), right)
         } else {
             let total_count = props
                 .total_count
@@ -356,12 +341,14 @@ impl KeyList {
 
         let items_len = items.len();
         let result_count = props.search_results_local.len();
+        let selected_display_idx = self.state.selected().and_then(|abs_idx| {
+            props
+                .search_results_local
+                .iter()
+                .position(|&key_idx| key_idx == abs_idx)
+        });
 
-        (
-            items,
-            result_count.max(items_len),
-            props.search_selection_index,
-        )
+        (items, result_count.max(items_len), selected_display_idx)
     }
 
     fn build_normal_list(
@@ -802,10 +789,48 @@ impl KeyList {
         key: &crossterm::event::KeyEvent,
         props: &KeyListProps<'_>,
     ) -> Vec<Action> {
+        let has_search = props
+            .active_search_query
+            .map(|q| !q.is_empty())
+            .unwrap_or(false);
         let total_count = props
             .total_count
             .map(|t| t as usize)
             .unwrap_or_else(|| props.keys.len());
+
+        if has_search {
+            let results = props.search_results_local;
+            if results.is_empty() {
+                return vec![];
+            }
+
+            let current_abs = self.state.selected().unwrap_or(results[0]);
+            let current_pos = results
+                .iter()
+                .position(|&idx| idx == current_abs)
+                .unwrap_or(0);
+
+            let next_pos = match key.code {
+                KeyCode::Down | KeyCode::Char('j') => (current_pos + 1) % results.len(),
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if current_pos == 0 {
+                        results.len() - 1
+                    } else {
+                        current_pos - 1
+                    }
+                }
+                _ => return vec![],
+            };
+
+            let key_idx = results[next_pos];
+            self.state.select(Some(key_idx));
+
+            let mut actions = vec![Action::SelectKey(key_idx)];
+            if self.needs_loading_around(key_idx, props.keys, total_count) {
+                actions.push(Action::LoadMoreKeys(key_idx));
+            }
+            return actions;
+        }
 
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
@@ -857,6 +882,11 @@ impl KeyList {
     }
 
     fn handle_scroll_event(&mut self, delta: isize, props: &KeyListProps<'_>) -> Vec<Action> {
+        let has_search = props
+            .active_search_query
+            .map(|q| !q.is_empty())
+            .unwrap_or(false);
+
         let total_count = props
             .total_count
             .map(|t| t as usize)
@@ -864,6 +894,38 @@ impl KeyList {
 
         if total_count == 0 {
             return vec![];
+        }
+
+        if has_search {
+            let results = props.search_results_local;
+            let len = results.len();
+            if len == 0 {
+                return vec![];
+            }
+
+            let current_abs = self.state.selected().unwrap_or(results[0]);
+            let current_pos = results
+                .iter()
+                .position(|&idx| idx == current_abs)
+                .unwrap_or(0);
+
+            let steps = delta.unsigned_abs();
+            let shift = if len > 0 { steps % len } else { 0 };
+            let new_pos = if delta > 0 {
+                (current_pos + shift) % len
+            } else if shift > current_pos {
+                len - (shift - current_pos)
+            } else {
+                current_pos - shift
+            };
+
+            let key_idx = results[new_pos];
+            self.state.select(Some(key_idx));
+            let mut actions = vec![Action::SelectKey(key_idx)];
+            if self.needs_loading_around(key_idx, props.keys, total_count) {
+                actions.push(Action::LoadMoreKeys(key_idx));
+            }
+            return actions;
         }
 
         let current = self.state.selected().unwrap_or(0);

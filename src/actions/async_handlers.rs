@@ -157,15 +157,25 @@ pub fn trigger_search(app_state: &mut AppState, action_tx: &mpsc::UnboundedSende
         return;
     }
 
-    // Immediate local fuzzy search
-    let keys = &app_state.keys;
-    let search_result = fuzzy_search_keys_with_positions(keys, &query);
-    let tx = action_tx.clone();
-    let _ = tx.send(Action::DidSearchLocal {
-        indices: search_result.indices,
-        match_positions: search_result.match_positions,
-        token,
-    });
+    // Clear stale server results immediately (server search is async + debounced).
+    app_state.search_results_server.clear();
+    app_state.is_server_searching = false;
+
+    // Immediate local fuzzy search (sync work).
+    let search_result = fuzzy_search_keys_with_positions(&app_state.keys, &query);
+    app_state.search_results_local = search_result.indices;
+    app_state.search_match_positions = search_result.match_positions;
+
+    // Keep current selection if it remains in results; otherwise pick first match.
+    let should_select_first = match app_state.selected_key_index {
+        Some(idx) => !app_state.search_results_local.contains(&idx),
+        None => true,
+    };
+    if should_select_first {
+        if let Some(&key_idx) = app_state.search_results_local.first() {
+            let _ = action_tx.send(Action::SelectKey(key_idx));
+        }
+    }
 
     // Background server search
     if let Some(backend) = app_state.connection_manager.get_active_backend_handle() {
@@ -296,6 +306,26 @@ pub fn handle_did_scan_keys(
             }
         }
     }
+
+    // If a search filter is active, recompute local fuzzy results so newly-loaded keys participate.
+    if !app_state.search_query.is_empty() {
+        let query = app_state.search_query.clone();
+        let search_result = fuzzy_search_keys_with_positions(&app_state.keys, &query);
+        app_state.search_results_local = search_result.indices;
+        app_state.search_match_positions = search_result.match_positions;
+
+        // Ensure selection stays on a visible (matching) key when possible.
+        let should_select_first = match app_state.selected_key_index {
+            Some(idx) => !app_state.search_results_local.contains(&idx),
+            None => true,
+        };
+        if should_select_first {
+            if let Some(&key_idx) = app_state.search_results_local.first() {
+                ui_state.key_list.select(Some(key_idx));
+                let _ = action_tx.send(Action::SelectKey(key_idx));
+            }
+        }
+    }
 }
 
 /// Handle DidLoadValue result
@@ -311,22 +341,14 @@ pub fn handle_did_load_value(app_state: &mut AppState, value: Value, token: u64)
 /// Handle DidSearchLocal result
 pub fn handle_did_search_local(
     app_state: &mut AppState,
-    action_tx: &mpsc::UnboundedSender<Action>,
+    _action_tx: &mpsc::UnboundedSender<Action>,
     indices: Vec<usize>,
     match_positions: std::collections::HashMap<usize, Vec<u32>>,
     token: u64,
 ) -> bool {
-    if app_state.search_token == token && app_state.is_searching {
+    if app_state.search_token == token && !app_state.search_query.is_empty() {
         app_state.search_results_local = indices;
         app_state.search_match_positions = match_positions;
-        if !app_state.search_results_local.is_empty() {
-            app_state.search_selection_index = Some(0);
-            if let Some(&key_idx) = app_state.search_results_local.first() {
-                let _ = action_tx.send(Action::SelectKey(key_idx));
-            }
-        } else {
-            app_state.search_selection_index = None;
-        }
         true
     } else {
         false
@@ -360,5 +382,103 @@ pub async fn handle_disconnect(app_state: &mut AppState, ui_state: &mut UiState,
         app_state.reset_pagination();
         ui_state.key_list.select(None);
         ui_state.active_panel = Panel::Keys;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ValueType;
+    use std::time::Duration;
+
+    fn key(name: &str) -> KeyMetadata {
+        KeyMetadata {
+            name: name.to_string(),
+            value_type: ValueType::String,
+            size_bytes: 0,
+            ttl: Some(Duration::from_secs(60)),
+            last_accessed: None,
+            encoding: None,
+        }
+    }
+
+    #[test]
+    fn trigger_search_clears_stale_server_results_and_updates_local() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut app_state = AppState::new();
+
+        app_state.keys = vec![Some(key("alpha")), Some(key("beta"))];
+        app_state.search_query = "alp".to_string();
+        app_state.search_results_server = vec![key("stale")];
+
+        trigger_search(&mut app_state, &tx);
+
+        assert!(app_state.search_results_server.is_empty());
+        assert_eq!(app_state.search_results_local, vec![0]);
+        assert!(!app_state.is_server_searching);
+
+        let action = rx.try_recv().expect("expected a SelectKey action");
+        match action {
+            Action::SelectKey(idx) => assert_eq!(idx, 0),
+            _ => panic!("unexpected action: expected SelectKey"),
+        }
+    }
+
+    #[test]
+    fn did_scan_keys_refreshes_local_search_results() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut app_state = AppState::new();
+        let mut ui_state = UiState::new();
+
+        app_state.keys = vec![Some(key("a")), None];
+        app_state.total_key_count = Some(2);
+        app_state.search_query = "b".to_string();
+        app_state.selected_key_index = Some(0);
+
+        handle_did_scan_keys(
+            &mut app_state,
+            &mut ui_state,
+            &tx,
+            vec![key("b")],
+            None,
+            false,
+            None,
+            false,
+            Some(0),
+        );
+
+        assert_eq!(
+            app_state.keys[1].as_ref().expect("key should be loaded").name,
+            "b"
+        );
+        assert_eq!(app_state.search_results_local, vec![1]);
+
+        let action = rx.try_recv().expect("expected a SelectKey action");
+        match action {
+            Action::SelectKey(idx) => assert_eq!(idx, 1),
+            _ => panic!("unexpected action: expected SelectKey"),
+        }
+    }
+
+    #[test]
+    fn trigger_search_empty_query_clears_state_and_cancels() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut app_state = AppState::new();
+
+        app_state.search_results_local = vec![0];
+        app_state.search_results_server = vec![key("stale")];
+        app_state.search_match_positions.insert(0, vec![0]);
+        app_state.is_server_searching = true;
+        app_state.search_query.clear();
+
+        let before_token = app_state.search_token;
+        trigger_search(&mut app_state, &tx);
+
+        assert!(app_state.search_results_local.is_empty());
+        assert!(app_state.search_results_server.is_empty());
+        assert!(app_state.search_match_positions.is_empty());
+        assert!(!app_state.is_server_searching);
+        assert_ne!(app_state.search_token, before_token);
+        assert!(rx.try_recv().is_err());
     }
 }

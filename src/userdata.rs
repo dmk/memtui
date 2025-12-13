@@ -508,8 +508,6 @@ fn generate_default_keybindings_json() -> String {
   // Search mode - active when search input is focused
   "search": {
     "search.clear": ["esc"],
-    "search.next_result": ["down", "j", "tab"],
-    "search.prev_result": ["up", "k", "shift+tab"],
     "search.confirm": ["enter"]
   },
 

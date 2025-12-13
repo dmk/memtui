@@ -8,6 +8,7 @@ mod input;
 mod list;
 mod modal;
 mod pane;
+mod prompt_bar;
 mod status_badge;
 mod tabs;
 
@@ -16,5 +17,6 @@ pub use input::{Input, InputState, InputStyle};
 pub use list::{SelectableList, SelectableListState};
 pub use modal::{Modal, ModalStyle};
 pub use pane::{Pane, PaneStyle};
+pub use prompt_bar::{PromptBar, PromptKind};
 pub use status_badge::{StatusBadge, StatusKind};
 pub use tabs::{TabBar, TabItem};

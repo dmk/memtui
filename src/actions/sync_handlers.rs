@@ -201,7 +201,17 @@ pub fn handle_search(
 ) -> Option<(bool, bool)> {
     match action {
         Action::StartSearch => {
-            app_state.start_search();
+            ui_state.active_panel = Panel::Keys;
+
+            if app_state.search_query.is_empty() {
+                app_state.start_search();
+            } else {
+                app_state.is_searching = true;
+            }
+            Some((true, false))
+        }
+        Action::SearchConfirm => {
+            app_state.is_searching = false;
             Some((true, false))
         }
         Action::ClearSearch => {
@@ -222,13 +232,7 @@ pub fn handle_search(
         Action::SearchDeleteChar => {
             if app_state.is_searching {
                 app_state.search_query.pop();
-                if app_state.search_query.is_empty() {
-                    app_state.search_results_local.clear();
-                    app_state.search_results_server.clear();
-                    Some((true, false))
-                } else {
-                    Some((true, true)) // needs trigger_search
-                }
+                Some((true, true)) // needs trigger_search (also cancels when empty)
             } else {
                 None
             }

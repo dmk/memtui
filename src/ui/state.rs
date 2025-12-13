@@ -1,5 +1,6 @@
 use super::components::connection_list::ConnectionList;
 use super::components::key_list::KeyList;
+use super::components::prompt_bar::PromptBarComponent;
 use super::components::value_viewer::ValueViewer;
 use super::components::welcome::WelcomeScreen;
 use super::theme::{AnimationState, PaneSplit};
@@ -29,6 +30,7 @@ pub struct UiState {
 
     pub connection_list: ConnectionList,
     pub key_list: KeyList,
+    pub prompt_bar: PromptBarComponent,
     pub value_viewer: ValueViewer,
     pub welcome_screen: WelcomeScreen,
     pub last_key_area: Option<Rect>,
@@ -65,6 +67,7 @@ impl UiState {
 
             connection_list: ConnectionList::new(),
             key_list: KeyList::new(),
+            prompt_bar: PromptBarComponent::new(),
             value_viewer: ValueViewer::new(),
             welcome_screen: WelcomeScreen::new(),
             last_key_area: None,

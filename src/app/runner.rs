@@ -12,7 +12,7 @@ use crate::events::{
     process_raw_event, spawn_event_poller, ComponentId, Event, EventBus, EventContext, EventKind,
     RawEvent,
 };
-use crate::ui::{Panel, UiState};
+use crate::ui::{Component, Panel, UiState};
 
 /// Simplified event loop runner that uses the EventBus
 pub struct EventRunner {
@@ -141,6 +141,11 @@ pub fn get_focused_component(ui_state: &UiState, app_state: &AppState) -> Option
         return Some(ComponentId::ConnectionPalette);
     }
 
+    // Prompt bar takes focus while active
+    if app_state.is_searching {
+        return Some(ComponentId::PromptBar);
+    }
+
     // No active connection = welcome screen
     if app_state.connection_manager.get_active_id().is_none() {
         return Some(ComponentId::WelcomeScreen);
@@ -194,5 +199,8 @@ pub fn sync_event_context(context: &mut EventContext, ui_state: &UiState, app_st
     }
     if let Some(area) = ui_state.welcome_screen.last_list_area {
         context.set_component_area(ComponentId::WelcomeScreen, area);
+    }
+    if let Some(area) = ui_state.prompt_bar.area() {
+        context.set_component_area(ComponentId::PromptBar, area);
     }
 }

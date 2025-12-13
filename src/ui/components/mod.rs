@@ -3,6 +3,7 @@ pub mod connection_list;
 pub mod help;
 pub mod key_list;
 pub mod modal;
+pub mod prompt_bar;
 pub mod status_bar;
 pub mod value_viewer;
 pub mod warning_message;

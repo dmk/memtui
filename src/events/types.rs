@@ -12,6 +12,7 @@ pub enum ComponentId {
     ConnectionPalette,
     ConnectionForm,
     WelcomeScreen,
+    PromptBar,
     StatusBar,
     Help,
     QuitConfirmation,

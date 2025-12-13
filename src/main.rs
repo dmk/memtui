@@ -1,8 +1,8 @@
 use clap::Parser;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, MouseButton,
-        MouseEvent, MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, KeyCode, MouseButton, MouseEvent,
+        MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -291,9 +291,22 @@ impl App {
             return self.dispatch_keybinding(*key, BindingContext::Welcome);
         }
 
-        // 6. Search mode - special handling
-        if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
-            return self.dispatch_search_key(*key);
+        // 6. Prompt/search input mode - special handling
+        if self.app_state.is_searching {
+            let props = memtui::ui::components::prompt_bar::PromptBarProps {
+                kind: Some(memtui::ui::widgets::PromptKind::Search),
+                value: self.app_state.search_query.as_str(),
+                is_focused: true,
+                placeholder: Some("Search keys…"),
+                hint: None,
+            };
+
+            let actions = self.ui_state.prompt_bar.handle_event(event, props);
+            if !actions.is_empty() {
+                return actions;
+            }
+
+            return self.dispatch_keybinding(*key, BindingContext::Search);
         }
 
         // 7. Main panels - key_list or value_viewer based on active panel
@@ -324,7 +337,6 @@ impl App {
                     search_results_local: &self.app_state.search_results_local,
                     search_results_server: &self.app_state.search_results_server,
                     is_server_searching: self.app_state.is_server_searching,
-                    search_selection_index: self.app_state.search_selection_index,
                     animation: &self.ui_state.animation,
                     search_match_positions: &self.app_state.search_match_positions,
                 };
@@ -396,26 +408,6 @@ impl App {
 
         // Fall back to keybindings
         self.dispatch_keybinding(key, BindingContext::ConnectionPalette)
-    }
-
-    /// Dispatch key event for search mode
-    fn dispatch_search_key(&mut self, key: event::KeyEvent) -> Vec<Action> {
-        // Handle text input
-        match key.code {
-            KeyCode::Backspace if self.app_state.is_searching => {
-                return vec![Action::SearchDeleteChar];
-            }
-            KeyCode::Char(c)
-                if self.app_state.is_searching
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                return vec![Action::SearchAddChar(c)];
-            }
-            _ => {}
-        }
-
-        // Check keybindings
-        self.dispatch_keybinding(key, BindingContext::Search)
     }
 
     /// Dispatch key event for value viewer
@@ -492,6 +484,35 @@ impl App {
                 && row < key_area.y + key_area.height
             {
                 // Scroll in key list
+                let has_search = !self.app_state.search_query.is_empty();
+
+                if has_search {
+                    let results = &self.app_state.search_results_local;
+                    if results.is_empty() {
+                        return vec![Action::Tick];
+                    }
+
+                    let current_abs = self.ui_state.key_list.state.selected().unwrap_or(results[0]);
+                    let current_pos = results
+                        .iter()
+                        .position(|&idx| idx == current_abs)
+                        .unwrap_or(0);
+
+                    let steps = delta.unsigned_abs();
+                    let shift = if results.len() > 0 { steps % results.len() } else { 0 };
+                    let new_pos = if delta > 0 {
+                        (current_pos + shift) % results.len()
+                    } else if shift > current_pos {
+                        results.len() - (shift - current_pos)
+                    } else {
+                        current_pos - shift
+                    };
+
+                    let key_idx = results[new_pos];
+                    self.ui_state.key_list.select(Some(key_idx));
+                    return vec![Action::SelectKey(key_idx)];
+                }
+
                 let total_count = self
                     .app_state
                     .total_key_count
@@ -580,7 +601,7 @@ impl App {
                 }
             }
             "search.clear" => Some(Action::ClearSearch),
-            "search.confirm" => Some(Action::Tick), // Just render, is_searching handled by update
+            "search.confirm" => Some(Action::SearchConfirm),
 
             // Navigation commands
             "navigation.next_panel" => Some(Action::NextPanel),
@@ -739,6 +760,7 @@ impl App {
 
             // Key selection (kept in App - needs schedule_value_load)
             Action::SelectKey(idx) => {
+                self.ui_state.key_list.select(Some(idx));
                 self.app_state.selected_key_index = Some(idx);
                 self.app_state.selected_value = None;
                 self.ui_state.value_viewer.reset_scroll();
@@ -799,6 +821,7 @@ impl App {
 
             // Search - delegated to sync_handlers (with trigger_search callback)
             Action::StartSearch
+            | Action::SearchConfirm
             | Action::ClearSearch
             | Action::SearchAddChar(_)
             | Action::SearchDeleteChar
@@ -928,9 +951,6 @@ impl App {
                 if has_search {
                     // Search mode: click on search results
                     if let Some(result_idx) = self.search_result_index_from_position(column, row) {
-                        // Update the search selection index
-                        self.app_state.search_selection_index = Some(result_idx);
-
                         // Get the actual key index from search results
                         if let Some(&key_idx) = self.app_state.search_results_local.get(result_idx)
                         {

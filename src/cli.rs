@@ -30,6 +30,10 @@ pub struct Cli {
     ///         etcd://host:port
     #[arg(value_name = "CONNECTION_STRING")]
     pub connection_string: Option<String>,
+
+    /// Enable debug mode (F12 to freeze UI and inspect)
+    #[arg(long)]
+    pub debug: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]

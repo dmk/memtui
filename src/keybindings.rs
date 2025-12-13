@@ -11,6 +11,7 @@ pub enum BindingContext {
     ConnectionPalette,
     QuitConfirmation,
     Welcome,
+    Debug,
 }
 
 /// Keybinding configuration - maps command names to key combinations
@@ -31,6 +32,8 @@ pub struct KeybindingsConfig {
     pub quit_confirmation: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub welcome: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub debug: HashMap<String, Vec<String>>,
 }
 
 impl KeybindingsConfig {
@@ -43,6 +46,7 @@ impl KeybindingsConfig {
             BindingContext::ConnectionPalette => &self.connection_palette,
             BindingContext::QuitConfirmation => &self.quit_confirmation,
             BindingContext::Welcome => &self.welcome,
+            BindingContext::Debug => &self.debug,
         }
     }
 
@@ -59,6 +63,7 @@ impl KeybindingsConfig {
             ),
             quit_confirmation: merge_hashmaps(defaults.quit_confirmation, user.quit_confirmation),
             welcome: merge_hashmaps(defaults.welcome, user.welcome),
+            debug: merge_hashmaps(defaults.debug, user.debug),
         }
     }
 
@@ -304,6 +309,10 @@ pub fn default_keybindings() -> KeybindingsConfig {
         "connection.form.open".to_string(),
         vec!["ctrl+n".to_string()],
     );
+    global.insert(
+        "debug.toggle".to_string(),
+        vec!["f12".to_string(), "ctrl+d".to_string()],
+    );
     config.global = global;
 
     // Default context bindings (when connected and browsing)
@@ -415,6 +424,20 @@ pub fn default_keybindings() -> KeybindingsConfig {
     );
     welcome.insert("navigation.enter".to_string(), vec!["enter".to_string()]);
     config.welcome = welcome;
+
+    // Debug context bindings
+    let mut debug = HashMap::new();
+    debug.insert(
+        "debug.toggle".to_string(),
+        vec!["esc".to_string(), "f12".to_string(), "ctrl+d".to_string()],
+    );
+    debug.insert(
+        "debug.copy_frame".to_string(),
+        vec!["y".to_string(), "c".to_string()],
+    );
+    debug.insert("debug.state.toggle".to_string(), vec!["s".to_string()]);
+    debug.insert("debug.mouse.toggle".to_string(), vec!["i".to_string()]);
+    config.debug = debug;
 
     config
 }

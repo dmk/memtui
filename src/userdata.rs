@@ -488,7 +488,8 @@ fn generate_default_keybindings_json() -> String {
     "quit.show": ["q", "esc"],
     "help.toggle": ["?"],
     "connection.palette.toggle": ["ctrl+p"],
-    "connection.form.open": ["ctrl+n"]
+    "connection.form.open": ["ctrl+n"],
+    "debug.toggle": ["f12", "ctrl+d"]
   },
 
   // Default context - active when connected and browsing
@@ -541,6 +542,14 @@ fn generate_default_keybindings_json() -> String {
     "navigation.next_item": ["down", "j"],
     "navigation.prev_item": ["up", "k"],
     "navigation.enter": ["enter"]
+  },
+
+  // Debug mode - active when debug freeze is enabled
+  "debug": {
+    "debug.toggle": ["esc", "f12", "ctrl+d"],
+    "debug.copy_frame": ["y", "c"],
+    "debug.state.toggle": ["s"],
+    "debug.mouse.toggle": ["i"]
   }
 }
 "#

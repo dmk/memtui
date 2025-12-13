@@ -94,5 +94,11 @@ pub enum Action {
         token: u64,
     },
 
+    // Debug
+    ToggleDebug,
+    DebugCopyFrame,
+    DebugToggleStateView,
+    DebugToggleMouseCapture,
+
     Error(String),
 }

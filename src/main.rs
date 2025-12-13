@@ -21,10 +21,14 @@ use memtui::action::Action;
 use memtui::actions::{async_handlers, sync_handlers};
 use memtui::app::{sync_event_context, AppState, EventRunner};
 use memtui::cli::{parse_connection_string, Cli, LogLevel};
+use memtui::clipboard;
 use memtui::config::Config;
+use memtui::debug::{self, DebugFreeze, DebugOverlay};
 use memtui::events::{Event, EventKind};
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
+use memtui::terminal;
 use memtui::types::ConnectionConfig;
+use memtui::ui::components::debug as debug_ui;
 use memtui::ui::{self, init_theme, Panel, UiState};
 use memtui::userdata;
 
@@ -40,6 +44,9 @@ pub struct App {
     temp_connection_id: Option<String>,
     /// Connection name to auto-connect to on startup
     auto_connect_name: Option<String>,
+    /// Debug mode enabled via --debug flag
+    debug_mode_enabled: bool,
+    debug_freeze: DebugFreeze,
 }
 
 impl App {
@@ -122,6 +129,8 @@ impl App {
             needs_render: true, // Render on first loop iteration
             temp_connection_id,
             auto_connect_name,
+            debug_mode_enabled: cli.debug,
+            debug_freeze: DebugFreeze::default(),
         }
     }
 
@@ -155,12 +164,22 @@ impl App {
             // Only render when state has changed
             if self.needs_render {
                 terminal.draw(|f| {
-                    ui::render(
-                        f,
-                        &mut self.app_state,
-                        &mut self.ui_state,
-                        &self.keybindings,
-                    );
+                    if self.debug_freeze.enabled {
+                        debug_ui::render_debug_freeze(
+                            f,
+                            &mut self.app_state,
+                            &mut self.ui_state,
+                            &self.keybindings,
+                            &mut self.debug_freeze,
+                        );
+                    } else {
+                        ui::render(
+                            f,
+                            &mut self.app_state,
+                            &mut self.ui_state,
+                            &self.keybindings,
+                        );
+                    }
                 })?;
                 self.needs_render = false;
 
@@ -168,6 +187,28 @@ impl App {
                 event_runner.update_context(|ctx| {
                     sync_event_context(ctx, &self.ui_state, &self.app_state);
                 });
+            }
+
+            if self.debug_freeze.enabled {
+                tokio::select! {
+                    biased;
+                    // Priority 1: Debug input events
+                    Some(event) = event_runner.poll() => {
+                        self.handle_debug_event(&event).await;
+                    }
+                    // Priority 2: Background actions (queued until unfreeze)
+                    Some(action) = self.action_rx.recv() => {
+                        if matches!(action, Action::ConfirmQuit) {
+                            info!("Quit confirmed while frozen, cancelling event runner");
+                            event_runner.cancel();
+                            return Ok(());
+                        }
+                        self.debug_freeze.queued_actions.push(action);
+                    }
+                    // Ignore ticks while frozen
+                    _ = interval.tick() => {}
+                }
+                continue;
             }
 
             // Wait for events, actions from async tasks, or tick
@@ -218,6 +259,66 @@ impl App {
         }
         info!("Event loop finished");
         Ok(())
+    }
+
+    async fn handle_debug_event(&mut self, event: &Event) {
+        match &event.kind {
+            EventKind::Resize(_, _) => {
+                self.debug_freeze.pending_capture = true;
+                self.needs_render = true;
+            }
+            EventKind::Mouse(mouse) => {
+                // Ignore scroll events entirely (don't close overlays)
+                if matches!(
+                    mouse.kind,
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                ) {
+                    return;
+                }
+
+                if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                    && self.debug_freeze.mouse_capture_enabled
+                {
+                    if let Some(snapshot) = self.debug_freeze.snapshot.as_ref() {
+                        let overlay = debug::build_inspect_overlay(
+                            mouse.column,
+                            mouse.row,
+                            snapshot,
+                            &self.app_state,
+                            &self.ui_state,
+                        );
+                        self.debug_freeze.overlay = Some(DebugOverlay::Inspect(overlay));
+                    }
+                    self.debug_freeze.mouse_capture_enabled = false;
+                    let _ = terminal::set_mouse_capture(false);
+                    self.needs_render = true;
+                }
+            }
+            EventKind::Key(key) => {
+                if key.code == KeyCode::Esc && self.debug_freeze.overlay.is_some() {
+                    self.debug_freeze.overlay = None;
+                    self.needs_render = true;
+                    return;
+                }
+
+                let command = self.keybindings.get_command(*key, BindingContext::Debug);
+                if let Some(command) = command {
+                    if command.starts_with("debug.") {
+                        if let Some(action) = self.command_to_action(&command) {
+                            self.update(action).await;
+                            return;
+                        }
+                    }
+                }
+
+                // Any other key dismisses the debug overlay (if open).
+                if self.debug_freeze.overlay.is_some() {
+                    self.debug_freeze.overlay = None;
+                    self.needs_render = true;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Dispatch an event to the appropriate component based on focus
@@ -566,6 +667,12 @@ impl App {
             "quit.confirm" => Some(Action::ConfirmQuit),
             "quit.cancel" => Some(Action::CancelQuit),
 
+            // Debug
+            "debug.toggle" => Some(Action::ToggleDebug),
+            "debug.copy_frame" => Some(Action::DebugCopyFrame),
+            "debug.state.toggle" => Some(Action::DebugToggleStateView),
+            "debug.mouse.toggle" => Some(Action::DebugToggleMouseCapture),
+
             // Help
             "help.toggle" => Some(Action::ToggleHelp),
 
@@ -621,6 +728,82 @@ impl App {
             Action::Quit => false,
             Action::ConfirmQuit => false,
             Action::Resize(_, _) => true,
+
+            // Debug (requires --debug flag)
+            Action::ToggleDebug => {
+                if !self.debug_mode_enabled {
+                    false
+                } else if self.debug_freeze.enabled {
+                    let queued = std::mem::take(&mut self.debug_freeze.queued_actions);
+                    self.debug_freeze = DebugFreeze::default();
+                    let _ = terminal::set_mouse_capture(true);
+                    for action in queued {
+                        let _ = self.action_tx.send(action);
+                    }
+                    true
+                } else {
+                    self.debug_freeze.enabled = true;
+                    self.debug_freeze.pending_capture = true;
+                    self.debug_freeze.snapshot = None;
+                    self.debug_freeze.snapshot_text.clear();
+                    self.debug_freeze.queued_actions.clear();
+                    self.debug_freeze.message = None;
+                    self.debug_freeze.overlay = None;
+                    self.debug_freeze.mouse_capture_enabled = false;
+                    let _ = terminal::set_mouse_capture(false);
+                    true
+                }
+            }
+            Action::DebugCopyFrame => {
+                let text = self.debug_freeze.snapshot_text.clone();
+                if text.is_empty() {
+                    self.debug_freeze.message = Some("No frozen frame captured yet".to_string());
+                    true
+                } else {
+                    match clipboard::osc52_copy(&text) {
+                        Ok(()) => {
+                            self.debug_freeze.message =
+                                Some("copied to clipboard (OSC52)".to_string())
+                        }
+                        Err(e) => {
+                            self.debug_freeze.message = Some(format!("copy failed: {e}"));
+                        }
+                    }
+                    true
+                }
+            }
+            Action::DebugToggleStateView => {
+                let show = !matches!(self.debug_freeze.overlay, Some(DebugOverlay::State(_)));
+                if show {
+                    let overlay = debug::build_state_overlay(
+                        &self.app_state,
+                        &self.ui_state,
+                        &self.debug_freeze,
+                    );
+                    self.debug_freeze.overlay = Some(DebugOverlay::State(overlay));
+                } else {
+                    self.debug_freeze.overlay = None;
+                }
+                true
+            }
+            Action::DebugToggleMouseCapture => {
+                if !self.debug_freeze.enabled {
+                    false
+                } else {
+                    self.debug_freeze.mouse_capture_enabled =
+                        !self.debug_freeze.mouse_capture_enabled;
+                    if self.debug_freeze.mouse_capture_enabled {
+                        let _ = terminal::set_mouse_capture(true);
+                        self.debug_freeze.message =
+                            Some("mouse capture ON (selection OFF)".to_string());
+                    } else {
+                        let _ = terminal::set_mouse_capture(false);
+                        self.debug_freeze.message =
+                            Some("mouse capture OFF (selection ON)".to_string());
+                    }
+                    true
+                }
+            }
 
             // UI toggles - delegated to sync_handlers
             Action::ShowQuitConfirmation

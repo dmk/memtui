@@ -1027,6 +1027,7 @@ name = "memtui"
 version = "0.3.2"
 dependencies = [
  "async-trait",
+ "base64",
  "clap",
  "crossterm 0.27.0",
  "etcd-client",

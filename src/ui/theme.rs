@@ -4,6 +4,7 @@
 //! Theme colors can be customized via `~/.config/memtui/theme.json`
 
 use ratatui::{
+    buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -69,7 +70,7 @@ fn apply_dim(color: Color) -> Color {
 }
 
 /// Dim a color by a factor (0.0 = original, 1.0 = black)
-fn dim_color_by(color: Color, factor: f32) -> Color {
+pub fn dim_color_by(color: Color, factor: f32) -> Color {
     match color {
         Color::Rgb(r, g, b) => {
             let inv = 1.0 - factor;
@@ -81,6 +82,23 @@ fn dim_color_by(color: Color, factor: f32) -> Color {
         }
         // For non-RGB colors, we can't easily dim, return as-is
         _ => color,
+    }
+}
+
+/// Dim a fully rendered buffer in-place (used for static overlays like debug freeze).
+pub fn dim_buffer_in_place(buffer: &mut Buffer, factor: f32) {
+    let factor = factor.clamp(0.0, 1.0);
+    if factor == 0.0 {
+        return;
+    }
+
+    let area = buffer.area;
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            let cell = &mut buffer[(x, y)];
+            cell.fg = dim_color_by(cell.fg, factor);
+            cell.bg = dim_color_by(cell.bg, factor);
+        }
     }
 }
 

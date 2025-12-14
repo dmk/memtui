@@ -1,0 +1,7 @@
+---
+source: tests/connection_palette_render.rs
+assertion_line: 39
+expression: modal
+---
+▸ ● Alpha (127.0.0.1:6379)
+  ● Beta (127.0.0.1:6379)

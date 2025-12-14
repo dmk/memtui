@@ -208,6 +208,9 @@ pub fn handle_search(
             app_state.reset_search();
             if !app_state.keys.is_empty() {
                 ui_state.key_list.select(Some(0));
+                app_state.selected_key_index = Some(0);
+                app_state.selected_value = None;
+                ui_state.value_viewer.reset_scroll();
             }
             Some((true, false))
         }

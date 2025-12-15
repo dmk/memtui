@@ -8,6 +8,7 @@ for testing and development purposes.
 
 import argparse
 import json
+import os
 import socket
 import sys
 import time
@@ -129,9 +130,12 @@ class DatastoreSeeder:
 
     def memcached_set(self, sock: socket.socket, key: str, value, ttl: int = 1800):
         """Helper to set a value in Memcached."""
-        if not isinstance(value, str):
-            value = json.dumps(value)
-        payload = value.encode()
+        if isinstance(value, (bytes, bytearray)):
+            payload = bytes(value)
+        else:
+            if not isinstance(value, str):
+                value = json.dumps(value)
+            payload = value.encode()
         command = f"set {key} 0 {ttl} {len(payload)}\r\n".encode()
         sock.sendall(command + payload + b"\r\n")
         sock.recv(1024)
@@ -517,6 +521,16 @@ class DatastoreSeeder:
                 "updated": self.fake.date_time_this_year().isoformat(),
             })
 
+        # Binary blobs for testing value viewer modes
+        self.log("Storing binary samples for testing")
+        binary_samples = [
+            ("blob:png_magic", b"\x89PNG\r\n\x1a\n" + os.urandom(32)),
+            ("blob:text_mixed", b"Report\x00\x01\x02Success\n\x03\x04"),
+            ("blob:random", os.urandom(64)),
+        ]
+        for key, blob in binary_samples:
+            r.set(key, blob)
+
         self.log("Redis seeding complete", "success")
 
     def seed_memcached(self):
@@ -692,6 +706,15 @@ class DatastoreSeeder:
                 details = f"tier={tier}|price={price}|currency=USD"
                 self.memcached_set(sock, f"pricing:{tier}", details, ttl=7200)
 
+            # Binary blobs
+            self.log("Storing binary blobs for testing")
+            binary_cache = [
+                ("binary:pattern", bytes(range(32))),
+                ("binary:random", os.urandom(48)),
+            ]
+            for key, blob in binary_cache:
+                self.memcached_set(sock, key, blob, ttl=1800)
+
             # Report exports
             self.log("Caching report exports")
             for idx in range(1, self.num_jobs + 5):
@@ -712,9 +735,13 @@ class DatastoreSeeder:
 
     def etcd_put(self, client, key: str, value):
         """Helper to put a value in etcd."""
-        if not isinstance(value, str):
-            value = json.dumps(value)
-        client.put(key, value)
+        if isinstance(value, (bytes, bytearray)):
+            payload = bytes(value)
+        else:
+            if not isinstance(value, str):
+                value = json.dumps(value)
+            payload = value
+        client.put(key, payload)
 
     def seed_etcd(self):
         """Populate etcd with sample data using etcd3gw client."""
@@ -953,6 +980,16 @@ class DatastoreSeeder:
                 "created_at": self.fake.date_time_this_year().isoformat(),
             }
             self.etcd_put(client, f"/tenants/{tenant['id']}", tenant)
+
+        # Binary payloads
+        self.log("Storing binary samples for testing")
+        etcd_binary = [
+            ("/binary/logo_chunk", b"\x89PNG\r\n\x1a\n" + os.urandom(24)),
+            ("/binary/random", os.urandom(64)),
+            ("/binary/text_mixed", b"cfg\x00\x01\x02status\x03ok"),
+        ]
+        for key, blob in etcd_binary:
+            self.etcd_put(client, key, blob)
 
         # etcd3gw client doesn't need explicit close, but we can clean up if needed
         self.log("etcd seeding complete", "success")

@@ -19,6 +19,7 @@ pub enum Action {
     PrevPanel,
     NextItem,
     PrevItem,
+    CycleValueViewMode,
     Enter,
     Escape,
     ToggleHelp,

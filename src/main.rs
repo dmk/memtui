@@ -27,7 +27,7 @@ use memtui::debug::{self, DebugFreeze, DebugOverlay};
 use memtui::events::{Event, EventKind};
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
 use memtui::terminal;
-use memtui::types::ConnectionConfig;
+use memtui::types::{ConnectionConfig, ValueType};
 use memtui::ui::components::debug as debug_ui;
 use memtui::ui::{self, init_theme, Panel, UiState};
 use memtui::userdata;
@@ -703,6 +703,7 @@ impl App {
             "navigation.next_item" => Some(Action::NextItem),
             "navigation.prev_item" => Some(Action::PrevItem),
             "navigation.enter" => Some(Action::Enter),
+            "value.view_mode.cycle" => Some(Action::CycleValueViewMode),
 
             // Connection commands
             "connection.palette.toggle" => {
@@ -832,6 +833,21 @@ impl App {
                     &self.action_tx,
                     &action,
                 )
+            }
+
+            // Value viewer
+            Action::CycleValueViewMode => {
+                if let Some(value) = self.app_state.selected_value.as_ref() {
+                    let invalid_utf8 = std::str::from_utf8(&value.data).is_err();
+                    if matches!(value.value_type, ValueType::Binary) || invalid_utf8 {
+                        self.ui_state.value_viewer.cycle_view_mode();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
             }
 
             // Connection tabs (kept in App - accesses multiple fields)

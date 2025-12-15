@@ -90,8 +90,29 @@ pub struct ValueViewerProps<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TextContentKind {
-    Plain,
+    /// Valid UTF-8 text content displayed as plain text
+    Text,
+    /// Valid JSON content displayed with syntax highlighting
     Json,
+    /// Invalid UTF-8 binary content displayed as lossy text (control chars replaced)
+    BinaryRaw,
+    /// Binary content displayed as hexadecimal with ASCII side panel
+    BinaryHex,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BinaryViewMode {
+    Raw,
+    Hex,
+}
+
+impl BinaryViewMode {
+    fn toggle(self) -> Self {
+        match self {
+            BinaryViewMode::Raw => BinaryViewMode::Hex,
+            BinaryViewMode::Hex => BinaryViewMode::Raw,
+        }
+    }
 }
 
 struct TextCache {
@@ -228,19 +249,14 @@ impl TextCache {
                         // This ensures both cached JSON colors and paragraph_style are dimmed
                         let merged_style = apply_dim_to_style(paragraph_style.patch(span.style));
 
-                        for ch in span.content.chars() {
-                            // Bounds check before buffer access
-                            if x >= area.x + area.width || x >= buf.area().width {
-                                break;
-                            }
-
-                            // Safe buffer access with bounds check
-                            if let Some(cell) = buf.cell_mut((x, y)) {
-                                cell.set_char(ch);
-                                cell.set_style(merged_style);
-                            }
-                            x = x.saturating_add(1);
+                        if x >= area.x + area.width || x >= buf.area().width {
+                            break;
                         }
+
+                        let max_width = (area.x + area.width).saturating_sub(x) as usize;
+                        let (new_x, _) =
+                            buf.set_stringn(x, y, span.content.as_ref(), max_width, merged_style);
+                        x = new_x;
                     }
 
                     screen_y = screen_y.saturating_add(1);
@@ -280,6 +296,7 @@ pub struct ValueViewer {
     pub viewport_height: u16,
     pub scrollbar_state: ScrollbarState,
     text_cache: Option<TextCache>,
+    binary_view_mode: BinaryViewMode,
 }
 
 impl ValueViewer {
@@ -291,6 +308,7 @@ impl ValueViewer {
             viewport_height: 0,
             scrollbar_state: ScrollbarState::default(),
             text_cache: None,
+            binary_view_mode: BinaryViewMode::Raw,
         }
     }
 
@@ -433,6 +451,11 @@ impl ValueViewer {
         self.scroll_offset = 0;
         self.table_state.select(None);
         self.scrollbar_state = ScrollbarState::default();
+    }
+
+    pub fn cycle_view_mode(&mut self) {
+        self.binary_view_mode = self.binary_view_mode.toggle();
+        self.clear_text_cache();
     }
 
     /// Check if we're at a scroll boundary (top or bottom)
@@ -590,10 +613,62 @@ impl ValueViewer {
             title,
             title_right,
             value,
-            TextContentKind::Plain,
+            TextContentKind::Text,
             paragraph_style,
             props.animation,
-            move || ValueViewer::plain_text_to_lines(&text),
+            move |_| ValueViewer::plain_text_to_lines(&text),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_raw_value(
+        &mut self,
+        f: &mut Frame,
+        area: Rect,
+        is_active: bool,
+        title: &str,
+        title_right: Option<&str>,
+        value: &Value,
+        props: &ValueViewerProps<'_>,
+    ) {
+        let (text, paragraph_style) = ValueViewer::format_raw_bytes(value);
+        self.render_text_value(
+            f,
+            area,
+            is_active,
+            title,
+            title_right,
+            value,
+            TextContentKind::BinaryRaw,
+            paragraph_style,
+            props.animation,
+            move |_| ValueViewer::plain_text_to_lines(&text),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_hex_value(
+        &mut self,
+        f: &mut Frame,
+        area: Rect,
+        is_active: bool,
+        title: &str,
+        title_right: Option<&str>,
+        value: &Value,
+        props: &ValueViewerProps<'_>,
+    ) {
+        let paragraph_style = Style::default().fg(theme::TEXT_PRIMARY());
+        self.render_text_value(
+            f,
+            area,
+            is_active,
+            title,
+            title_right,
+            value,
+            TextContentKind::BinaryHex,
+            paragraph_style,
+            props.animation,
+            move |content_width| ValueViewer::hex_to_lines(&value.data, content_width),
         );
     }
 
@@ -611,7 +686,7 @@ impl ValueViewer {
         _animation: &AnimationState,
         lines_builder: F,
     ) where
-        F: FnOnce() -> Vec<Line<'static>>,
+        F: FnOnce(u16) -> Vec<Line<'static>>,
     {
         let inner = if let Some(right) = title_right {
             Self::render_header_split(f, area, title, right, is_active)
@@ -665,7 +740,7 @@ impl ValueViewer {
         paragraph_style: Style,
         lines_builder: F,
     ) where
-        F: FnOnce() -> Vec<Line<'static>>,
+        F: FnOnce(u16) -> Vec<Line<'static>>,
     {
         let needs_rebuild = self
             .text_cache
@@ -674,7 +749,7 @@ impl ValueViewer {
             .unwrap_or(true);
 
         if needs_rebuild {
-            let lines = lines_builder();
+            let lines = lines_builder(content_width);
             self.text_cache = Some(TextCache::new(
                 value,
                 kind,
@@ -712,7 +787,7 @@ impl ValueViewer {
                     TextContentKind::Json,
                     Style::default(),
                     props.animation,
-                    move || lines,
+                    move |_| lines,
                 );
                 true
             }
@@ -887,6 +962,101 @@ impl ValueViewer {
                 Style::default().fg(theme::NEON_RED()),
             ),
         }
+    }
+
+    fn format_raw_bytes(value: &Value) -> (String, Style) {
+        let lossy = String::from_utf8_lossy(&value.data);
+        let text = ValueViewer::sanitize_for_display(&lossy);
+        (text, Style::default().fg(theme::TEXT_PRIMARY()))
+    }
+
+    fn sanitize_for_display(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        for ch in text.chars() {
+            match ch {
+                '\n' => out.push('\n'),
+                '\r' => {}
+                '\t' => out.push_str("    "),
+                c if c.is_control() => out.push('�'),
+                c => out.push(c),
+            }
+        }
+        out
+    }
+
+    fn hex_to_lines(data: &[u8], content_width: u16) -> Vec<Line<'static>> {
+        if data.is_empty() {
+            return vec![Line::from(String::new())];
+        }
+
+        let width = content_width.max(1) as usize;
+        let max_bytes_per_line = 16usize;
+
+        let (show_offset, show_ascii, bytes_per_line) = if width >= 29 {
+            (
+                true,
+                true,
+                ((width.saturating_sub(13)) / 4).clamp(4, max_bytes_per_line),
+            )
+        } else if width >= 21 {
+            (
+                true,
+                false,
+                ((width.saturating_sub(9)) / 3).clamp(4, max_bytes_per_line),
+            )
+        } else {
+            (
+                false,
+                false,
+                ((width + 1) / 3).max(1).min(max_bytes_per_line),
+            )
+        };
+
+        let hex_col_width = 3 * bytes_per_line - 1;
+        let mut lines = Vec::with_capacity(data.len().div_ceil(bytes_per_line));
+        let offset_style = Style::default().fg(theme::TEXT_DIM());
+        let hex_style = Style::default().fg(theme::TEXT_DIM());
+        let ascii_printable_style = Style::default().fg(theme::TEXT_PRIMARY());
+        let ascii_nonprint_style = Style::default().fg(theme::TEXT_DIM());
+
+        for (line_idx, chunk) in data.chunks(bytes_per_line).enumerate() {
+            let offset = line_idx * bytes_per_line;
+            let mut spans = Vec::new();
+            if show_offset {
+                spans.push(Span::styled(format!("{:08x}  ", offset), offset_style));
+            }
+
+            let hex = chunk
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let hex_display = if show_ascii {
+                format!("{hex:<hex_col_width$}")
+            } else {
+                hex
+            };
+            spans.push(Span::styled(hex_display, hex_style));
+
+            if show_ascii {
+                spans.push(Span::styled("  |", offset_style));
+                for &byte in chunk {
+                    let printable = (0x20..=0x7e).contains(&byte);
+                    let ch = if printable { byte as char } else { '.' };
+                    let style = if printable {
+                        ascii_printable_style
+                    } else {
+                        ascii_nonprint_style
+                    };
+                    spans.push(Span::styled(ch.to_string(), style));
+                }
+                spans.push(Span::styled("|", offset_style));
+            }
+
+            lines.push(Line::from(spans));
+        }
+
+        lines
     }
 
     fn plain_text_to_lines(text: &str) -> Vec<Line<'static>> {
@@ -1146,6 +1316,30 @@ impl ValueViewer {
         }
     }
 
+    fn value_view_info(
+        &self,
+        value: &Value,
+        props: &ValueViewerProps<'_>,
+        is_binary: bool,
+    ) -> String {
+        let label = if is_binary {
+            match self.binary_view_mode {
+                BinaryViewMode::Hex => "hex",
+                BinaryViewMode::Raw => "raw",
+            }
+        } else if props.json_formatter.can_format(value) {
+            "json"
+        } else {
+            "text"
+        };
+
+        format!(
+            "{} · {} bytes",
+            label,
+            Self::format_number(value.data.len())
+        )
+    }
+
     fn title_for(
         key_name: Option<&str>,
         _value_type: Option<ValueType>,
@@ -1400,27 +1594,61 @@ impl Component for ValueViewer {
                     // Reset table state when viewing non-table data
                     self.table_state.select(None);
 
-                    if self.try_render_json_value(
+                    let invalid_utf8 = std::str::from_utf8(&value.data).is_err();
+                    let is_binary = matches!(value.value_type, ValueType::Binary) || invalid_utf8;
+
+                    let view_info = self.value_view_info(value, &props, is_binary);
+                    let title_right = ValueViewer::compose_title_right(
+                        ttl_label.as_deref(),
+                        Some(view_info.as_str()),
+                    );
+
+                    if is_binary {
+                        match self.binary_view_mode {
+                            BinaryViewMode::Raw => {
+                                self.render_raw_value(
+                                    f,
+                                    area,
+                                    props.is_active,
+                                    &base_title,
+                                    title_right.as_deref(),
+                                    value,
+                                    &props,
+                                );
+                            }
+                            BinaryViewMode::Hex => {
+                                self.render_hex_value(
+                                    f,
+                                    area,
+                                    props.is_active,
+                                    &base_title,
+                                    title_right.as_deref(),
+                                    value,
+                                    &props,
+                                );
+                            }
+                        }
+                    } else if self.try_render_json_value(
                         f,
                         area,
                         props.is_active,
                         &base_title,
-                        base_title_right.as_deref(),
+                        title_right.as_deref(),
                         value,
                         &props,
                     ) {
                         return;
+                    } else {
+                        self.render_plain_value(
+                            f,
+                            area,
+                            props.is_active,
+                            &base_title,
+                            title_right.as_deref(),
+                            value,
+                            &props,
+                        );
                     }
-
-                    self.render_plain_value(
-                        f,
-                        area,
-                        props.is_active,
-                        &base_title,
-                        base_title_right.as_deref(),
-                        value,
-                        &props,
-                    );
                     return;
                 }
             }

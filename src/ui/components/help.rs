@@ -28,6 +28,7 @@ pub fn render_help(f: &mut Frame, keybindings: &KeybindingsConfig) {
     let next_item = get_key("navigation.next_item", "↓");
     let prev_item = get_key("navigation.prev_item", "↑");
     let search = get_key("search.start", "/");
+    let value_view_mode = get_key("value.view_mode.cycle", "V");
     let palette = get_key("connection.palette.toggle", "^O");
     let new_conn = get_key("connection.form.open", "^N");
     let tab_next = get_key("connection.tab.next", "^→");
@@ -57,6 +58,7 @@ pub fn render_help(f: &mut Frame, keybindings: &KeybindingsConfig) {
                 ("Switch panels", format!("{}  {}", next_panel, prev_panel)),
                 ("Move up/down", format!("{}  {}", prev_item, next_item)),
                 ("Search keys", search),
+                ("Value view mode", value_view_mode),
             ],
         ),
         (

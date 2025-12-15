@@ -332,6 +332,7 @@ pub fn default_keybindings() -> KeybindingsConfig {
         vec!["up".to_string(), "k".to_string()],
     );
     default.insert("navigation.enter".to_string(), vec!["enter".to_string()]);
+    default.insert("value.view_mode.cycle".to_string(), vec!["v".to_string()]);
     default.insert(
         "connection.tab.next".to_string(),
         vec!["ctrl+right".to_string()],

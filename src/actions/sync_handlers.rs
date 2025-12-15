@@ -59,16 +59,24 @@ pub fn handle_ui_toggle(ui_state: &mut UiState, app_state: &AppState, action: &A
 /// Handle navigation actions (NextItem, PrevItem, NextPanel, etc.)
 pub fn handle_navigation(
     ui_state: &mut UiState,
-    app_state: &AppState,
+    app_state: &mut AppState,
     action_tx: &mpsc::UnboundedSender<Action>,
     action: &Action,
 ) -> bool {
     match action {
         Action::NextPanel => {
+            // Exit search input mode when switching panels
+            if app_state.is_searching {
+                app_state.is_searching = false;
+            }
             ui_state.next_panel();
             true
         }
         Action::PrevPanel => {
+            // Exit search input mode when switching panels
+            if app_state.is_searching {
+                app_state.is_searching = false;
+            }
             ui_state.prev_panel();
             true
         }
@@ -77,6 +85,22 @@ pub fn handle_navigation(
                 let connections_len = app_state.connection_manager.get_configs().len();
                 if connections_len > 0 {
                     ui_state.connection_list.next(connections_len);
+                }
+            } else if !app_state.search_query.is_empty() && ui_state.active_panel == Panel::Keys {
+                // Navigate through search results
+                let total_count = app_state.search_results_local.len();
+                if total_count > 0 {
+                    let current_idx = app_state.search_selection_index.unwrap_or(0);
+                    let new_idx = if current_idx >= total_count - 1 {
+                        0
+                    } else {
+                        current_idx + 1
+                    };
+                    app_state.search_selection_index = Some(new_idx);
+                    if let Some(&key_idx) = app_state.search_results_local.get(new_idx) {
+                        ui_state.key_list.select(Some(key_idx));
+                        let _ = action_tx.send(Action::SelectKey(key_idx));
+                    }
                 }
             } else {
                 let keys_len = app_state
@@ -97,6 +121,22 @@ pub fn handle_navigation(
                 let connections_len = app_state.connection_manager.get_configs().len();
                 if connections_len > 0 {
                     ui_state.connection_list.prev(connections_len);
+                }
+            } else if !app_state.search_query.is_empty() && ui_state.active_panel == Panel::Keys {
+                // Navigate through search results
+                let total_count = app_state.search_results_local.len();
+                if total_count > 0 {
+                    let current_idx = app_state.search_selection_index.unwrap_or(0);
+                    let new_idx = if current_idx == 0 {
+                        total_count - 1
+                    } else {
+                        current_idx - 1
+                    };
+                    app_state.search_selection_index = Some(new_idx);
+                    if let Some(&key_idx) = app_state.search_results_local.get(new_idx) {
+                        ui_state.key_list.select(Some(key_idx));
+                        let _ = action_tx.send(Action::SelectKey(key_idx));
+                    }
                 }
             } else {
                 let keys_len = app_state

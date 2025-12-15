@@ -392,8 +392,8 @@ impl App {
             return self.dispatch_keybinding(*key, BindingContext::Welcome);
         }
 
-        // 6. Search mode - special handling
-        if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
+        // 6. Search mode - special handling (only when actively typing in search input)
+        if self.app_state.is_searching {
             return self.dispatch_search_key(*key);
         }
 
@@ -600,37 +600,74 @@ impl App {
                 && row >= key_area.y
                 && row < key_area.y + key_area.height
             {
-                // Scroll in key list
-                let total_count = self
-                    .app_state
-                    .total_key_count
-                    .map(|t| t as usize)
-                    .unwrap_or(self.app_state.keys.len());
+                // Check if we're in search mode
+                let has_search = !self.app_state.search_query.is_empty();
 
-                if total_count > 0 {
-                    let current = self.ui_state.key_list.state.selected().unwrap_or(0);
-                    let new_index = if delta > 0 {
-                        let next = current.saturating_add(delta.unsigned_abs());
-                        if next >= total_count {
-                            0
+                if has_search {
+                    // In search mode: scroll through search results
+                    let total_count = self.app_state.search_results_local.len();
+                    if total_count > 0 {
+                        let current_idx = self.app_state.search_selection_index.unwrap_or(0);
+                        let steps = delta.unsigned_abs().min(total_count);
+                        let new_idx = if delta > 0 {
+                            let next = current_idx.saturating_add(steps);
+                            if next >= total_count {
+                                0
+                            } else {
+                                next
+                            }
                         } else {
-                            next
-                        }
-                    } else {
-                        let amount = delta.unsigned_abs();
-                        if amount > current {
-                            total_count.saturating_sub(1)
-                        } else {
-                            current - amount
-                        }
-                    };
+                            let amount = steps;
+                            if amount > current_idx {
+                                total_count.saturating_sub(1)
+                            } else {
+                                current_idx - amount
+                            }
+                        };
 
-                    if new_index != current {
-                        self.ui_state.key_list.select(Some(new_index));
-                        return vec![Action::SelectKey(new_index)];
+                        if new_idx != current_idx {
+                            self.app_state.search_selection_index = Some(new_idx);
+                            if let Some(&key_idx) = self.app_state.search_results_local.get(new_idx)
+                            {
+                                self.ui_state.key_list.select(Some(key_idx));
+                                return vec![Action::SelectKey(key_idx)];
+                            }
+                        }
                     }
+                    return vec![Action::Tick];
+                } else {
+                    // Normal mode: scroll in key list
+                    let total_count = self
+                        .app_state
+                        .total_key_count
+                        .map(|t| t as usize)
+                        .unwrap_or(self.app_state.keys.len());
+
+                    if total_count > 0 {
+                        let current = self.ui_state.key_list.state.selected().unwrap_or(0);
+                        let new_index = if delta > 0 {
+                            let next = current.saturating_add(delta.unsigned_abs());
+                            if next >= total_count {
+                                0
+                            } else {
+                                next
+                            }
+                        } else {
+                            let amount = delta.unsigned_abs();
+                            if amount > current {
+                                total_count.saturating_sub(1)
+                            } else {
+                                current - amount
+                            }
+                        };
+
+                        if new_index != current {
+                            self.ui_state.key_list.select(Some(new_index));
+                            return vec![Action::SelectKey(new_index)];
+                        }
+                    }
+                    return vec![Action::Tick];
                 }
-                return vec![Action::Tick];
             }
         }
 
@@ -695,7 +732,9 @@ impl App {
                 }
             }
             "search.clear" => Some(Action::ClearSearch),
-            "search.confirm" => Some(Action::Tick), // Just render, is_searching handled by update
+            "search.confirm" => Some(Action::ConfirmSearch),
+            "search.next_result" => Some(Action::SearchNextResult),
+            "search.prev_result" => Some(Action::SearchPrevResult),
 
             // Navigation commands
             "navigation.next_panel" => Some(Action::NextPanel),
@@ -829,7 +868,7 @@ impl App {
             Action::NextPanel | Action::PrevPanel | Action::NextItem | Action::PrevItem => {
                 handle_navigation(
                     &mut self.ui_state,
-                    &self.app_state,
+                    &mut self.app_state,
                     &self.action_tx,
                     &action,
                 )
@@ -1023,6 +1062,23 @@ impl App {
                 }
             }
 
+            // Search navigation
+            Action::SearchNextResult => {
+                self.handle_search_navigation(true);
+                true
+            }
+            Action::SearchPrevResult => {
+                self.handle_search_navigation(false);
+                true
+            }
+            Action::ConfirmSearch => {
+                // Exit search input mode but keep current selection
+                if self.app_state.is_searching {
+                    self.app_state.is_searching = false;
+                }
+                true
+            }
+
             // Search results - delegated to async_handlers
             Action::DidSearchLocal {
                 indices,
@@ -1036,7 +1092,7 @@ impl App {
                 token,
             ),
             Action::DidSearchServer { result, token } => {
-                handle_did_search_server(&mut self.app_state, result.keys, token)
+                handle_did_search_server(&mut self.app_state, &self.action_tx, result.keys, token)
             }
 
             // Error handling
@@ -1139,7 +1195,7 @@ impl App {
                         // Update the search selection index
                         self.app_state.search_selection_index = Some(result_idx);
 
-                        // Get the actual key index from search results
+                        // Get the key index from search results (now includes merged server keys)
                         if let Some(&key_idx) = self.app_state.search_results_local.get(result_idx)
                         {
                             self.ui_state.key_list.select(Some(key_idx));
@@ -1178,6 +1234,37 @@ impl App {
             tokio::time::sleep(debounce).await;
             let _ = tx.send(Action::LoadValueDebounced { index: idx, token });
         });
+    }
+
+    /// Handle search navigation (next/prev result)
+    fn handle_search_navigation(&mut self, forward: bool) {
+        let total_count = self.app_state.search_results_local.len();
+        if total_count == 0 {
+            return;
+        }
+
+        let current_idx = self.app_state.search_selection_index.unwrap_or(0);
+        let new_idx = if forward {
+            if current_idx >= total_count - 1 {
+                0
+            } else {
+                current_idx + 1
+            }
+        } else if current_idx == 0 {
+            total_count - 1
+        } else {
+            current_idx - 1
+        };
+
+        self.app_state.search_selection_index = Some(new_idx);
+
+        // Select the key using normal SelectKey action
+        if let Some(&key_idx) = self.app_state.search_results_local.get(new_idx) {
+            self.ui_state.key_list.select(Some(key_idx));
+            self.app_state.selected_key_index = Some(key_idx);
+            self.app_state.selected_value = None;
+            let _ = self.action_tx.send(Action::SelectKey(key_idx));
+        }
     }
     fn focus_connection(&mut self, id: String) {
         if !self.app_state.connection_manager.set_active(&id) {

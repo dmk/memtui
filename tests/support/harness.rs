@@ -96,7 +96,7 @@ impl AppHarness {
             Action::NextItem | Action::PrevItem | Action::NextPanel | Action::PrevPanel => {
                 sync_handlers::handle_navigation(
                     &mut self.ui_state,
-                    &self.app_state,
+                    &mut self.app_state,
                     &self.action_tx,
                     &action,
                 )
@@ -153,6 +153,7 @@ impl AppHarness {
     pub fn apply_server_search(&mut self, result: KeyScanResult, token: u64) {
         memtui::actions::async_handlers::handle_did_search_server(
             &mut self.app_state,
+            &self.action_tx,
             result.keys,
             token,
         );

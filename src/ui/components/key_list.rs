@@ -309,6 +309,7 @@ impl KeyList {
     ) -> (Vec<ListItem<'static>>, usize, Option<usize>) {
         let mut items: Vec<ListItem<'static>> = Vec::new();
 
+        // All search results (local + merged server) are now in search_results_local
         for &key_idx in props.search_results_local.iter() {
             if let Some(Some(key)) = props.keys.get(key_idx) {
                 let match_positions = props.search_match_positions.get(&key_idx);
@@ -318,31 +319,6 @@ impl KeyList {
                     props.backend_type,
                     props.show_ttl,
                     match_positions,
-                    now,
-                ));
-            }
-        }
-
-        let local_key_names: std::collections::HashSet<&str> = props
-            .search_results_local
-            .iter()
-            .filter_map(|&idx| {
-                props
-                    .keys
-                    .get(idx)
-                    .and_then(|k| k.as_ref())
-                    .map(|k| k.name.as_str())
-            })
-            .collect();
-
-        for server_key in props.search_results_server.iter() {
-            if !local_key_names.contains(server_key.name.as_str()) {
-                items.push(Self::build_key_item_with_indicator(
-                    server_key,
-                    content_width,
-                    props.backend_type,
-                    props.show_ttl,
-                    "◦",
                     now,
                 ));
             }
@@ -625,89 +601,6 @@ impl KeyList {
         format!("{}s", secs)
     }
 
-    fn build_key_item_with_indicator(
-        key: &KeyMetadata,
-        content_width: usize,
-        backend_type: Option<BackendType>,
-        show_ttl: bool,
-        indicator: &str,
-        now: SystemTime,
-    ) -> ListItem<'static> {
-        let show_type = !matches!(
-            backend_type,
-            Some(BackendType::Memcached | BackendType::Etcd)
-        );
-        let indicator_width = indicator.chars().count() + 1;
-
-        if show_type {
-            let meta_width = if show_ttl {
-                indicator_width + 1 + Self::TTL_COL_WIDTH + 1 + Self::TYPE_COL_WIDTH
-            } else {
-                indicator_width + 1 + Self::TYPE_COL_WIDTH
-            };
-            let available_for_name = content_width.saturating_sub(meta_width);
-            let name_display = Self::truncate_to_fit(&key.name, available_for_name);
-            let name_width = name_display.chars().count();
-            let spacer_width = content_width.saturating_sub(name_width + meta_width);
-            let spacer = if spacer_width > 0 {
-                " ".repeat(spacer_width)
-            } else {
-                String::new()
-            };
-
-            let mut spans = vec![
-                Span::styled(
-                    format!("{} ", indicator),
-                    Style::default().fg(theme::NEON_AMBER()),
-                ),
-                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY())),
-                Span::raw(spacer),
-            ];
-            spans.push(Span::raw(" "));
-            if show_ttl {
-                spans.push(Self::ttl_span(Self::ttl_meta(now, key)));
-                spans.push(Span::raw(" "));
-            }
-            spans.push(Span::styled(
-                Self::padded_type_label(key.value_type),
-                Style::default().fg(theme::TEXT_DIM()),
-            ));
-            let line = Line::from(spans);
-
-            ListItem::new(line)
-        } else {
-            let meta_width = if show_ttl {
-                indicator_width + 1 + Self::TTL_COL_WIDTH
-            } else {
-                indicator_width
-            };
-            let available_for_name = content_width.saturating_sub(meta_width);
-            let name_display = Self::truncate_to_fit(&key.name, available_for_name);
-            let name_width = name_display.chars().count();
-            let spacer_width = content_width.saturating_sub(name_width + meta_width);
-            let spacer = if spacer_width > 0 {
-                " ".repeat(spacer_width)
-            } else {
-                String::new()
-            };
-
-            let mut spans = vec![
-                Span::styled(
-                    format!("{} ", indicator),
-                    Style::default().fg(theme::NEON_AMBER()),
-                ),
-                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY())),
-                Span::raw(spacer),
-            ];
-            if show_ttl {
-                spans.push(Span::raw(" "));
-                spans.push(Self::ttl_span(Self::ttl_meta(now, key)));
-            }
-            let line = Line::from(spans);
-            ListItem::new(line)
-        }
-    }
-
     fn truncate_to_fit(text: &str, max_chars: usize) -> String {
         if max_chars == 0 {
             return String::new();
@@ -929,23 +822,7 @@ impl Component for KeyList {
             .unwrap_or(false);
 
         let search_result_count = if has_search {
-            let local_key_names: std::collections::HashSet<&str> = props
-                .search_results_local
-                .iter()
-                .filter_map(|&idx| {
-                    props
-                        .keys
-                        .get(idx)
-                        .and_then(|k| k.as_ref())
-                        .map(|k| k.name.as_str())
-                })
-                .collect();
-            let unique_server_count = props
-                .search_results_server
-                .iter()
-                .filter(|k| !local_key_names.contains(k.name.as_str()))
-                .count();
-            props.search_results_local.len() + unique_server_count
+            props.search_results_local.len()
         } else {
             0
         };
@@ -1001,6 +878,13 @@ impl KeyList {
         key: &crossterm::event::KeyEvent,
         props: &KeyListProps<'_>,
     ) -> Vec<Action> {
+        // When search is active, navigate through search results only
+        let has_active_search = !props.active_search_query.unwrap_or("").is_empty();
+
+        if has_active_search {
+            return self.handle_search_key_event(key, props);
+        }
+
         let total_count = props
             .total_count
             .map(|t| t as usize)
@@ -1050,6 +934,51 @@ impl KeyList {
                     actions.push(Action::LoadMoreKeys(i));
                 }
                 actions
+            }
+            _ => vec![],
+        }
+    }
+
+    fn handle_search_key_event(
+        &mut self,
+        key: &crossterm::event::KeyEvent,
+        props: &KeyListProps<'_>,
+    ) -> Vec<Action> {
+        let result_count = props.search_results_local.len();
+        if result_count == 0 {
+            return vec![];
+        }
+
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                let current_search_idx = props.search_selection_index.unwrap_or(0);
+                let new_search_idx = if current_search_idx >= result_count - 1 {
+                    0
+                } else {
+                    current_search_idx + 1
+                };
+
+                if let Some(&key_idx) = props.search_results_local.get(new_search_idx) {
+                    self.state.select(Some(key_idx));
+                    vec![Action::SearchNextResult]
+                } else {
+                    vec![]
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                let current_search_idx = props.search_selection_index.unwrap_or(0);
+                let new_search_idx = if current_search_idx == 0 {
+                    result_count - 1
+                } else {
+                    current_search_idx - 1
+                };
+
+                if let Some(&key_idx) = props.search_results_local.get(new_search_idx) {
+                    self.state.select(Some(key_idx));
+                    vec![Action::SearchPrevResult]
+                } else {
+                    vec![]
+                }
             }
             _ => vec![],
         }

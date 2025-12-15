@@ -350,11 +350,11 @@ pub fn default_keybindings() -> KeybindingsConfig {
     search.insert("search.clear".to_string(), vec!["esc".to_string()]);
     search.insert(
         "search.next_result".to_string(),
-        vec!["down".to_string(), "j".to_string(), "tab".to_string()],
+        vec!["down".to_string(), "j".to_string()],
     );
     search.insert(
         "search.prev_result".to_string(),
-        vec!["up".to_string(), "k".to_string(), "shift+tab".to_string()],
+        vec!["up".to_string(), "k".to_string()],
     );
     search.insert("search.confirm".to_string(), vec!["enter".to_string()]);
     config.search = search;

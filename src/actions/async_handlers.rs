@@ -143,6 +143,30 @@ pub fn handle_load_value(
     }
 }
 
+/// Load value by key name (for server-only search results)
+pub fn handle_load_value_by_name(
+    app_state: &AppState,
+    action_tx: &mpsc::UnboundedSender<Action>,
+    key: &crate::types::KeyMetadata,
+    token: u64,
+) {
+    let key_name = key.name.clone();
+    if let Some(backend) = app_state.connection_manager.get_active_backend_handle() {
+        let tx = action_tx.clone();
+        tokio::spawn(async move {
+            let backend = backend.read().await;
+            match backend.get(&key_name).await {
+                Ok(val) => {
+                    let _ = tx.send(Action::DidLoadValue { value: val, token });
+                }
+                Err(e) => {
+                    let _ = tx.send(Action::DidFailLoadValue(e.to_string()));
+                }
+            }
+        });
+    }
+}
+
 /// Trigger search - runs local fuzzy search and schedules server search
 pub fn trigger_search(app_state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     app_state.search_token = app_state.search_token.wrapping_add(1);
@@ -150,11 +174,23 @@ pub fn trigger_search(app_state: &mut AppState, action_tx: &mpsc::UnboundedSende
     let query = app_state.search_query.clone();
 
     if query.is_empty() {
+        // Remove server keys that were merged during search (only if we actually added any)
+        if app_state.keys_length_before_search > 0
+            && app_state.keys.len() > app_state.keys_length_before_search
+        {
+            app_state.keys.truncate(app_state.keys_length_before_search);
+        }
         app_state.search_results_local.clear();
         app_state.search_results_server.clear();
         app_state.search_match_positions.clear();
         app_state.is_server_searching = false;
+        app_state.keys_length_before_search = 0;
         return;
+    }
+
+    // Track keys length before merging server results (only on first search in this session)
+    if app_state.keys_length_before_search == 0 {
+        app_state.keys_length_before_search = app_state.keys.len();
     }
 
     // Immediate local fuzzy search
@@ -167,33 +203,35 @@ pub fn trigger_search(app_state: &mut AppState, action_tx: &mpsc::UnboundedSende
         token,
     });
 
-    // Background server search
-    if let Some(backend) = app_state.connection_manager.get_active_backend_handle() {
-        app_state.is_server_searching = true;
-        let tx = action_tx.clone();
-        let search_query = query.clone();
+    // Background server search - only if query is not empty
+    if !query.is_empty() {
+        if let Some(backend) = app_state.connection_manager.get_active_backend_handle() {
+            app_state.is_server_searching = true;
+            let tx = action_tx.clone();
+            let search_query = query.clone();
 
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-            let backend = backend.read().await;
-            let pattern = format!("*{}*", search_query);
-            match backend.search_keys(&pattern, 100).await {
-                Ok(result) => {
-                    let _ = tx.send(Action::DidSearchServer { result, token });
+                let backend = backend.read().await;
+                let pattern = format!("*{}*", search_query);
+                match backend.search_keys(&pattern, 100).await {
+                    Ok(result) => {
+                        let _ = tx.send(Action::DidSearchServer { result, token });
+                    }
+                    Err(_) => {
+                        let _ = tx.send(Action::DidSearchServer {
+                            result: crate::types::KeyScanResult {
+                                keys: vec![],
+                                cursor: None,
+                                has_more: false,
+                            },
+                            token,
+                        });
+                    }
                 }
-                Err(_) => {
-                    let _ = tx.send(Action::DidSearchServer {
-                        result: crate::types::KeyScanResult {
-                            keys: vec![],
-                            cursor: None,
-                            has_more: false,
-                        },
-                        token,
-                    });
-                }
-            }
-        });
+            });
+        }
     }
 }
 
@@ -336,15 +374,89 @@ pub fn handle_did_search_local(
 /// Handle DidSearchServer result
 pub fn handle_did_search_server(
     app_state: &mut AppState,
+    action_tx: &mpsc::UnboundedSender<Action>,
     keys: Vec<KeyMetadata>,
     token: u64,
 ) -> bool {
     if app_state.search_token == token {
-        app_state.search_results_server = keys;
         app_state.is_server_searching = false;
+
+        // Build set of local key names for deduplication
+        let local_key_names: std::collections::HashSet<&str> = app_state
+            .keys
+            .iter()
+            .filter_map(|k| k.as_ref())
+            .map(|k| k.name.as_str())
+            .collect();
+
+        // Find unique server keys (not already in local keys array)
+        let unique_server_keys: Vec<KeyMetadata> = keys
+            .into_iter()
+            .filter(|k| !local_key_names.contains(k.name.as_str()))
+            .collect();
+
+        if !unique_server_keys.is_empty() {
+            // Append unique server keys to the keys array and compute match positions
+            let start_idx = app_state.keys.len();
+            let query = &app_state.search_query;
+
+            for key in unique_server_keys {
+                let key_idx = app_state.keys.len();
+
+                // Compute fuzzy match positions for highlighting
+                if !query.is_empty() {
+                    let positions = compute_match_positions(&key.name, query);
+                    if !positions.is_empty() {
+                        app_state.search_match_positions.insert(key_idx, positions);
+                    }
+                }
+
+                app_state.keys.push(Some(key));
+            }
+
+            // Add indices of server keys to search_results_local
+            let server_indices: Vec<usize> = (start_idx..app_state.keys.len()).collect();
+            app_state.search_results_local.extend(server_indices);
+
+            // Update selection if needed
+            if app_state.search_selection_index.is_none()
+                && !app_state.search_results_local.is_empty()
+            {
+                app_state.search_selection_index = Some(0);
+                if let Some(&key_idx) = app_state.search_results_local.first() {
+                    let _ = action_tx.send(Action::SelectKey(key_idx));
+                }
+            }
+        }
+
+        // Clear search_results_server since we've merged them
+        app_state.search_results_server.clear();
         true
     } else {
         false
+    }
+}
+
+/// Compute fuzzy match positions for a single key name
+fn compute_match_positions(key_name: &str, pattern: &str) -> Vec<u32> {
+    use nucleo_matcher::{
+        pattern::{CaseMatching, Normalization, Pattern},
+        Config, Matcher,
+    };
+
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let pat = Pattern::parse(pattern, CaseMatching::Ignore, Normalization::Smart);
+
+    let mut buf = Vec::new();
+    let haystack = nucleo_matcher::Utf32Str::new(key_name, &mut buf);
+
+    // Check if there's a match and get positions
+    if pat.score(haystack, &mut matcher).is_some() {
+        let mut indices_buf = Vec::new();
+        pat.indices(haystack, &mut matcher, &mut indices_buf);
+        indices_buf
+    } else {
+        Vec::new()
     }
 }
 

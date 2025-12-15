@@ -32,11 +32,12 @@ pub struct AppState {
     pub is_searching: bool,               // Whether search input is active
     pub search_query: String,             // Current search query
     pub search_results_local: Vec<usize>, // Indices of fuzzy-matched keys in loaded keys
-    pub search_results_server: Vec<KeyMetadata>, // Keys from server search
-    pub search_token: u64,                // Token to cancel stale searches
-    pub is_server_searching: bool,        // Whether server search is in progress
-    pub search_selection_index: Option<usize>, // Selection index within search results (0-based)
+    pub search_results_server: Vec<KeyMetadata>, // Keys from server search (kept for compatibility, but merged into keys)
+    pub search_token: u64,                       // Token to cancel stale searches
+    pub is_server_searching: bool,               // Whether server search is in progress
+    pub search_selection_index: Option<usize>,   // Selection index within search results (0-based)
     pub search_match_positions: HashMap<usize, Vec<u32>>, // Match positions for highlighting (key index -> char positions)
+    pub keys_length_before_search: usize, // Original keys array length before merging server results
 }
 
 impl AppState {
@@ -82,6 +83,7 @@ impl AppState {
             is_server_searching: false,
             search_selection_index: None,
             search_match_positions: HashMap::new(),
+            keys_length_before_search: 0,
         }
     }
 
@@ -104,17 +106,28 @@ impl AppState {
     pub fn reset_search(&mut self) {
         self.is_searching = false;
         self.search_query.clear();
+        // Remove server keys that were merged during search (only if we actually added any)
+        if self.keys_length_before_search > 0 && self.keys.len() > self.keys_length_before_search {
+            self.keys.truncate(self.keys_length_before_search);
+        }
         self.search_results_local.clear();
         self.search_results_server.clear();
         self.search_token = self.search_token.wrapping_add(1);
         self.is_server_searching = false;
         self.search_selection_index = None;
         self.search_match_positions.clear();
+        self.keys_length_before_search = 0;
     }
 
     pub fn start_search(&mut self) {
         self.is_searching = true;
         self.search_query.clear();
+        // Remove server keys from previous search (only if we actually added any)
+        if self.keys_length_before_search > 0 && self.keys.len() > self.keys_length_before_search {
+            self.keys.truncate(self.keys_length_before_search);
+        }
+        // Track current keys length before merging new server results
+        self.keys_length_before_search = self.keys.len();
         self.search_results_local.clear();
         self.search_results_server.clear();
         self.search_token = self.search_token.wrapping_add(1);

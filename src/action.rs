@@ -60,8 +60,11 @@ pub enum Action {
     StartSearch,               // Open search input
     UpdateSearchQuery(String), // User typed in search
     ClearSearch,               // Reset to normal view (Esc or empty query)
+    ConfirmSearch,             // Confirm search (exit input mode, keep selection)
     SearchAddChar(char),       // Add character to search input
     SearchDeleteChar,          // Delete character from search input
+    SearchNextResult,          // Navigate to next search result
+    SearchPrevResult,          // Navigate to previous search result
 
     // Async Events (Results)
     DidConnect(String, Arc<RwLock<Box<dyn Backend>>>),

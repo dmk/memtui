@@ -96,6 +96,7 @@ mod tests {
             ttl: Some(Duration::from_secs(3600)),
             last_accessed: None,
             encoding: None,
+            expires_at: None,
         })
     }
 

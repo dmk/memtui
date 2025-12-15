@@ -9,6 +9,7 @@ pub struct KeyMetadata {
     pub ttl: Option<Duration>,
     pub last_accessed: Option<SystemTime>,
     pub encoding: Option<String>,
+    pub expires_at: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone)]

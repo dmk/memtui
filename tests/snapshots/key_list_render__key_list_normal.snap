@@ -1,12 +1,11 @@
 ---
 source: tests/key_list_render.rs
-assertion_line: 22
 expression: normal
 ---
- Keys           1 of 3 │ user:123
- ▸ user:123      json ▲│Select a key to view its value
-   user:456      json █│
-   session:abc string █│
+ Keys           1 of 3 │ user:123             expires in 1h
+ ▸ use     1h    json ▲│Select a key to view its value
+   use     1h    json █│
+   ses    30m  string █│
                       █│
                       █│
                       █│

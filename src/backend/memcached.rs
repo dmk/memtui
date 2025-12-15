@@ -9,6 +9,12 @@ use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
+#[derive(Debug, Clone)]
+struct CachedumpEntry {
+    key: String,
+    expires_raw: Option<u64>,
+}
+
 /// Memcached backend implementation
 pub struct MemcachedBackend {
     config: ConnectionConfig,
@@ -91,7 +97,7 @@ impl MemcachedBackend {
         port: u16,
         slab_id: u32,
         limit: usize,
-    ) -> Result<Vec<String>, BackendError> {
+    ) -> Result<Vec<CachedumpEntry>, BackendError> {
         let addr = format!("{}:{}", host, port);
         let mut stream = TcpStream::connect(&addr)
             .await
@@ -104,7 +110,7 @@ impl MemcachedBackend {
             .map_err(|e| BackendError::Internal(e.to_string()))?;
 
         let mut reader = BufReader::new(stream);
-        let mut keys = Vec::new();
+        let mut entries = Vec::new();
         let mut line = String::new();
 
         loop {
@@ -122,12 +128,87 @@ impl MemcachedBackend {
             if line.starts_with("ITEM ") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 2 {
-                    keys.push(parts[1].to_string());
+                    let expires_raw = line
+                        .split(';')
+                        .nth(1)
+                        .and_then(|rest| rest.split_whitespace().next())
+                        .and_then(|n| n.parse::<u64>().ok())
+                        .and_then(|n| if n == 0 { None } else { Some(n) });
+                    entries.push(CachedumpEntry {
+                        key: parts[1].to_string(),
+                        expires_raw,
+                    });
                 }
             }
         }
 
-        Ok(keys)
+        Ok(entries)
+    }
+
+    async fn get_server_time_and_uptime(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> Result<(Option<u64>, u64), BackendError> {
+        let addr = format!("{}:{}", host, port);
+        let mut stream = TcpStream::connect(&addr)
+            .await
+            .map_err(|e| BackendError::ConnectionError(e.to_string()))?;
+
+        stream
+            .write_all(b"stats\r\n")
+            .await
+            .map_err(|e| BackendError::Internal(e.to_string()))?;
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        let mut time_epoch = None;
+        let mut uptime = 0u64;
+
+        loop {
+            line.clear();
+            reader
+                .read_line(&mut line)
+                .await
+                .map_err(|e| BackendError::Internal(e.to_string()))?;
+
+            let trimmed = line.trim();
+            if trimmed == "END" {
+                break;
+            }
+            if let Some(value) = trimmed.strip_prefix("STAT uptime ") {
+                uptime = value.parse().unwrap_or(0);
+            } else if let Some(value) = trimmed.strip_prefix("STAT time ") {
+                time_epoch = value.parse().ok();
+            }
+        }
+
+        Ok((time_epoch, uptime))
+    }
+
+    fn cachedump_ttl(
+        now: SystemTime,
+        server_time_epoch: Option<u64>,
+        server_uptime: u64,
+        expires_raw: u64,
+    ) -> Option<Duration> {
+        // The cachedump "expires" field is typically the item's `exptime` in seconds.
+        // It is either:
+        // - `0` (no expiration) - filtered before calling this
+        // - a rel_time_t (seconds since server start when it will expire)
+        // - a TTL delta in seconds (less common)
+        // - or an absolute epoch timestamp on some setups
+        if expires_raw >= 1_000_000_000 {
+            let fallback_epoch = now.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_secs();
+            let now_epoch = server_time_epoch.unwrap_or(fallback_epoch);
+            return Some(Duration::from_secs(expires_raw.saturating_sub(now_epoch)));
+        }
+
+        if expires_raw > server_uptime {
+            return Some(Duration::from_secs(expires_raw - server_uptime));
+        }
+
+        Some(Duration::from_secs(expires_raw))
     }
 }
 
@@ -296,6 +377,9 @@ impl Backend for MemcachedBackend {
         // Use Memcached's stats cachedump to list keys
         let host = self.config.host.clone();
         let port = self.config.port;
+        let now = SystemTime::now();
+        let (server_time_epoch, server_uptime) =
+            self.get_server_time_and_uptime(&host, port).await?;
 
         // Parse cursor to get current slab_id
         let current_slab: u32 = cursor.as_ref().and_then(|c| c.parse().ok()).unwrap_or(1);
@@ -312,7 +396,7 @@ impl Backend for MemcachedBackend {
         }
 
         // Collect keys from current slab
-        let mut all_keys = Vec::new();
+        let mut all_keys: Vec<CachedumpEntry> = Vec::new();
         let mut next_slab = None;
 
         for &slab_id in slab_ids.iter() {
@@ -331,7 +415,7 @@ impl Backend for MemcachedBackend {
                         true
                     } else {
                         // Simple pattern matching
-                        key.contains(p.trim_matches('*'))
+                        key.key.contains(p.trim_matches('*'))
                     }
                 } else {
                     true
@@ -358,21 +442,31 @@ impl Backend for MemcachedBackend {
         // Get metadata for keys
         let mut key_metadata = Vec::new();
         for key in all_keys.into_iter().take(limit) {
-            match self.key_info(&key).await {
-                Ok(metadata) => key_metadata.push(metadata),
+            let mut metadata = match self.key_info(&key.key).await {
+                Ok(metadata) => metadata,
                 Err(_) => {
-                    // Key might have been evicted, but we still want to show it
-                    // Create basic metadata without fetching the value
-                    key_metadata.push(KeyMetadata {
-                        name: key.clone(),
-                        value_type: ValueType::String, // Default assumption
+                    // Key might have been evicted, but we still want to show it.
+                    // Create basic metadata without fetching the value.
+                    KeyMetadata {
+                        name: key.key.clone(),
+                        value_type: ValueType::String,
                         size_bytes: 0,
                         ttl: None,
                         last_accessed: None,
                         encoding: None,
-                    });
+                        expires_at: None,
+                    }
+                }
+            };
+
+            if let Some(raw) = key.expires_raw {
+                if let Some(ttl) = Self::cachedump_ttl(now, server_time_epoch, server_uptime, raw) {
+                    metadata.ttl = Some(ttl);
+                    metadata.expires_at = now.checked_add(ttl);
                 }
             }
+
+            key_metadata.push(metadata);
         }
 
         Ok(KeyScanResult {
@@ -391,6 +485,9 @@ impl Backend for MemcachedBackend {
         // We need to scan all slabs and filter client-side
         let host = self.config.host.clone();
         let port = self.config.port;
+        let now = SystemTime::now();
+        let (server_time_epoch, server_uptime) =
+            self.get_server_time_and_uptime(&host, port).await?;
 
         // Get all slab IDs
         let slab_ids = self.get_slab_ids(&host, port).await?;
@@ -407,7 +504,7 @@ impl Backend for MemcachedBackend {
         let search_term = pattern.trim_matches('*').to_lowercase();
 
         // Collect all matching keys from all slabs
-        let mut matching_keys = Vec::new();
+        let mut matching_keys: Vec<CachedumpEntry> = Vec::new();
 
         for &slab_id in slab_ids.iter() {
             // Get a large batch of keys from each slab
@@ -415,7 +512,7 @@ impl Backend for MemcachedBackend {
 
             for key in keys {
                 // Client-side substring match (case-insensitive)
-                if key.to_lowercase().contains(&search_term) {
+                if key.key.to_lowercase().contains(&search_term) {
                     matching_keys.push(key);
                     if matching_keys.len() >= limit {
                         break;
@@ -434,20 +531,27 @@ impl Backend for MemcachedBackend {
         // Get metadata for matching keys
         let mut key_metadata = Vec::new();
         for key in matching_keys {
-            match self.key_info(&key).await {
-                Ok(metadata) => key_metadata.push(metadata),
-                Err(_) => {
-                    // Key might have been evicted
-                    key_metadata.push(KeyMetadata {
-                        name: key.clone(),
-                        value_type: ValueType::String,
-                        size_bytes: 0,
-                        ttl: None,
-                        last_accessed: None,
-                        encoding: None,
-                    });
+            let mut metadata = match self.key_info(&key.key).await {
+                Ok(metadata) => metadata,
+                Err(_) => KeyMetadata {
+                    name: key.key.clone(),
+                    value_type: ValueType::String,
+                    size_bytes: 0,
+                    ttl: None,
+                    last_accessed: None,
+                    encoding: None,
+                    expires_at: None,
+                },
+            };
+
+            if let Some(raw) = key.expires_raw {
+                if let Some(ttl) = Self::cachedump_ttl(now, server_time_epoch, server_uptime, raw) {
+                    metadata.ttl = Some(ttl);
+                    metadata.expires_at = now.checked_add(ttl);
                 }
             }
+
+            key_metadata.push(metadata);
         }
 
         Ok(KeyScanResult {
@@ -506,6 +610,7 @@ impl Backend for MemcachedBackend {
                 ttl: None, // Memcached doesn't expose TTL information
                 last_accessed: Some(SystemTime::now()),
                 encoding: Some("utf8".to_string()),
+                expires_at: None,
             })
         } else {
             Err(BackendError::KeyNotFound(key.to_string()))

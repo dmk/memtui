@@ -1,6 +1,5 @@
 ---
 source: tests/connection_palette_render.rs
-assertion_line: 35
 expression: full
 ---
   Alpha   Beta

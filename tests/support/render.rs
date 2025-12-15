@@ -1,4 +1,5 @@
 use std::sync::Once;
+use std::time::{Duration, SystemTime};
 
 use ratatui::{backend::TestBackend, buffer::Buffer, layout::Rect, Terminal};
 
@@ -10,6 +11,12 @@ static INIT: Once = Once::new();
 /// Ensure the global theme is initialized before rendering.
 pub fn ensure_theme() {
     INIT.call_once(|| init_theme(memtui::ui::theme::ThemeConfig::default()));
+}
+
+/// Fixed wall clock for deterministic snapshot tests.
+pub fn fixed_now() -> SystemTime {
+    // 2023-11-14T22:13:20Z
+    SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
 }
 
 /// Render the application into a ratatui `Buffer` using the test backend.
@@ -25,7 +32,7 @@ pub fn render_app(
     let mut terminal = Terminal::new(backend).expect("failed to build test terminal");
 
     terminal
-        .draw(|f| memtui::ui::render(f, app_state, ui_state, keybindings))
+        .draw(|f| memtui::ui::render_at(f, app_state, ui_state, keybindings, fixed_now()))
         .expect("render failed");
 
     terminal.backend().buffer().clone()

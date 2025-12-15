@@ -28,6 +28,7 @@ impl MockBackend {
                 ttl: Some(Duration::from_secs(3600)),
                 last_accessed: Some(SystemTime::now()),
                 encoding: Some("utf8".to_string()),
+                expires_at: Some(SystemTime::now() + Duration::from_secs(3600)),
             },
             KeyMetadata {
                 name: "user:456".to_string(),
@@ -36,6 +37,7 @@ impl MockBackend {
                 ttl: Some(Duration::from_secs(3600)),
                 last_accessed: Some(SystemTime::now()),
                 encoding: Some("utf8".to_string()),
+                expires_at: Some(SystemTime::now() + Duration::from_secs(3600)),
             },
             KeyMetadata {
                 name: "session:abc".to_string(),
@@ -44,6 +46,7 @@ impl MockBackend {
                 ttl: Some(Duration::from_secs(1800)),
                 last_accessed: Some(SystemTime::now()),
                 encoding: Some("utf8".to_string()),
+                expires_at: Some(SystemTime::now() + Duration::from_secs(1800)),
             },
             KeyMetadata {
                 name: "cache:config".to_string(),
@@ -52,6 +55,7 @@ impl MockBackend {
                 ttl: None,
                 last_accessed: Some(SystemTime::now()),
                 encoding: Some("utf8".to_string()),
+                expires_at: None,
             },
         ]
     }

@@ -7,6 +7,6 @@ pub mod widgets;
 pub use components::connection_form::{render_connection_form, ConnectionForm};
 pub use components::help::render_help;
 pub use components::Component;
-pub use render::render;
+pub use render::{render, render_at};
 pub use state::{Panel, UiState};
 pub use theme::{init_theme, AnimationState, PaneSplit, ThemeConfig};

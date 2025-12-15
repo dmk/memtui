@@ -421,6 +421,13 @@ impl App {
                     active_search_query,
                     is_active: true,
                     backend_type,
+                    show_ttl: matches!(
+                        backend_type,
+                        Some(
+                            memtui::types::BackendType::Redis
+                                | memtui::types::BackendType::Memcached
+                        )
+                    ),
                     is_searching: self.app_state.is_searching,
                     search_results_local: &self.app_state.search_results_local,
                     search_results_server: &self.app_state.search_results_server,
@@ -428,6 +435,7 @@ impl App {
                     search_selection_index: self.app_state.search_selection_index,
                     animation: &self.ui_state.animation,
                     search_match_positions: &self.app_state.search_match_positions,
+                    now: std::time::SystemTime::now(),
                 };
 
                 let actions = self.ui_state.key_list.handle_event(event, props);
@@ -924,6 +932,7 @@ impl App {
             Action::SelectKey(idx) => {
                 self.app_state.selected_key_index = Some(idx);
                 self.app_state.selected_value = None;
+                self.app_state.error_message = None;
                 self.ui_state.value_viewer.reset_scroll();
                 if self.app_state.needs_loading_around(idx) {
                     let _ = self.action_tx.send(Action::LoadMoreKeys(idx));

@@ -12,6 +12,14 @@ use ratatui::{
     Frame,
 };
 use std::collections::HashMap;
+use std::time::{Duration, SystemTime};
+
+#[derive(Clone, Copy)]
+enum TtlUrgency {
+    Normal,
+    Soon,
+    Imminent,
+}
 
 use super::Component;
 use crate::action::Action;
@@ -27,6 +35,7 @@ pub struct KeyListProps<'a> {
     pub active_search_query: Option<&'a str>,
     pub is_active: bool,
     pub backend_type: Option<BackendType>,
+    pub show_ttl: bool,
     pub is_searching: bool,
     /// Indices of keys matching the local fuzzy search
     pub search_results_local: &'a [usize],
@@ -40,6 +49,7 @@ pub struct KeyListProps<'a> {
     pub animation: &'a AnimationState,
     /// Match positions for highlighting
     pub search_match_positions: &'a HashMap<usize, Vec<u32>>,
+    pub now: SystemTime,
 }
 
 /// KeyList component state
@@ -58,6 +68,8 @@ pub struct KeyList {
 
 impl KeyList {
     const EDGE_SCROLL_GUARD: usize = 3;
+    const TTL_COL_WIDTH: usize = 6;
+    const TYPE_COL_WIDTH: usize = 7;
 
     pub fn new() -> Self {
         Self {
@@ -293,6 +305,7 @@ impl KeyList {
         &self,
         props: &KeyListProps<'_>,
         content_width: usize,
+        now: SystemTime,
     ) -> (Vec<ListItem<'static>>, usize, Option<usize>) {
         let mut items: Vec<ListItem<'static>> = Vec::new();
 
@@ -303,7 +316,9 @@ impl KeyList {
                     key,
                     content_width,
                     props.backend_type,
+                    props.show_ttl,
                     match_positions,
+                    now,
                 ));
             }
         }
@@ -326,7 +341,9 @@ impl KeyList {
                     server_key,
                     content_width,
                     props.backend_type,
+                    props.show_ttl,
                     "◦",
+                    now,
                 ));
             }
         }
@@ -369,6 +386,7 @@ impl KeyList {
         props: &KeyListProps<'_>,
         content_width: usize,
         is_active: bool,
+        now: SystemTime,
     ) -> (Vec<ListItem<'static>>, usize, Option<usize>) {
         let total_count = props
             .total_count
@@ -394,7 +412,13 @@ impl KeyList {
         for offset in 0..visible_len {
             let abs = start_index + offset;
             if let Some(Some(k)) = props.keys.get(abs) {
-                key_items.push(Self::build_key_item(k, content_width, props.backend_type));
+                key_items.push(Self::build_key_item(
+                    k,
+                    content_width,
+                    props.backend_type,
+                    props.show_ttl,
+                    now,
+                ));
             } else {
                 let spinner = theme::spinner_dots(props.animation);
                 key_items.push(ListItem::new(Span::styled(
@@ -417,44 +441,67 @@ impl KeyList {
         key: &KeyMetadata,
         content_width: usize,
         backend_type: Option<BackendType>,
+        show_ttl: bool,
+        now: SystemTime,
     ) -> ListItem<'static> {
         let show_type = !matches!(
             backend_type,
             Some(BackendType::Memcached | BackendType::Etcd)
         );
+        let ttl_meta = if show_ttl {
+            Self::ttl_meta(now, key)
+        } else {
+            None
+        };
 
         if show_type {
-            let type_label = key.value_type.to_string();
-            let type_width = type_label.chars().count();
-            let min_gap = if content_width > type_width { 1 } else { 0 };
-            let available_for_name = content_width.saturating_sub(type_width + min_gap);
+            let meta_width = if show_ttl {
+                1 + Self::TTL_COL_WIDTH + 1 + Self::TYPE_COL_WIDTH
+            } else {
+                1 + Self::TYPE_COL_WIDTH
+            };
+            let available_for_name = content_width.saturating_sub(meta_width);
             let name_display = Self::truncate_to_fit(&key.name, available_for_name);
             let name_width = name_display.chars().count();
-            let spacer_width = content_width.saturating_sub(name_width + type_width);
-            let spacer = if spacer_width > 0 {
-                " ".repeat(spacer_width)
-            } else {
-                String::new()
-            };
+            let spacer_width = content_width.saturating_sub(name_width + meta_width);
+            let spacer = " ".repeat(spacer_width);
 
             let type_color = Self::type_color(key.value_type);
 
-            let line = Line::from(vec![
+            let mut spans = vec![
                 Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY())),
                 Span::raw(spacer),
-                Span::styled(
-                    type_label,
-                    Style::default().fg(type_color).add_modifier(Modifier::DIM),
-                ),
-            ]);
+            ];
+            spans.push(Span::raw(" "));
+            if show_ttl {
+                spans.push(Self::ttl_span(ttl_meta));
+                spans.push(Span::raw(" "));
+            }
+            spans.push(Span::styled(
+                Self::padded_type_label(key.value_type),
+                Style::default().fg(type_color).add_modifier(Modifier::DIM),
+            ));
+            let line = Line::from(spans);
 
             ListItem::new(line)
         } else {
-            let name_display = Self::truncate_to_fit(&key.name, content_width);
-            let line = Line::from(vec![Span::styled(
-                name_display,
-                Style::default().fg(theme::TEXT_PRIMARY()),
-            )]);
+            let meta_width = if show_ttl { 1 + Self::TTL_COL_WIDTH } else { 0 };
+            let available_for_name = content_width.saturating_sub(meta_width);
+            let name_display = Self::truncate_to_fit(&key.name, available_for_name);
+            let name_width = name_display.chars().count();
+            let spacer_width = content_width.saturating_sub(name_width + meta_width);
+            let spacer = " ".repeat(spacer_width);
+
+            let mut spans = vec![
+                Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY())),
+                Span::raw(spacer),
+            ];
+            if show_ttl {
+                spans.push(Span::raw(" "));
+                spans.push(Self::ttl_span(ttl_meta));
+            }
+
+            let line = Line::from(spans);
             ListItem::new(line)
         }
     }
@@ -474,11 +521,117 @@ impl KeyList {
         }
     }
 
+    fn padded_type_label(value_type: crate::types::ValueType) -> String {
+        let type_label = value_type.to_string();
+        format!("{:>width$}", type_label, width = Self::TYPE_COL_WIDTH)
+    }
+
+    fn ttl_meta(now: SystemTime, key: &KeyMetadata) -> Option<(String, TtlUrgency)> {
+        let expires_at = key.expires_at.or_else(|| {
+            key.ttl.and_then(|ttl| {
+                key.last_accessed
+                    .and_then(|seen| seen.checked_add(ttl))
+                    .or_else(|| now.checked_add(ttl))
+            })
+        });
+
+        let expires_at = expires_at?;
+        let remaining = match expires_at.duration_since(now) {
+            Ok(duration) => duration,
+            Err(_) => return Some(("exp".to_string(), TtlUrgency::Imminent)),
+        };
+
+        let urgency = if remaining <= Duration::from_secs(60) {
+            TtlUrgency::Imminent
+        } else if remaining <= Duration::from_secs(300) {
+            TtlUrgency::Soon
+        } else {
+            TtlUrgency::Normal
+        };
+
+        if remaining < Duration::from_secs(1) {
+            return Some(("0s".to_string(), urgency));
+        }
+
+        Some((Self::format_duration_compact(remaining), urgency))
+    }
+
+    fn ttl_span(ttl_meta: Option<(String, TtlUrgency)>) -> Span<'static> {
+        let (label, urgency) = ttl_meta
+            .map(|(ttl, urgency)| (Self::pad_ttl(ttl), urgency))
+            .unwrap_or_else(|| (" ".repeat(Self::TTL_COL_WIDTH), TtlUrgency::Normal));
+
+        let mut style = Style::default().add_modifier(Modifier::DIM);
+        style = match urgency {
+            TtlUrgency::Imminent => style
+                .fg(theme::NEON_RED())
+                .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
+            TtlUrgency::Soon => style.fg(theme::NEON_AMBER()).add_modifier(Modifier::BOLD),
+            TtlUrgency::Normal => style.fg(theme::TEXT_DIM()),
+        };
+
+        Span::styled(label, style)
+    }
+
+    fn pad_ttl(ttl: String) -> String {
+        let mut label = ttl;
+        if label.chars().count() > Self::TTL_COL_WIDTH {
+            label = label.chars().take(Self::TTL_COL_WIDTH).collect();
+        }
+        format!("{:>width$}", label, width = Self::TTL_COL_WIDTH)
+    }
+
+    fn format_duration_compact(duration: Duration) -> String {
+        let secs = duration.as_secs();
+        let days = secs / 86_400;
+        if days >= 10_000 {
+            return "9999d".to_string();
+        }
+        if days > 0 {
+            if days >= 10 {
+                return format!("{}d", days);
+            }
+            let hours = (secs % 86_400) / 3_600;
+            if hours == 0 {
+                return format!("{}d", days);
+            }
+            return format!("{}d {}h", days, hours);
+        }
+
+        let hours = secs / 3_600;
+        if hours > 0 {
+            if hours >= 10 {
+                return format!("{}h", hours);
+            }
+            let minutes = (secs % 3_600) / 60;
+            if minutes == 0 {
+                return format!("{}h", hours);
+            }
+            return format!("{}h {}m", hours, minutes);
+        }
+
+        let minutes = secs / 60;
+        if minutes > 0 {
+            if minutes >= 10 {
+                return format!("{}m", minutes);
+            }
+            let seconds = secs % 60;
+            if seconds == 0 {
+                return format!("{}m", minutes);
+            }
+            return format!("{}m {}s", minutes, seconds);
+        }
+
+        format!("{}s", secs)
+    }
+
     fn build_key_item_with_indicator(
         key: &KeyMetadata,
         content_width: usize,
         backend_type: Option<BackendType>,
+        show_ttl: bool,
         indicator: &str,
+        now: SystemTime,
     ) -> ListItem<'static> {
         let show_type = !matches!(
             backend_type,
@@ -487,46 +640,70 @@ impl KeyList {
         let indicator_width = indicator.chars().count() + 1;
 
         if show_type {
-            let type_label = key.value_type.to_string();
-            let type_width = type_label.chars().count();
-            let min_gap = if content_width > type_width + indicator_width {
-                1
+            let meta_width = if show_ttl {
+                indicator_width + 1 + Self::TTL_COL_WIDTH + 1 + Self::TYPE_COL_WIDTH
             } else {
-                0
+                indicator_width + 1 + Self::TYPE_COL_WIDTH
             };
-            let available_for_name =
-                content_width.saturating_sub(type_width + min_gap + indicator_width);
+            let available_for_name = content_width.saturating_sub(meta_width);
             let name_display = Self::truncate_to_fit(&key.name, available_for_name);
             let name_width = name_display.chars().count();
-            let spacer_width =
-                content_width.saturating_sub(name_width + type_width + indicator_width);
+            let spacer_width = content_width.saturating_sub(name_width + meta_width);
             let spacer = if spacer_width > 0 {
                 " ".repeat(spacer_width)
             } else {
                 String::new()
             };
 
-            let line = Line::from(vec![
+            let mut spans = vec![
                 Span::styled(
                     format!("{} ", indicator),
                     Style::default().fg(theme::NEON_AMBER()),
                 ),
                 Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY())),
                 Span::raw(spacer),
-                Span::styled(type_label, Style::default().fg(theme::TEXT_DIM())),
-            ]);
+            ];
+            spans.push(Span::raw(" "));
+            if show_ttl {
+                spans.push(Self::ttl_span(Self::ttl_meta(now, key)));
+                spans.push(Span::raw(" "));
+            }
+            spans.push(Span::styled(
+                Self::padded_type_label(key.value_type),
+                Style::default().fg(theme::TEXT_DIM()),
+            ));
+            let line = Line::from(spans);
 
             ListItem::new(line)
         } else {
-            let available_for_name = content_width.saturating_sub(indicator_width);
+            let meta_width = if show_ttl {
+                indicator_width + 1 + Self::TTL_COL_WIDTH
+            } else {
+                indicator_width
+            };
+            let available_for_name = content_width.saturating_sub(meta_width);
             let name_display = Self::truncate_to_fit(&key.name, available_for_name);
-            let line = Line::from(vec![
+            let name_width = name_display.chars().count();
+            let spacer_width = content_width.saturating_sub(name_width + meta_width);
+            let spacer = if spacer_width > 0 {
+                " ".repeat(spacer_width)
+            } else {
+                String::new()
+            };
+
+            let mut spans = vec![
                 Span::styled(
                     format!("{} ", indicator),
                     Style::default().fg(theme::NEON_AMBER()),
                 ),
                 Span::styled(name_display, Style::default().fg(theme::TEXT_PRIMARY())),
-            ]);
+                Span::raw(spacer),
+            ];
+            if show_ttl {
+                spans.push(Span::raw(" "));
+                spans.push(Self::ttl_span(Self::ttl_meta(now, key)));
+            }
+            let line = Line::from(spans);
             ListItem::new(line)
         }
     }
@@ -554,42 +731,63 @@ impl KeyList {
         key: &KeyMetadata,
         content_width: usize,
         backend_type: Option<BackendType>,
+        show_ttl: bool,
         match_positions: Option<&Vec<u32>>,
+        now: SystemTime,
     ) -> ListItem<'static> {
         let show_type = !matches!(
             backend_type,
             Some(BackendType::Memcached | BackendType::Etcd)
         );
+        let ttl_meta = if show_ttl {
+            Self::ttl_meta(now, key)
+        } else {
+            None
+        };
 
         if show_type {
-            let type_label = key.value_type.to_string();
-            let type_width = type_label.chars().count();
-            let min_gap = if content_width > type_width { 1 } else { 0 };
-            let available_for_name = content_width.saturating_sub(type_width + min_gap);
+            let meta_width = if show_ttl {
+                1 + Self::TTL_COL_WIDTH + 1 + Self::TYPE_COL_WIDTH
+            } else {
+                1 + Self::TYPE_COL_WIDTH
+            };
+            let available_for_name = content_width.saturating_sub(meta_width);
             let name_display = Self::truncate_to_fit(&key.name, available_for_name);
             let name_width = name_display.chars().count();
-            let spacer_width = content_width.saturating_sub(name_width + type_width);
-            let spacer = if spacer_width > 0 {
-                " ".repeat(spacer_width)
-            } else {
-                String::new()
-            };
+            let spacer_width = content_width.saturating_sub(name_width + meta_width);
+            let spacer = " ".repeat(spacer_width);
 
             let type_color = Self::type_color(key.value_type);
             let name_spans = Self::build_highlighted_spans(&name_display, match_positions);
 
             let mut spans = name_spans;
             spans.push(Span::raw(spacer));
+            spans.push(Span::raw(" "));
+            if show_ttl {
+                spans.push(Self::ttl_span(ttl_meta));
+                spans.push(Span::raw(" "));
+            }
             spans.push(Span::styled(
-                type_label,
+                Self::padded_type_label(key.value_type),
                 Style::default().fg(type_color).add_modifier(Modifier::DIM),
             ));
 
             ListItem::new(Line::from(spans))
         } else {
-            let name_display = Self::truncate_to_fit(&key.name, content_width);
+            let meta_width = if show_ttl { 1 + Self::TTL_COL_WIDTH } else { 0 };
+            let available_for_name = content_width.saturating_sub(meta_width);
+            let name_display = Self::truncate_to_fit(&key.name, available_for_name);
+            let name_width = name_display.chars().count();
+            let spacer_width = content_width.saturating_sub(name_width + meta_width);
+            let spacer = " ".repeat(spacer_width);
             let name_spans = Self::build_highlighted_spans(&name_display, match_positions);
-            ListItem::new(Line::from(name_spans))
+            let mut spans = name_spans;
+            spans.push(Span::raw(spacer));
+            if show_ttl {
+                spans.push(Span::raw(" "));
+                spans.push(Self::ttl_span(ttl_meta));
+            }
+            ListItem::new(Line::from(spans))
         }
     }
 
@@ -723,6 +921,7 @@ impl Component for KeyList {
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         self.last_area = Some(area);
         let is_active = props.is_active;
+        let now = props.now;
 
         let has_search = props
             .active_search_query
@@ -761,10 +960,10 @@ impl Component for KeyList {
         let content_width = content_area.width.saturating_sub(5) as usize;
 
         let (key_items, display_count, selected_display_idx, scrollbar_position) = if has_search {
-            let (items, count, sel) = self.build_search_results_list(&props, content_width);
+            let (items, count, sel) = self.build_search_results_list(&props, content_width, now);
             (items, count, sel, sel.unwrap_or(0))
         } else {
-            let (items, count, sel) = self.build_normal_list(&props, content_width, is_active);
+            let (items, count, sel) = self.build_normal_list(&props, content_width, is_active, now);
             let abs_pos = self.state.selected().unwrap_or(0);
             (items, count, sel, abs_pos)
         };

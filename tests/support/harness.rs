@@ -106,6 +106,7 @@ impl AppHarness {
                 self.ui_state.key_list.select(Some(*idx));
                 self.app_state.selected_key_index = Some(*idx);
                 self.app_state.selected_value = None;
+                self.app_state.error_message = None;
                 self.ui_state.value_viewer.reset_scroll();
                 true
             }

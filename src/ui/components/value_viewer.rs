@@ -1,6 +1,6 @@
 use super::Component;
 use crate::formatter::{Formatter, JsonFormatter, TextFormatter};
-use crate::types::{Value, ValueType};
+use crate::types::{KeyMetadata, Value, ValueType};
 use crate::ui::theme::{self, AnimationState};
 use ratatui::{
     layout::{Alignment, Constraint, Rect},
@@ -9,6 +9,7 @@ use ratatui::{
     widgets::{Cell, Paragraph, Row, ScrollbarState, Table, TableState, Wrap},
     Frame,
 };
+use std::time::{Duration, SystemTime};
 
 /// Get current dim factor as a cache key component
 fn dim_cache_key() -> u8 {
@@ -77,12 +78,14 @@ pub struct ValueViewerProps<'a> {
     pub selected_value: Option<&'a Value>,
     pub selected_key_type: Option<ValueType>,
     pub selected_key_name: Option<&'a str>,
+    pub selected_key: Option<&'a crate::types::KeyMetadata>,
     pub error_message: Option<&'a String>,
     pub json_formatter: &'a JsonFormatter,
     pub text_formatter: &'a TextFormatter,
     pub is_active: bool,
     pub backend_type: Option<crate::types::BackendType>,
     pub animation: &'a AnimationState,
+    pub now: SystemTime,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -527,11 +530,16 @@ impl ValueViewer {
         area: Rect,
         is_active: bool,
         title: &str,
+        title_right: Option<&str>,
         lines: Vec<Line<'static>>,
         style: Style,
         _animation: &AnimationState,
     ) {
-        let inner = Self::render_header(f, area, title, is_active);
+        let inner = if let Some(right) = title_right {
+            Self::render_header_split(f, area, title, right, is_active)
+        } else {
+            Self::render_header(f, area, title, is_active)
+        };
 
         // Update dimensions for scroll handling
         self.viewport_height = inner.height;
@@ -563,12 +571,14 @@ impl ValueViewer {
         self.render_scrollbar_for_offset(f, inner, is_active);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_plain_value(
         &mut self,
         f: &mut Frame,
         area: Rect,
         is_active: bool,
         title: &str,
+        title_right: Option<&str>,
         value: &Value,
         props: &ValueViewerProps<'_>,
     ) {
@@ -578,6 +588,7 @@ impl ValueViewer {
             area,
             is_active,
             title,
+            title_right,
             value,
             TextContentKind::Plain,
             paragraph_style,
@@ -593,6 +604,7 @@ impl ValueViewer {
         area: Rect,
         is_active: bool,
         title: &str,
+        title_right: Option<&str>,
         value: &Value,
         kind: TextContentKind,
         paragraph_style: Style,
@@ -601,7 +613,11 @@ impl ValueViewer {
     ) where
         F: FnOnce() -> Vec<Line<'static>>,
     {
-        let inner = Self::render_header(f, area, title, is_active);
+        let inner = if let Some(right) = title_right {
+            Self::render_header_split(f, area, title, right, is_active)
+        } else {
+            Self::render_header(f, area, title, is_active)
+        };
         let content_width = inner.width.max(1);
 
         self.viewport_height = inner.height;
@@ -669,12 +685,14 @@ impl ValueViewer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn try_render_json_value(
         &mut self,
         f: &mut Frame,
         area: Rect,
         is_active: bool,
         title: &str,
+        title_right: Option<&str>,
         value: &Value,
         props: &ValueViewerProps<'_>,
     ) -> bool {
@@ -689,6 +707,7 @@ impl ValueViewer {
                     area,
                     is_active,
                     title,
+                    title_right,
                     value,
                     TextContentKind::Json,
                     Style::default(),
@@ -711,6 +730,7 @@ impl ValueViewer {
         area: Rect,
         is_active: bool,
         base_title: &str,
+        ttl_meta: Option<String>,
         headers: Vec<&str>,
         rows_data: Vec<Vec<String>>,
         json_formatter: &JsonFormatter,
@@ -722,9 +742,14 @@ impl ValueViewer {
         } else {
             format!("{} entries", Self::format_number(entry_count))
         };
+        let title_right = if let Some(ttl) = ttl_meta {
+            format!("expires in {} · {}", ttl, entry_info)
+        } else {
+            entry_info
+        };
 
         // Render header and get content area
-        let content_area = Self::render_header_split(f, area, base_title, &entry_info, is_active);
+        let content_area = Self::render_header_split(f, area, base_title, &title_right, is_active);
 
         // Update total rows and viewport for scroll handling
         self.total_rows = rows_data.len();
@@ -1132,6 +1157,62 @@ impl ValueViewer {
             .unwrap_or_else(|| "Value".to_string())
     }
 
+    fn ttl_label(key: &KeyMetadata, now: SystemTime) -> Option<String> {
+        let expires_at = key.expires_at.or_else(|| {
+            key.ttl.and_then(|ttl| {
+                key.last_accessed
+                    .and_then(|seen| seen.checked_add(ttl))
+                    .or_else(|| now.checked_add(ttl))
+            })
+        });
+
+        let expires_at = expires_at?;
+        let remaining = expires_at.duration_since(now).ok()?;
+
+        if remaining < Duration::from_secs(1) {
+            return Some("0s".to_string());
+        }
+
+        Some(ValueViewer::format_duration_compact(remaining))
+    }
+
+    fn compose_title_right(ttl: Option<&str>, extra: Option<&str>) -> Option<String> {
+        match (ttl, extra) {
+            (Some(t), Some(e)) => Some(format!("expires in {} · {}", t, e)),
+            (Some(t), None) => Some(format!("expires in {}", t)),
+            (None, Some(e)) => Some(e.to_string()),
+            _ => None,
+        }
+    }
+
+    fn format_duration_compact(duration: Duration) -> String {
+        let secs = duration.as_secs();
+        let days = secs / 86_400;
+        let hours = (secs % 86_400) / 3_600;
+        let minutes = (secs % 3_600) / 60;
+        let seconds = secs % 60;
+
+        let mut parts = Vec::new();
+        if days > 0 {
+            parts.push(format!("{}d", days));
+        }
+        if hours > 0 {
+            parts.push(format!("{}h", hours));
+        }
+        if minutes > 0 {
+            parts.push(format!("{}m", minutes));
+        }
+        if seconds > 0 {
+            parts.push(format!("{}s", seconds));
+        }
+
+        if parts.is_empty() {
+            return "0s".to_string();
+        }
+
+        parts.join(" ")
+    }
+
     /// Format a number with thousand separators (e.g., 1,414)
     fn format_number(n: usize) -> String {
         let s = n.to_string();
@@ -1161,6 +1242,10 @@ impl Component for ValueViewer {
             props.selected_key_type,
             props.backend_type,
         );
+        let ttl_label = props
+            .selected_key
+            .and_then(|key| ValueViewer::ttl_label(key, props.now));
+        let base_title_right = ValueViewer::compose_title_right(ttl_label.as_deref(), None);
         let animation = props.animation;
 
         if let Some(err) = props.error_message {
@@ -1170,6 +1255,7 @@ impl Component for ValueViewer {
                 area,
                 props.is_active,
                 &base_title,
+                base_title_right.as_deref(),
                 vec![Line::from(Span::styled(
                     format!("✕ Error: {}", err),
                     Style::default().fg(theme::NEON_RED()),
@@ -1191,6 +1277,7 @@ impl Component for ValueViewer {
                                 area,
                                 props.is_active,
                                 &base_title,
+                                ttl_label.clone(),
                                 vec!["Field", "Value"],
                                 rows,
                                 props.json_formatter,
@@ -1204,6 +1291,7 @@ impl Component for ValueViewer {
                                 area,
                                 props.is_active,
                                 &base_title,
+                                base_title_right.as_deref(),
                                 vec![Line::from(format!("Parse error: {}", e))],
                                 Style::default().fg(theme::NEON_RED()),
                                 animation,
@@ -1221,6 +1309,7 @@ impl Component for ValueViewer {
                                 area,
                                 props.is_active,
                                 &base_title,
+                                ttl_label.clone(),
                                 vec!["Index", "Value"],
                                 rows,
                                 props.json_formatter,
@@ -1234,6 +1323,7 @@ impl Component for ValueViewer {
                                 area,
                                 props.is_active,
                                 &base_title,
+                                base_title_right.as_deref(),
                                 vec![Line::from(format!("Parse error: {}", e))],
                                 Style::default().fg(theme::NEON_RED()),
                                 animation,
@@ -1251,6 +1341,7 @@ impl Component for ValueViewer {
                                 area,
                                 props.is_active,
                                 &base_title,
+                                ttl_label.clone(),
                                 vec![],
                                 rows,
                                 props.json_formatter,
@@ -1264,6 +1355,7 @@ impl Component for ValueViewer {
                                 area,
                                 props.is_active,
                                 &base_title,
+                                base_title_right.as_deref(),
                                 vec![Line::from(format!("Parse error: {}", e))],
                                 Style::default().fg(theme::NEON_RED()),
                                 animation,
@@ -1281,6 +1373,7 @@ impl Component for ValueViewer {
                                 area,
                                 props.is_active,
                                 &base_title,
+                                ttl_label.clone(),
                                 vec!["Score", "Member"],
                                 rows,
                                 props.json_formatter,
@@ -1294,6 +1387,7 @@ impl Component for ValueViewer {
                                 area,
                                 props.is_active,
                                 &base_title,
+                                base_title_right.as_deref(),
                                 vec![Line::from(format!("Parse error: {}", e))],
                                 Style::default().fg(theme::NEON_RED()),
                                 animation,
@@ -1311,13 +1405,22 @@ impl Component for ValueViewer {
                         area,
                         props.is_active,
                         &base_title,
+                        base_title_right.as_deref(),
                         value,
                         &props,
                     ) {
                         return;
                     }
 
-                    self.render_plain_value(f, area, props.is_active, &base_title, value, &props);
+                    self.render_plain_value(
+                        f,
+                        area,
+                        props.is_active,
+                        &base_title,
+                        base_title_right.as_deref(),
+                        value,
+                        &props,
+                    );
                     return;
                 }
             }
@@ -1329,6 +1432,7 @@ impl Component for ValueViewer {
             area,
             props.is_active,
             &base_title,
+            base_title_right.as_deref(),
             vec![Line::from(Span::styled(
                 "Select a key to view its value",
                 Style::default().fg(theme::TEXT_DIM()),

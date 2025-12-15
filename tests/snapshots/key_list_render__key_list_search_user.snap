@@ -1,11 +1,10 @@
 ---
 source: tests/key_list_render.rs
-assertion_line: 32
 expression: with_search
 ---
- Keys │ /user 2 results│ user:123
-user:123      json    ▲│Select a key to view its value
-user:456      json    █│
+ Keys │ /user 2 results│ user:123             expires in 1h
+use     1h    json    ▲│Select a key to view its value
+use     1h    json    █│
                       █│
                       █│
                       █│

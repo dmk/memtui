@@ -380,11 +380,14 @@ impl Backend for RedisBackend {
             .await
             .map_err(Self::convert_error)?;
 
-        let ttl = if ttl_secs > 0 {
-            Some(Duration::from_secs(ttl_secs as u64))
-        } else {
-            None
+        let ttl = match ttl_secs {
+            s if s >= 0 => Some(Duration::from_secs(s as u64)),
+            -1 => None, // no expire
+            -2 => return Err(BackendError::KeyNotFound(key.to_string())),
+            _ => None,
         };
+        let now = SystemTime::now();
+        let expires_at = ttl.and_then(|d| now.checked_add(d));
 
         // Get memory usage (if available, requires Redis 4.0+)
         let size_bytes: u64 = redis::cmd("MEMORY")
@@ -407,8 +410,9 @@ impl Backend for RedisBackend {
             value_type,
             size_bytes,
             ttl,
-            last_accessed: Some(SystemTime::now()),
+            last_accessed: Some(now),
             encoding: Some(encoding),
+            expires_at,
         })
     }
 

@@ -1,9 +1,11 @@
 #![allow(dead_code)]
 
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use memtui::app::ConnectionStatus;
 use memtui::types::{BackendType, ConnectionConfig, KeyMetadata, ValueType};
+
+use super::render::fixed_now;
 
 /// Build a simple connection config for tests.
 #[allow(dead_code)]
@@ -36,30 +38,34 @@ pub fn attach_connected(app_state: &mut memtui::app::AppState, id: &str) {
 /// Common set of keys for rendering tests.
 #[allow(dead_code)]
 pub fn sample_keys() -> Vec<KeyMetadata> {
+    let now = fixed_now();
     vec![
         KeyMetadata {
             name: "user:123".to_string(),
             value_type: ValueType::Json,
             size_bytes: 85,
             ttl: Some(Duration::from_secs(3600)),
-            last_accessed: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1)),
+            last_accessed: Some(now),
             encoding: Some("utf8".to_string()),
+            expires_at: Some(now + Duration::from_secs(3600)),
         },
         KeyMetadata {
             name: "user:456".to_string(),
             value_type: ValueType::Json,
             size_bytes: 92,
             ttl: Some(Duration::from_secs(3600)),
-            last_accessed: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(2)),
+            last_accessed: Some(now),
             encoding: Some("utf8".to_string()),
+            expires_at: Some(now + Duration::from_secs(3600)),
         },
         KeyMetadata {
             name: "session:abc".to_string(),
             value_type: ValueType::String,
             size_bytes: 128,
             ttl: Some(Duration::from_secs(1800)),
-            last_accessed: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(3)),
+            last_accessed: Some(now),
             encoding: Some("utf8".to_string()),
+            expires_at: Some(now + Duration::from_secs(1800)),
         },
     ]
 }

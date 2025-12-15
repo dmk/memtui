@@ -5,6 +5,7 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph},
     Frame,
 };
+use std::time::SystemTime;
 
 use super::components::modal::{confirm_block_raw, render_modal};
 
@@ -26,11 +27,12 @@ use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConf
 use crate::types::BackendType;
 
 /// Main UI rendering function
-pub fn render(
+pub fn render_at(
     f: &mut Frame,
     app_state: &mut AppState,
     ui_state: &mut UiState,
     keybindings: &KeybindingsConfig,
+    now: SystemTime,
 ) {
     // Check if any modal is active and dim the theme for background content
     let modal_active = ui_state.show_connection_palette
@@ -142,7 +144,7 @@ pub fn render(
     }
 
     if app_state.connection_manager.get_active_id().is_some() {
-        render_body(f, app_state, ui_state, body_area);
+        render_body(f, app_state, ui_state, body_area, now);
     } else {
         ui_state.last_key_area = None;
         ui_state.last_value_area = None;
@@ -168,6 +170,15 @@ pub fn render(
 
     // Restore theme to normal state after render
     theme::restore_theme();
+}
+
+pub fn render(
+    f: &mut Frame,
+    app_state: &mut AppState,
+    ui_state: &mut UiState,
+    keybindings: &KeybindingsConfig,
+) {
+    render_at(f, app_state, ui_state, keybindings, SystemTime::now());
 }
 
 fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area: Rect) {
@@ -205,7 +216,13 @@ fn render_tabs(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState, area
         .collect();
 }
 
-fn render_body(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, area: Rect) {
+fn render_body(
+    f: &mut Frame,
+    app_state: &mut AppState,
+    ui_state: &mut UiState,
+    area: Rect,
+    now: SystemTime,
+) {
     // Use the resizable pane split ratio
     let left_percent = ui_state.pane_split.left_percent();
     let right_percent = ui_state.pane_split.right_percent();
@@ -225,8 +242,8 @@ fn render_body(f: &mut Frame, app_state: &mut AppState, ui_state: &mut UiState, 
     // Render vertical separator
     render_separator(f, body_chunks[1]);
 
-    render_keys(f, ui_state, app_state, body_chunks[0]);
-    render_value(f, ui_state, app_state, body_chunks[2]);
+    render_keys(f, ui_state, app_state, body_chunks[0], now);
+    render_value(f, ui_state, app_state, body_chunks[2], now);
 }
 
 fn render_separator(f: &mut Frame, area: Rect) {
@@ -246,7 +263,13 @@ fn render_separator(f: &mut Frame, area: Rect) {
     f.render_widget(separator, area);
 }
 
-fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, area: Rect) {
+fn render_keys(
+    f: &mut Frame,
+    ui_state: &mut UiState,
+    app_state: &mut AppState,
+    area: Rect,
+    now: SystemTime,
+) {
     app_state.viewport_height = area.height.saturating_sub(2) as usize;
 
     let backend_type = app_state
@@ -262,6 +285,11 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, 
         None
     };
 
+    let show_ttl = matches!(
+        backend_type,
+        Some(BackendType::Redis | BackendType::Memcached)
+    );
+
     let props = KeyListProps {
         keys: &app_state.keys,
         total_count: app_state.total_key_count,
@@ -269,6 +297,7 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, 
         active_search_query,
         is_active: ui_state.active_panel == Panel::Keys,
         backend_type,
+        show_ttl,
         is_searching: app_state.is_searching,
         search_results_local: &app_state.search_results_local,
         search_results_server: &app_state.search_results_server,
@@ -276,12 +305,19 @@ fn render_keys(f: &mut Frame, ui_state: &mut UiState, app_state: &mut AppState, 
         search_selection_index: app_state.search_selection_index,
         animation: &ui_state.animation,
         search_match_positions: &app_state.search_match_positions,
+        now,
     };
 
     ui_state.key_list.render(f, area, props);
 }
 
-fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, area: Rect) {
+fn render_value(
+    f: &mut Frame,
+    ui_state: &mut UiState,
+    app_state: &AppState,
+    area: Rect,
+    now: SystemTime,
+) {
     let selected_key = app_state
         .selected_key_index
         .and_then(|idx| app_state.keys.get(idx))
@@ -300,12 +336,14 @@ fn render_value(f: &mut Frame, ui_state: &mut UiState, app_state: &AppState, are
         selected_value: app_state.selected_value.as_ref(),
         selected_key_type,
         selected_key_name,
+        selected_key,
         error_message: app_state.error_message.as_ref(),
         json_formatter: &app_state.json_formatter,
         text_formatter: &app_state.text_formatter,
         is_active: ui_state.active_panel == Panel::Value,
         backend_type,
         animation: &ui_state.animation,
+        now,
     };
 
     ui_state.value_viewer.render(f, area, props);

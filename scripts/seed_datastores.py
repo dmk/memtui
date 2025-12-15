@@ -136,6 +136,17 @@ class DatastoreSeeder:
         sock.sendall(command + payload + b"\r\n")
         sock.recv(1024)
 
+    def expire_random(self, client, key: str, min_secs: int, max_secs: int):
+        """Set a random TTL on a key if min/max are valid."""
+        if min_secs <= 0 or max_secs <= 0 or max_secs < min_secs:
+            return
+        ttl = self.fake.random_int(min=min_secs, max=max_secs)
+        try:
+            client.expire(key, ttl)
+        except Exception:
+            # Best-effort TTL assignment; ignore failures in seed script
+            pass
+
     def seed_redis(self):
         """Populate Redis with sample data."""
         self.print_header("REDIS DATASTORE")
@@ -227,7 +238,9 @@ class DatastoreSeeder:
 
             # Create session
             session_token = self.fake.uuid4()
-            r.set(f"session:{i}", session_token)
+            session_key = f"session:{i}"
+            session_ttl = self.fake.random_int(min=120, max=21600)
+            r.set(session_key, session_token, ex=session_ttl)
 
             # Create user with realistic data
             r.hset(f"user:{i}", mapping={
@@ -249,9 +262,11 @@ class DatastoreSeeder:
             unit="bucket",
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}",
         ):
+            bucket_key = f"events:{bucket}"
             for event in range(1, events_per_bucket + 1):
                 timestamp = int(time.time()) - self.fake.random_int(min=0, max=86400)
-                r.lpush(f"events:{bucket}", f"{timestamp}-event-{bucket}-{event}")
+                r.lpush(bucket_key, f"{timestamp}-event-{bucket}-{event}")
+            self.expire_random(r, bucket_key, 600, 28800)
 
         # Service registry and health checks
         self.log(f"Registering {Fore.YELLOW}{self.num_service_instances}{Style.RESET_ALL} service instances")
@@ -350,6 +365,7 @@ class DatastoreSeeder:
             r.xadd(stream_key, payload)
             r.hincrby("notifications:unread", str(user_id), 1)
             r.sadd(f"user:{user_id}:channels", payload["channel"])
+            self.expire_random(r, stream_key, 600, 43200)
 
         # Audit events
         self.log(f"Appending {Fore.YELLOW}{self.num_audit_events}{Style.RESET_ALL} audit events")
@@ -369,7 +385,7 @@ class DatastoreSeeder:
         for _ in range(self.num_api_tokens):
             user_id = self.fake.random_int(min=1, max=self.num_users)
             token = self.fake.uuid4().replace("-", "")
-            ttl = self.fake.random_int(min=3600, max=3600 * 24 * 14)
+            ttl = self.fake.random_int(min=900, max=86_400)
             r.set(f"api:token:{token}", str(user_id), ex=ttl)
             r.sadd("api:tokens:index", token)
 
@@ -385,6 +401,7 @@ class DatastoreSeeder:
                 "day": self.fake.random_int(min=0, max=3000),
                 "window_start": self.fake.date_time_this_month().isoformat(),
             })
+            self.expire_random(r, limit_key, 60, 3600)
 
         # Documents and dashboards
         self.log(f"Publishing {Fore.YELLOW}{self.num_documents}{Style.RESET_ALL} knowledge base docs")
@@ -396,6 +413,7 @@ class DatastoreSeeder:
             r.sadd("doc:index", doc_key)
             for tag in tags:
                 r.sadd(f"doc:tag:{tag}", doc_key)
+            self.expire_random(r, doc_key, 1800, 43200)
 
         self.log(f"Designing {Fore.YELLOW}{self.num_dashboards}{Style.RESET_ALL} dashboards")
         themes = ["nord", "gruvbox", "light", "solarized"]
@@ -465,6 +483,19 @@ class DatastoreSeeder:
                 r.setbit("analytics:active_bitmap", user_id, 1)
         for channel in channels:
             r.hset("analytics:channel_usage", channel, self.fake.random_int(min=10, max=500))
+        self.expire_random(r, "analytics:channel_usage", 30, 600)
+
+        # Short-lived keys to exercise sub-minute TTL display
+        self.log("Planting short-lived cache entries")
+        flash_ttls = [self.fake.random_int(min=5, max=55) for _ in range(4)]
+        flash_keys = [
+            ("cache:flash:deploy_status", "pending"),
+            ("cache:flash:banner", json.dumps({"msg": "Deploying now", "variant": "info"})),
+            ("cache:flash:experiment", json.dumps({"exp": "search_v3", "variant": "B"})),
+            ("queue:flash:notifications", self.fake.sentence(nb_words=4)),
+        ]
+        for (key, value), ttl in zip(flash_keys, flash_ttls):
+            r.set(key, value, ex=ttl)
 
         # Geospatial warehouse index
         self.log("Indexing warehouse locations")
@@ -1062,4 +1093,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -64,6 +64,7 @@ impl EtcdBackend {
             ttl: None, // etcd uses leases for TTL, would need extra call
             last_accessed: Some(SystemTime::now()),
             encoding: Some("utf8".to_string()),
+            expires_at: None,
         }
     }
 }
@@ -238,6 +239,7 @@ impl Backend for EtcdBackend {
                 ttl: None,
                 last_accessed: Some(SystemTime::now()),
                 encoding: None,
+                expires_at: None,
             });
         }
 

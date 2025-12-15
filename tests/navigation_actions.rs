@@ -35,3 +35,25 @@ fn key_navigation_wraps_and_emits_select() {
         "navigation should emit SelectKey actions for current index"
     );
 }
+
+#[rstest]
+fn selecting_new_key_clears_error() {
+    let mut app = AppHarness::new()
+        .with_connection("local")
+        .with_keys(fixtures::sample_keys());
+
+    // Simulate an earlier load error
+    app.app_state.error_message = Some("expired".to_string());
+    app.app_state.selected_value = Some(memtui::types::Value {
+        data: b"stale".to_vec(),
+        value_type: memtui::types::ValueType::String,
+        encoding: Some("utf8".to_string()),
+    });
+
+    // Select a different key; error should clear
+    assert!(app.dispatch_action(Action::SelectKey(1)));
+
+    assert_eq!(app.app_state.error_message, None);
+    assert_eq!(app.app_state.selected_key_index, Some(1));
+    assert!(app.app_state.selected_value.is_none());
+}

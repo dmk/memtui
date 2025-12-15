@@ -1,5 +1,8 @@
 # memtui
 
+[![CI](https://github.com/dmk/memtui/actions/workflows/ci.yml/badge.svg)](https://github.com/dmk/memtui/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/dmk/memtui?label=latest%20release)](https://github.com/dmk/memtui/releases/latest)
+
 `memtui` is an interactive TUI (Terminal User Interface) for browsing and inspecting key-value stores from a single interface. It’s written in Rust with an async event loop (Tokio) and a component-based UI (ratatui).
 
 See `ROADMAP.md` for planned features and milestones.

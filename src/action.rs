@@ -1,4 +1,4 @@
-use crate::backend::Backend;
+use crate::backend::{Backend, BackendCapabilities};
 use crate::types::{ConnectionConfig, KeyMetadata, KeyScanResult, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,7 +67,7 @@ pub enum Action {
     SearchPrevResult,          // Navigate to previous search result
 
     // Async Events (Results)
-    DidConnect(String, Arc<RwLock<Box<dyn Backend>>>),
+    DidConnect(String, Arc<RwLock<Box<dyn Backend>>>, BackendCapabilities),
     DidDisconnect(String),
     DidFailConnect(String, String), // id, error
 

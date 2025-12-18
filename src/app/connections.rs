@@ -1,4 +1,4 @@
-use crate::backend::Backend;
+use crate::backend::{Backend, BackendCapabilities};
 use crate::types::ConnectionConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,6 +18,7 @@ pub struct ConnectionManager {
     connections: HashMap<String, Arc<RwLock<Box<dyn Backend>>>>,
     configs: HashMap<String, ConnectionConfig>,
     statuses: HashMap<String, ConnectionStatus>,
+    capabilities: HashMap<String, BackendCapabilities>,
     active_id: Option<String>,
 }
 
@@ -27,6 +28,7 @@ impl ConnectionManager {
             connections: HashMap::new(),
             configs: HashMap::new(),
             statuses: HashMap::new(),
+            capabilities: HashMap::new(),
             active_id: None,
         }
     }
@@ -75,9 +77,20 @@ impl ConnectionManager {
         self.statuses.insert(id.to_string(), status);
     }
 
+    /// Set capabilities for a connection (mainly for tests)
+    pub fn set_capabilities(&mut self, id: &str, caps: BackendCapabilities) {
+        self.capabilities.insert(id.to_string(), caps);
+    }
+
     /// Register an active, connected backend
-    pub fn register_connection(&mut self, id: &str, backend: Arc<RwLock<Box<dyn Backend>>>) {
+    pub fn register_connection(
+        &mut self,
+        id: &str,
+        backend: Arc<RwLock<Box<dyn Backend>>>,
+        caps: BackendCapabilities,
+    ) {
         self.connections.insert(id.to_string(), backend);
+        self.capabilities.insert(id.to_string(), caps);
         self.active_id = Some(id.to_string());
         self.statuses
             .insert(id.to_string(), ConnectionStatus::Connected);
@@ -86,6 +99,7 @@ impl ConnectionManager {
     /// Disconnect from a backend
     pub async fn disconnect(&mut self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(backend_arc) = self.connections.remove(id) {
+            self.capabilities.remove(id);
             // We need to acquire write lock to disconnect
             let mut backend = backend_arc.write().await;
             backend.disconnect().await?;
@@ -130,6 +144,7 @@ impl ConnectionManager {
         self.configs.remove(id);
         self.connections.remove(id);
         self.statuses.remove(id);
+        self.capabilities.remove(id);
         if self.active_id.as_deref() == Some(id) {
             self.active_id = None;
         }
@@ -141,6 +156,18 @@ impl ConnectionManager {
             .get(id)
             .cloned()
             .unwrap_or(ConnectionStatus::Disconnected)
+    }
+
+    /// Get connection capabilities
+    pub fn get_capabilities(&self, id: &str) -> Option<&BackendCapabilities> {
+        self.capabilities.get(id)
+    }
+
+    /// Get active connection capabilities
+    pub fn get_active_capabilities(&self) -> Option<&BackendCapabilities> {
+        self.active_id
+            .as_ref()
+            .and_then(|id| self.get_capabilities(id))
     }
 
     /// Get all statuses

@@ -58,6 +58,22 @@ impl AppHarness {
             .connection_manager
             .set_status(&config.id, ConnectionStatus::Connected);
         self.app_state.connection_manager.set_active(&config.id);
+
+        // Provide default Redis-like capabilities for tests
+        self.app_state.connection_manager.set_capabilities(
+            &config.id,
+            memtui::backend::BackendCapabilities {
+                supports_ttl: true,
+                supports_scan: true,
+                supports_raw_commands: true,
+                supports_batch_get: true,
+                supports_efficient_pattern_search: true,
+                supports_type_display: true,
+                supports_expiry_display: true,
+                has_limited_key_listing: false,
+            },
+        );
+
         self.ui_state.connection_list.state.select(Some(0));
         self
     }

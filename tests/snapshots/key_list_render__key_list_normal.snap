@@ -2,7 +2,7 @@
 source: tests/key_list_render.rs
 expression: normal
 ---
- Keys           1 of 3 │ user:123             expires in 1h
+ Keys           1 of 3 │ user:123 expires in 1h · size: 85 B
  ▸ use     1h    json ▲│Select a key to view its value
    use     1h    json █│
    ses    30m  string █│

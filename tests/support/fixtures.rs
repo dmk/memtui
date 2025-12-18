@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use memtui::app::ConnectionStatus;
+use memtui::backend::BackendCapabilities;
 use memtui::types::{BackendType, ConnectionConfig, KeyMetadata, ValueType};
 
 use super::render::fixed_now;
@@ -33,6 +34,21 @@ pub fn attach_connected(app_state: &mut memtui::app::AppState, id: &str) {
         .connection_manager
         .set_status(id, ConnectionStatus::Connected);
     app_state.connection_manager.set_active(id);
+
+    // Provide default Redis-like capabilities for tests
+    app_state.connection_manager.set_capabilities(
+        id,
+        BackendCapabilities {
+            supports_ttl: true,
+            supports_scan: true,
+            supports_raw_commands: true,
+            supports_batch_get: true,
+            supports_efficient_pattern_search: true,
+            supports_type_display: true,
+            supports_expiry_display: true,
+            has_limited_key_listing: false,
+        },
+    );
 }
 
 /// Common set of keys for rendering tests.

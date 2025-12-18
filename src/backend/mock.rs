@@ -74,6 +74,9 @@ impl Backend for MockBackend {
             supports_raw_commands: true,
             supports_batch_get: true,
             supports_efficient_pattern_search: true, // Mock behaves like Redis
+            supports_type_display: true,
+            supports_expiry_display: true,
+            has_limited_key_listing: false,
         }
     }
 

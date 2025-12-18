@@ -24,7 +24,6 @@ use super::theme::{self, AnimationState};
 use super::widgets::{TabBar, TabItem};
 use crate::app::{AppState, ConnectionStatus};
 use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConfig};
-use crate::types::BackendType;
 
 /// Main UI rendering function
 pub fn render_at(
@@ -59,19 +58,19 @@ pub fn render_at(
 
     let show_tabs = open_configs.len() > 1;
 
-    // Check if we should show warning for memcached
-    let show_memcached_warning = app_state
-        .connection_manager
-        .get_active_id()
-        .and_then(|id| app_state.connection_manager.get_config(id))
-        .map(|config| config.backend_type == BackendType::Memcached)
+    let active_id = app_state.connection_manager.get_active_id();
+    let capabilities = active_id.and_then(|id| app_state.connection_manager.get_capabilities(id));
+
+    // Check if we should show warning for limited key listing (e.g. memcached)
+    let show_limited_keys_warning = capabilities
+        .map(|c| c.has_limited_key_listing)
         .unwrap_or(false);
 
     // Check for temporary connection warning (from CLI connection string)
     let show_temp_connection_warning = ui_state.show_temp_connection_warning;
 
     // Calculate warning height (can show multiple warnings)
-    let warning_height = if show_memcached_warning { 1 } else { 0 }
+    let warning_height = if show_limited_keys_warning { 1 } else { 0 }
         + if show_temp_connection_warning { 1 } else { 0 };
 
     let root = Layout::default()
@@ -107,7 +106,7 @@ pub fn render_at(
                     } else {
                         Constraint::Length(0)
                     },
-                    if show_memcached_warning {
+                    if show_limited_keys_warning {
                         Constraint::Length(1)
                     } else {
                         Constraint::Length(0)
@@ -132,12 +131,12 @@ pub fn render_at(
             chunk_idx += 1;
         }
 
-        if show_memcached_warning && chunk_idx < warning_chunks.len() {
+        if show_limited_keys_warning && chunk_idx < warning_chunks.len() {
             let mut warning_component = WarningMessage::new();
             let warning_props = WarningMessageProps {
                 kind: MessageKind::Warning,
                 message:
-                    "Memcached doesn't provide native key listing. Keys may not be consistent.",
+                    "This backend has limited key listing capabilities. Keys may not be consistent.",
             };
             warning_component.render(f, warning_chunks[chunk_idx], warning_props);
         }
@@ -272,12 +271,6 @@ fn render_keys(
 ) {
     app_state.viewport_height = area.height.saturating_sub(2) as usize;
 
-    let backend_type = app_state
-        .connection_manager
-        .get_active_id()
-        .and_then(|id| app_state.connection_manager.get_config(id))
-        .map(|config| config.backend_type);
-
     // Search state
     let active_search_query = if app_state.is_searching || !app_state.search_query.is_empty() {
         Some(app_state.search_query.as_str())
@@ -285,10 +278,8 @@ fn render_keys(
         None
     };
 
-    let show_ttl = matches!(
-        backend_type,
-        Some(BackendType::Redis | BackendType::Memcached)
-    );
+    let active_id = app_state.connection_manager.get_active_id();
+    let capabilities = active_id.and_then(|id| app_state.connection_manager.get_capabilities(id));
 
     let props = KeyListProps {
         keys: &app_state.keys,
@@ -296,8 +287,7 @@ fn render_keys(
         is_loading: app_state.is_loading_keys,
         active_search_query,
         is_active: ui_state.active_panel == Panel::Keys,
-        backend_type,
-        show_ttl,
+        capabilities,
         is_searching: app_state.is_searching,
         search_results_local: &app_state.search_results_local,
         search_results_server: &app_state.search_results_server,
@@ -326,11 +316,8 @@ fn render_value(
     let selected_key_type = selected_key.map(|k| k.value_type);
     let selected_key_name = selected_key.map(|k| k.name.as_str());
 
-    let backend_type = app_state
-        .connection_manager
-        .get_active_id()
-        .and_then(|id| app_state.connection_manager.get_config(id))
-        .map(|config| config.backend_type);
+    let active_id = app_state.connection_manager.get_active_id();
+    let capabilities = active_id.and_then(|id| app_state.connection_manager.get_capabilities(id));
 
     let props = ValueViewerProps {
         selected_value: app_state.selected_value.as_ref(),
@@ -341,7 +328,7 @@ fn render_value(
         json_formatter: &app_state.json_formatter,
         text_formatter: &app_state.text_formatter,
         is_active: ui_state.active_panel == Panel::Value,
-        backend_type,
+        capabilities,
         animation: &ui_state.animation,
         now,
     };

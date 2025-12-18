@@ -23,6 +23,15 @@ pub struct MemcachedBackend {
     key_cache: Arc<Mutex<HashSet<String>>>,
 }
 
+impl std::fmt::Debug for MemcachedBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemcachedBackend")
+            .field("config", &self.config)
+            .field("connected", &self.client.is_some())
+            .finish()
+    }
+}
+
 impl MemcachedBackend {
     pub fn new(config: ConnectionConfig) -> Self {
         Self {
@@ -225,6 +234,9 @@ impl Backend for MemcachedBackend {
             supports_raw_commands: false, // Limited command support
             supports_batch_get: true,
             supports_efficient_pattern_search: false, // Memcached requires client-side filtering
+            supports_type_display: false,             // Memcached is key-value only
+            supports_expiry_display: true, // Memcached provides expiry via stats cachedump
+            has_limited_key_listing: true,
         }
     }
 

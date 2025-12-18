@@ -13,6 +13,15 @@ pub struct EtcdBackend {
     client: Option<Client>,
 }
 
+impl std::fmt::Debug for EtcdBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EtcdBackend")
+            .field("config", &self.config)
+            .field("connected", &self.client.is_some())
+            .finish()
+    }
+}
+
 impl EtcdBackend {
     pub fn new(config: ConnectionConfig) -> Self {
         Self {
@@ -82,6 +91,9 @@ impl Backend for EtcdBackend {
             supports_raw_commands: false,            // No raw command support
             supports_batch_get: true,                // Can get ranges
             supports_efficient_pattern_search: true, // Prefix-based
+            supports_type_display: false,            // etcd is key-value only
+            supports_expiry_display: false, // etcd doesn't easily expose lease expiry per key without extra calls
+            has_limited_key_listing: false,
         }
     }
 

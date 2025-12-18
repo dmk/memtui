@@ -78,7 +78,7 @@ pub trait Backend: Send + Sync {
 }
 
 /// Backend capabilities (feature flags)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct BackendCapabilities {
     pub supports_ttl: bool,
     pub supports_scan: bool,
@@ -86,6 +86,12 @@ pub struct BackendCapabilities {
     pub supports_batch_get: bool,
     /// Whether the backend can efficiently search keys server-side (Redis: true, Memcached: false)
     pub supports_efficient_pattern_search: bool,
+    /// Whether the backend supports displaying key types (Redis: true, Memcached/etcd: false)
+    pub supports_type_display: bool,
+    /// Whether the backend supports efficient server-side expiry display
+    pub supports_expiry_display: bool,
+    /// Whether the backend has limited key listing (e.g. Memcached)
+    pub has_limited_key_listing: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -1,7 +1,10 @@
 use super::Component;
+use crate::action::Action;
 use crate::app::ConnectionStatus;
+use crate::events::{ComponentId, Event, EventKind, EventType};
 use crate::types::ConnectionConfig;
 use crate::ui::theme::{self, raw, AnimationState};
+use crossterm::event::KeyCode;
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
@@ -63,6 +66,10 @@ impl ConnectionList {
         self.state.select(Some(i));
     }
 
+    pub fn select(&mut self, index: Option<usize>) {
+        self.state.select(index);
+    }
+
     pub fn index_at_position(
         &self,
         area: Rect,
@@ -99,6 +106,40 @@ impl Default for ConnectionList {
 
 impl Component for ConnectionList {
     type Props<'a> = ConnectionListProps<'a>;
+
+    fn subscriptions(&self) -> Vec<EventType> {
+        vec![EventType::Key]
+    }
+
+    fn handle_event(&mut self, event: &Event, props: Self::Props<'_>) -> Vec<Action> {
+        // Handle events when focused
+        if event.context.focused_component != Some(ComponentId::ConnectionPalette) {
+            return vec![];
+        }
+
+        if let EventKind::Key(key) = &event.kind {
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.next(props.configs.len());
+                    return vec![Action::Tick];
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.prev(props.configs.len());
+                    return vec![Action::Tick];
+                }
+                KeyCode::Enter => {
+                    if let Some(idx) = self.state.selected() {
+                        if let Some(config) = props.configs.get(idx) {
+                            return vec![Action::FocusConnection(config.id.clone())];
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        vec![]
+    }
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         // Use raw (undimmed) colors since this is rendered inside a modal

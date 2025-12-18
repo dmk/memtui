@@ -35,8 +35,9 @@ pub fn handle_connect(
 
             match backend.connect().await {
                 Ok(_) => {
+                    let caps = backend.capabilities();
                     let backend_arc = Arc::new(RwLock::new(backend));
-                    let _ = tx.send(Action::DidConnect(config.id, backend_arc));
+                    let _ = tx.send(Action::DidConnect(config.id, backend_arc, caps));
                 }
                 Err(e) => {
                     let _ = tx.send(Action::DidFailConnect(config.id, e.to_string()));
@@ -247,10 +248,11 @@ pub fn handle_did_connect(
     action_tx: &mpsc::UnboundedSender<Action>,
     id: String,
     backend: Arc<RwLock<Box<dyn Backend>>>,
+    caps: crate::backend::BackendCapabilities,
 ) {
     app_state
         .connection_manager
-        .register_connection(&id, backend);
+        .register_connection(&id, backend, caps);
     app_state.error_message = None;
     if let Ok(ids) = userdata::record_recent_connection_id_with_config(&id, config) {
         ui_state.recent_connection_ids = ids;

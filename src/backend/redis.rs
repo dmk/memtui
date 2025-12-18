@@ -14,6 +14,15 @@ pub struct RedisBackend {
     connection: Option<ConnectionManager>,
 }
 
+impl std::fmt::Debug for RedisBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisBackend")
+            .field("config", &self.config)
+            .field("connected", &self.connection.is_some())
+            .finish()
+    }
+}
+
 impl RedisBackend {
     pub fn new(config: ConnectionConfig) -> Self {
         Self {
@@ -151,6 +160,9 @@ impl Backend for RedisBackend {
             supports_raw_commands: true,
             supports_batch_get: true,
             supports_efficient_pattern_search: true,
+            supports_type_display: true,
+            supports_expiry_display: true,
+            has_limited_key_listing: false,
         }
     }
 

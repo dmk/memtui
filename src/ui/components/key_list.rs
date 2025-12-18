@@ -23,8 +23,9 @@ enum TtlUrgency {
 
 use super::Component;
 use crate::action::Action;
+use crate::backend::BackendCapabilities;
 use crate::events::{ComponentId, Event, EventKind, EventType};
-use crate::types::{BackendType, KeyMetadata};
+use crate::types::KeyMetadata;
 use crate::ui::theme::{self, AnimationState};
 
 /// Props for KeyList rendering
@@ -34,8 +35,7 @@ pub struct KeyListProps<'a> {
     pub is_loading: bool,
     pub active_search_query: Option<&'a str>,
     pub is_active: bool,
-    pub backend_type: Option<BackendType>,
-    pub show_ttl: bool,
+    pub capabilities: Option<&'a BackendCapabilities>,
     pub is_searching: bool,
     /// Indices of keys matching the local fuzzy search
     pub search_results_local: &'a [usize],
@@ -316,8 +316,7 @@ impl KeyList {
                 items.push(Self::build_key_item_highlighted(
                     key,
                     content_width,
-                    props.backend_type,
-                    props.show_ttl,
+                    props.capabilities,
                     match_positions,
                     now,
                 ));
@@ -391,8 +390,7 @@ impl KeyList {
                 key_items.push(Self::build_key_item(
                     k,
                     content_width,
-                    props.backend_type,
-                    props.show_ttl,
+                    props.capabilities,
                     now,
                 ));
             } else {
@@ -416,14 +414,16 @@ impl KeyList {
     fn build_key_item(
         key: &KeyMetadata,
         content_width: usize,
-        backend_type: Option<BackendType>,
-        show_ttl: bool,
+        capabilities: Option<&BackendCapabilities>,
         now: SystemTime,
     ) -> ListItem<'static> {
-        let show_type = !matches!(
-            backend_type,
-            Some(BackendType::Memcached | BackendType::Etcd)
-        );
+        let show_type = capabilities
+            .map(|c| c.supports_type_display)
+            .unwrap_or(false);
+        let show_ttl = capabilities
+            .map(|c| c.supports_expiry_display)
+            .unwrap_or(false);
+
         let ttl_meta = if show_ttl {
             Self::ttl_meta(now, key)
         } else {
@@ -623,15 +623,17 @@ impl KeyList {
     fn build_key_item_highlighted(
         key: &KeyMetadata,
         content_width: usize,
-        backend_type: Option<BackendType>,
-        show_ttl: bool,
+        capabilities: Option<&BackendCapabilities>,
         match_positions: Option<&Vec<u32>>,
         now: SystemTime,
     ) -> ListItem<'static> {
-        let show_type = !matches!(
-            backend_type,
-            Some(BackendType::Memcached | BackendType::Etcd)
-        );
+        let show_type = capabilities
+            .map(|c| c.supports_type_display)
+            .unwrap_or(false);
+        let show_ttl = capabilities
+            .map(|c| c.supports_expiry_display)
+            .unwrap_or(false);
+
         let ttl_meta = if show_ttl {
             Self::ttl_meta(now, key)
         } else {
@@ -792,21 +794,29 @@ impl Component for KeyList {
     }
 
     fn handle_event(&mut self, event: &Event, props: Self::Props<'_>) -> Vec<Action> {
-        // Handle global events regardless of focus
-        if let EventKind::Key(key) = &event.kind {
-            if key.code == KeyCode::Esc && !props.active_search_query.unwrap_or("").is_empty() {
-                return vec![Action::ClearSearch];
-            }
-        }
-
-        // Only handle other events when focused
-        if event.context.focused_component != Some(ComponentId::KeyList) {
-            return vec![];
-        }
-
         match &event.kind {
-            EventKind::Key(key) => self.handle_key_event(key, &props),
-            EventKind::Scroll { delta, .. } => self.handle_scroll_event(*delta, &props),
+            EventKind::Key(key) => {
+                // Handle global events regardless of focus
+                if key.code == KeyCode::Esc && !props.active_search_query.unwrap_or("").is_empty() {
+                    return vec![Action::ClearSearch];
+                }
+
+                if event.context.focused_component == Some(ComponentId::KeyList) {
+                    self.handle_key_event(key, &props)
+                } else {
+                    vec![]
+                }
+            }
+            EventKind::Scroll { column, row, delta } => {
+                if event
+                    .context
+                    .point_in_component(ComponentId::KeyList, *column, *row)
+                {
+                    self.handle_scroll_event(*delta, &props)
+                } else {
+                    vec![]
+                }
+            }
             _ => vec![],
         }
     }

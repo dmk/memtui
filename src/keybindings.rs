@@ -11,6 +11,7 @@ pub enum BindingContext {
     ConnectionPalette,
     QuitConfirmation,
     Welcome,
+    Help,
     Debug,
 }
 
@@ -33,6 +34,8 @@ pub struct KeybindingsConfig {
     #[serde(default)]
     pub welcome: HashMap<String, Vec<String>>,
     #[serde(default)]
+    pub help: HashMap<String, Vec<String>>,
+    #[serde(default)]
     pub debug: HashMap<String, Vec<String>>,
 }
 
@@ -46,6 +49,7 @@ impl KeybindingsConfig {
             BindingContext::ConnectionPalette => &self.connection_palette,
             BindingContext::QuitConfirmation => &self.quit_confirmation,
             BindingContext::Welcome => &self.welcome,
+            BindingContext::Help => &self.help,
             BindingContext::Debug => &self.debug,
         }
     }
@@ -63,6 +67,7 @@ impl KeybindingsConfig {
             ),
             quit_confirmation: merge_hashmaps(defaults.quit_confirmation, user.quit_confirmation),
             welcome: merge_hashmaps(defaults.welcome, user.welcome),
+            help: merge_hashmaps(defaults.help, user.help),
             debug: merge_hashmaps(defaults.debug, user.debug),
         }
     }
@@ -425,6 +430,14 @@ pub fn default_keybindings() -> KeybindingsConfig {
     );
     welcome.insert("navigation.enter".to_string(), vec!["enter".to_string()]);
     config.welcome = welcome;
+
+    // Help context bindings
+    let mut help = HashMap::new();
+    help.insert(
+        "help.close".to_string(),
+        vec!["?".to_string(), "esc".to_string(), "q".to_string()],
+    );
+    config.help = help;
 
     // Debug context bindings
     let mut debug = HashMap::new();

@@ -2,7 +2,7 @@
 source: tests/key_list_render.rs
 expression: rendered
 ---
- Keys               1 of 3 │ ttl:hours                  expires in 2h
+ Keys               1 of 3 │ ttl:hours      expires in 2h · size: 0 B
  ▸ ttl:...     2h    hash ▲│Select a key to view its value
    ttl:...     4m    list █│
    ttl:...    30s  string █│

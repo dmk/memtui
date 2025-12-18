@@ -1,7 +1,11 @@
 use super::Component;
+use crate::action::Action;
+use crate::backend::BackendCapabilities;
+use crate::events::{ComponentId, Event, EventKind, EventType};
 use crate::formatter::{Formatter, JsonFormatter, TextFormatter};
 use crate::types::{KeyMetadata, Value, ValueType};
 use crate::ui::theme::{self, AnimationState};
+use crossterm::event::KeyCode;
 use ratatui::{
     layout::{Alignment, Constraint, Rect},
     style::{Color, Modifier, Style},
@@ -83,7 +87,7 @@ pub struct ValueViewerProps<'a> {
     pub json_formatter: &'a JsonFormatter,
     pub text_formatter: &'a TextFormatter,
     pub is_active: bool,
-    pub backend_type: Option<crate::types::BackendType>,
+    pub capabilities: Option<&'a BackendCapabilities>,
     pub animation: &'a AnimationState,
     pub now: SystemTime,
 }
@@ -1343,7 +1347,7 @@ impl ValueViewer {
     fn title_for(
         key_name: Option<&str>,
         _value_type: Option<ValueType>,
-        _backend_type: Option<crate::types::BackendType>,
+        _capabilities: Option<&BackendCapabilities>,
     ) -> String {
         // Show the key name as the title - much more useful!
         key_name
@@ -1370,12 +1374,46 @@ impl ValueViewer {
         Some(ValueViewer::format_duration_compact(remaining))
     }
 
-    fn compose_title_right(ttl: Option<&str>, extra: Option<&str>) -> Option<String> {
-        match (ttl, extra) {
-            (Some(t), Some(e)) => Some(format!("expires in {} · {}", t, e)),
-            (Some(t), None) => Some(format!("expires in {}", t)),
-            (None, Some(e)) => Some(e.to_string()),
-            _ => None,
+    fn compose_title_right(
+        ttl_label: Option<&str>,
+        size_label: Option<&str>,
+        encoding_label: Option<&str>,
+        extra_label: Option<&str>,
+    ) -> Option<String> {
+        let mut labels = Vec::new();
+
+        if let Some(ttl) = ttl_label {
+            labels.push(format!("expires in {}", ttl));
+        }
+
+        if let Some(size) = size_label {
+            labels.push(format!("size: {}", size));
+        }
+
+        if let Some(enc) = encoding_label {
+            labels.push(format!("enc: {}", enc));
+        }
+
+        if let Some(extra) = extra_label {
+            labels.push(extra.to_string());
+        }
+
+        if labels.is_empty() {
+            None
+        } else {
+            Some(labels.join(" · "))
+        }
+    }
+
+    fn format_size(bytes: u64) -> String {
+        if bytes < 1024 {
+            format!("{} B", bytes)
+        } else if bytes < 1024 * 1024 {
+            format!("{:.1} KB", bytes as f64 / 1024.0)
+        } else if bytes < 1024 * 1024 * 1024 {
+            format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+        } else {
+            format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
         }
     }
 
@@ -1430,16 +1468,83 @@ impl Default for ValueViewer {
 impl Component for ValueViewer {
     type Props<'a> = ValueViewerProps<'a>;
 
+    fn subscriptions(&self) -> Vec<EventType> {
+        vec![EventType::Key, EventType::Scroll]
+    }
+
+    fn handle_event(&mut self, event: &Event, _props: Self::Props<'_>) -> Vec<Action> {
+        match &event.kind {
+            EventKind::Key(key) => {
+                // Handle key events only when focused
+                if event.context.focused_component != Some(ComponentId::ValueViewer) {
+                    return vec![];
+                }
+                match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        self.scroll_down();
+                        return vec![Action::Tick];
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.scroll_up();
+                        return vec![Action::Tick];
+                    }
+                    _ => {}
+                }
+            }
+            EventKind::Scroll { column, row, delta } => {
+                // Handle scroll events only when mouse is over component
+                if event
+                    .context
+                    .point_in_component(ComponentId::ValueViewer, *column, *row)
+                {
+                    self.scroll_by(*delta);
+                    return vec![Action::Tick];
+                }
+            }
+            _ => {}
+        }
+
+        vec![]
+    }
+
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         let base_title = ValueViewer::title_for(
             props.selected_key_name,
             props.selected_key_type,
-            props.backend_type,
+            props.capabilities,
         );
+
+        // Show rich metadata (size, encoding) if backend supports type display
+        // (Redis supports both, Memcached/etcd support neither)
+        let show_rich_meta = props
+            .capabilities
+            .map(|c| c.supports_type_display)
+            .unwrap_or(false);
+
         let ttl_label = props
             .selected_key
             .and_then(|key| ValueViewer::ttl_label(key, props.now));
-        let base_title_right = ValueViewer::compose_title_right(ttl_label.as_deref(), None);
+
+        let size_label = if show_rich_meta {
+            props
+                .selected_key
+                .map(|key| ValueViewer::format_size(key.size_bytes))
+        } else {
+            None
+        };
+
+        let encoding_label = if show_rich_meta {
+            props.selected_key.and_then(|key| key.encoding.as_deref())
+        } else {
+            None
+        };
+
+        let base_title_right = ValueViewer::compose_title_right(
+            ttl_label.as_deref(),
+            size_label.as_deref(),
+            encoding_label,
+            None,
+        );
         let animation = props.animation;
 
         if let Some(err) = props.error_message {
@@ -1600,6 +1705,8 @@ impl Component for ValueViewer {
                     let view_info = self.value_view_info(value, &props, is_binary);
                     let title_right = ValueViewer::compose_title_right(
                         ttl_label.as_deref(),
+                        None,
+                        None,
                         Some(view_info.as_str()),
                     );
 

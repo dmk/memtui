@@ -28,7 +28,12 @@ use memtui::events::{Event, EventKind};
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
 use memtui::terminal;
 use memtui::types::{ConnectionConfig, ValueType};
+use memtui::ui::components::connection_list::ConnectionListProps;
 use memtui::ui::components::debug as debug_ui;
+use memtui::ui::components::key_list::KeyListProps;
+use memtui::ui::components::value_viewer::ValueViewerProps;
+use memtui::ui::components::welcome::WelcomeScreenProps;
+use memtui::ui::components::Component;
 use memtui::ui::{self, init_theme, Panel, UiState};
 use memtui::userdata;
 
@@ -47,6 +52,7 @@ pub struct App {
     /// Debug mode enabled via --debug flag
     debug_mode_enabled: bool,
     debug_freeze: DebugFreeze,
+    pub event_runner: EventRunner,
 }
 
 impl App {
@@ -119,6 +125,8 @@ impl App {
             ui_state.connection_list.state.select(Some(0));
         }
 
+        let event_runner = EventRunner::new(tx.clone(), &config);
+
         Self {
             app_state,
             ui_state,
@@ -131,6 +139,7 @@ impl App {
             auto_connect_name,
             debug_mode_enabled: cli.debug,
             debug_freeze: DebugFreeze::default(),
+            event_runner,
         }
     }
 
@@ -157,9 +166,6 @@ impl App {
 
         let mut interval = tokio::time::interval(tick_interval);
 
-        // Create EventRunner for event-based architecture
-        let mut event_runner = EventRunner::new(self.action_tx.clone(), &self.config);
-
         loop {
             // Only render when state has changed
             if self.needs_render {
@@ -184,7 +190,7 @@ impl App {
                 self.needs_render = false;
 
                 // Sync event context with current UI state
-                event_runner.update_context(|ctx| {
+                self.event_runner.update_context(|ctx| {
                     sync_event_context(ctx, &self.ui_state, &self.app_state);
                 });
             }
@@ -193,14 +199,14 @@ impl App {
                 tokio::select! {
                     biased;
                     // Priority 1: Debug input events
-                    Some(event) = event_runner.poll() => {
+                    Some(event) = self.event_runner.poll() => {
                         self.handle_debug_event(&event).await;
                     }
                     // Priority 2: Background actions (queued until unfreeze)
                     Some(action) = self.action_rx.recv() => {
                         if matches!(action, Action::ConfirmQuit) {
                             info!("Quit confirmed while frozen, cancelling event runner");
-                            event_runner.cancel();
+                            self.event_runner.cancel();
                             return Ok(());
                         }
                         self.debug_freeze.queued_actions.push(action);
@@ -217,14 +223,14 @@ impl App {
                 // Priority 1: Actions from async tasks (LoadKeys results, etc.)
                 Some(action) = self.action_rx.recv() => action,
                 // Priority 2: Input events from EventRunner
-                Some(event) = event_runner.poll() => {
+                Some(event) = self.event_runner.poll() => {
                     let actions = self.dispatch_event(&event);
                     // Process all actions from this event
                     for action in actions {
                         // Check for quit before processing
                         if matches!(action, Action::ConfirmQuit) {
                             info!("Quit confirmed from event dispatch, cancelling event runner");
-                            event_runner.cancel();
+                            self.event_runner.cancel();
                             return Ok(());
                         }
                         self.update(action).await;
@@ -251,7 +257,7 @@ impl App {
                 }
 
                 info!("Quit confirmed, cancelling event runner");
-                event_runner.cancel();
+                self.event_runner.cancel();
                 break;
             }
 
@@ -350,22 +356,37 @@ impl App {
 
         // 1. Connection Form - handles text input directly
         if self.ui_state.show_connection_form {
-            return self.dispatch_connection_form_key(*key);
+            return self.dispatch_connection_form_key(event);
         }
 
-        // 2. Help screen - any key closes it
+        // 2. Help screen
         if self.ui_state.show_help {
-            return vec![Action::ToggleHelp];
+            return self.dispatch_keybinding(*key, BindingContext::Help);
         }
 
         // 3. Quit confirmation
         if self.ui_state.show_quit_confirmation {
-            return self.dispatch_quit_confirmation_key(*key);
+            return self.dispatch_quit_confirmation_key(event);
         }
 
         // 4. Connection palette
         if self.ui_state.show_connection_palette {
-            return self.dispatch_connection_palette_key(*key);
+            let props = ConnectionListProps {
+                configs: self.app_state.connection_manager.get_configs(),
+                active_id: self.app_state.connection_manager.get_active_id(),
+                statuses: self.app_state.connection_manager.get_statuses(),
+                is_active: true,
+                animation: &self.ui_state.animation,
+            };
+
+            let actions = self.ui_state.connection_list.handle_event(event, props);
+
+            if !actions.is_empty() {
+                return actions;
+            }
+
+            // Fall back to keybindings
+            return self.dispatch_keybinding(*key, BindingContext::ConnectionPalette);
         }
 
         // 5. No active connection - welcome screen
@@ -378,7 +399,7 @@ impl App {
                 .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
                 .collect();
 
-            let props = memtui::ui::components::welcome::WelcomeScreenProps {
+            let props = WelcomeScreenProps {
                 recent_configs,
                 animation: &self.ui_state.animation,
                 keybindings: &self.keybindings,
@@ -394,40 +415,28 @@ impl App {
 
         // 6. Search mode - special handling (only when actively typing in search input)
         if self.app_state.is_searching {
-            return self.dispatch_search_key(*key);
+            return self.dispatch_search_key(event);
         }
 
         // 7. Main panels - key_list or value_viewer based on active panel
         match self.ui_state.active_panel {
             Panel::Keys => {
-                let backend_type = self
-                    .app_state
-                    .connection_manager
-                    .get_active_id()
-                    .and_then(|id| self.app_state.connection_manager.get_config(id))
-                    .map(|config| config.backend_type);
-
+                let active_id = self.app_state.connection_manager.get_active_id();
+                let capabilities =
+                    active_id.and_then(|id| self.app_state.connection_manager.get_capabilities(id));
                 let active_search_query =
                     if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
                         Some(self.app_state.search_query.as_str())
                     } else {
                         None
                     };
-
-                let props = memtui::ui::components::key_list::KeyListProps {
+                let props = KeyListProps {
                     keys: &self.app_state.keys,
                     total_count: self.app_state.total_key_count,
                     is_loading: self.app_state.is_loading_keys,
                     active_search_query,
                     is_active: true,
-                    backend_type,
-                    show_ttl: matches!(
-                        backend_type,
-                        Some(
-                            memtui::types::BackendType::Redis
-                                | memtui::types::BackendType::Memcached
-                        )
-                    ),
+                    capabilities,
                     is_searching: self.app_state.is_searching,
                     search_results_local: &self.app_state.search_results_local,
                     search_results_server: &self.app_state.search_results_server,
@@ -437,18 +446,35 @@ impl App {
                     search_match_positions: &self.app_state.search_match_positions,
                     now: std::time::SystemTime::now(),
                 };
-
                 let actions = self.ui_state.key_list.handle_event(event, props);
                 if !actions.is_empty() {
                     return actions;
                 }
             }
             Panel::Value => {
-                // Value viewer scroll handling
-                if let KeyCode::Down | KeyCode::Up | KeyCode::Char('j') | KeyCode::Char('k') =
-                    key.code
-                {
-                    return self.dispatch_value_viewer_key(*key);
+                let active_id = self.app_state.connection_manager.get_active_id();
+                let capabilities =
+                    active_id.and_then(|id| self.app_state.connection_manager.get_capabilities(id));
+                let selected_key = self
+                    .app_state
+                    .selected_key_index
+                    .and_then(|idx| self.app_state.keys.get(idx).and_then(|k| k.as_ref()));
+                let props = ValueViewerProps {
+                    selected_value: self.app_state.selected_value.as_ref(),
+                    selected_key_type: selected_key.map(|k| k.value_type),
+                    selected_key_name: selected_key.map(|k| k.name.as_str()),
+                    selected_key,
+                    error_message: self.app_state.error_message.as_ref(),
+                    json_formatter: &self.app_state.json_formatter,
+                    text_formatter: &self.app_state.text_formatter,
+                    is_active: true,
+                    capabilities,
+                    animation: &self.ui_state.animation,
+                    now: std::time::SystemTime::now(),
+                };
+                let actions = self.ui_state.value_viewer.handle_event(event, props);
+                if !actions.is_empty() {
+                    return actions;
                 }
             }
         }
@@ -458,57 +484,32 @@ impl App {
     }
 
     /// Dispatch key event for connection form
-    fn dispatch_connection_form_key(&mut self, key: event::KeyEvent) -> Vec<Action> {
+    fn dispatch_connection_form_key(&mut self, event: &Event) -> Vec<Action> {
+        let EventKind::Key(key) = &event.kind else {
+            return vec![];
+        };
+
         // Handle text input directly on form fields
-        self.ui_state.connection_form.handle_key_event(key);
+        self.ui_state.connection_form.handle_key_event(*key);
 
         // Also check keybindings for form commands (Tab, Shift+Tab, Enter, Escape)
-        self.dispatch_keybinding(key, BindingContext::ConnectionForm)
+        self.dispatch_keybinding(*key, BindingContext::ConnectionForm)
     }
 
     /// Dispatch key event for quit confirmation
-    fn dispatch_quit_confirmation_key(&mut self, key: event::KeyEvent) -> Vec<Action> {
-        self.dispatch_keybinding(key, BindingContext::QuitConfirmation)
-    }
-
-    /// Dispatch key event for connection palette
-    fn dispatch_connection_palette_key(&mut self, key: event::KeyEvent) -> Vec<Action> {
-        // Handle navigation directly
-        match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
-                let len = self.app_state.connection_manager.get_configs().len();
-                if len > 0 {
-                    self.ui_state.connection_list.next(len);
-                }
-                return vec![Action::Tick]; // Indicate handled
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                let len = self.app_state.connection_manager.get_configs().len();
-                if len > 0 {
-                    self.ui_state.connection_list.prev(len);
-                }
-                return vec![Action::Tick]; // Indicate handled
-            }
-            KeyCode::Enter => {
-                if let Some(idx) = self.ui_state.connection_list.state.selected() {
-                    let configs = self.app_state.connection_manager.get_configs();
-                    if let Some(config) = configs.get(idx) {
-                        let id = config.id.clone();
-                        self.ui_state.close_connection_palette();
-                        return vec![Action::FocusConnection(id)];
-                    }
-                }
-                return vec![];
-            }
-            _ => {}
-        }
-
-        // Fall back to keybindings
-        self.dispatch_keybinding(key, BindingContext::ConnectionPalette)
+    fn dispatch_quit_confirmation_key(&mut self, event: &Event) -> Vec<Action> {
+        let EventKind::Key(key) = &event.kind else {
+            return vec![];
+        };
+        self.dispatch_keybinding(*key, BindingContext::QuitConfirmation)
     }
 
     /// Dispatch key event for search mode
-    fn dispatch_search_key(&mut self, key: event::KeyEvent) -> Vec<Action> {
+    fn dispatch_search_key(&mut self, event: &Event) -> Vec<Action> {
+        let EventKind::Key(key) = &event.kind else {
+            return vec![];
+        };
+
         // Handle text input
         match key.code {
             KeyCode::Backspace if self.app_state.is_searching => {
@@ -524,22 +525,7 @@ impl App {
         }
 
         // Check keybindings
-        self.dispatch_keybinding(key, BindingContext::Search)
-    }
-
-    /// Dispatch key event for value viewer
-    fn dispatch_value_viewer_key(&mut self, key: event::KeyEvent) -> Vec<Action> {
-        match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.ui_state.value_viewer.scroll_down();
-                vec![Action::Tick]
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.ui_state.value_viewer.scroll_up();
-                vec![Action::Tick]
-            }
-            _ => vec![],
-        }
+        self.dispatch_keybinding(*key, BindingContext::Search)
     }
 
     /// Dispatch mouse event
@@ -593,102 +579,94 @@ impl App {
 
     /// Dispatch scroll event
     fn dispatch_scroll_event(&mut self, column: u16, row: u16, delta: isize) -> Vec<Action> {
-        // Determine which component to scroll based on mouse position
-        if let Some(key_area) = self.ui_state.last_key_area {
-            if column >= key_area.x
-                && column < key_area.x + key_area.width
-                && row >= key_area.y
-                && row < key_area.y + key_area.height
+        let event = self
+            .event_runner
+            .event_bus_mut()
+            .create_event(EventKind::Scroll { column, row, delta });
+
+        // 1. Try Key List
+        let active_id = self.app_state.connection_manager.get_active_id();
+        let capabilities =
+            active_id.and_then(|id| self.app_state.connection_manager.get_capabilities(id));
+        let active_search_query =
+            if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
+                Some(self.app_state.search_query.as_str())
+            } else {
+                None
+            };
+        let key_list_props = KeyListProps {
+            keys: &self.app_state.keys,
+            total_count: self.app_state.total_key_count,
+            is_loading: self.app_state.is_loading_keys,
+            active_search_query,
+            is_active: self.ui_state.active_panel == Panel::Keys,
+            capabilities,
+            is_searching: self.app_state.is_searching,
+            search_results_local: &self.app_state.search_results_local,
+            search_results_server: &self.app_state.search_results_server,
+            is_server_searching: self.app_state.is_server_searching,
+            search_selection_index: self.app_state.search_selection_index,
+            animation: &self.ui_state.animation,
+            search_match_positions: &self.app_state.search_match_positions,
+            now: std::time::SystemTime::now(),
+        };
+
+        let actions = self.ui_state.key_list.handle_event(&event, key_list_props);
+        if !actions.is_empty() {
+            // Special handling for search navigation via scroll
+            if let Some(query) = self
+                .app_state
+                .search_query
+                .as_str()
+                .split_whitespace()
+                .next()
             {
-                // Check if we're in search mode
-                let has_search = !self.app_state.search_query.is_empty();
-
-                if has_search {
-                    // In search mode: scroll through search results
-                    let total_count = self.app_state.search_results_local.len();
-                    if total_count > 0 {
-                        let current_idx = self.app_state.search_selection_index.unwrap_or(0);
-                        let steps = delta.unsigned_abs().min(total_count);
-                        let new_idx = if delta > 0 {
-                            let next = current_idx.saturating_add(steps);
-                            if next >= total_count {
-                                0
-                            } else {
-                                next
-                            }
-                        } else {
-                            let amount = steps;
-                            if amount > current_idx {
-                                total_count.saturating_sub(1)
-                            } else {
-                                current_idx - amount
-                            }
-                        };
-
-                        if new_idx != current_idx {
-                            self.app_state.search_selection_index = Some(new_idx);
-                            if let Some(&key_idx) = self.app_state.search_results_local.get(new_idx)
+                if !query.is_empty() {
+                    for action in &actions {
+                        if let Action::SelectKey(idx) = action {
+                            if let Some(pos) = self
+                                .app_state
+                                .search_results_local
+                                .iter()
+                                .position(|i| i == idx)
                             {
-                                self.ui_state.key_list.select(Some(key_idx));
-                                return vec![Action::SelectKey(key_idx)];
+                                self.app_state.search_selection_index = Some(pos);
                             }
                         }
                     }
-                    return vec![Action::Tick];
-                } else {
-                    // Normal mode: scroll in key list
-                    let total_count = self
-                        .app_state
-                        .total_key_count
-                        .map(|t| t as usize)
-                        .unwrap_or(self.app_state.keys.len());
-
-                    if total_count > 0 {
-                        let current = self.ui_state.key_list.state.selected().unwrap_or(0);
-                        let new_index = if delta > 0 {
-                            let next = current.saturating_add(delta.unsigned_abs());
-                            if next >= total_count {
-                                0
-                            } else {
-                                next
-                            }
-                        } else {
-                            let amount = delta.unsigned_abs();
-                            if amount > current {
-                                total_count.saturating_sub(1)
-                            } else {
-                                current - amount
-                            }
-                        };
-
-                        if new_index != current {
-                            self.ui_state.key_list.select(Some(new_index));
-                            return vec![Action::SelectKey(new_index)];
-                        }
-                    }
-                    return vec![Action::Tick];
                 }
             }
+            return actions;
         }
 
-        if let Some(value_area) = self.ui_state.last_value_area {
-            if column >= value_area.x
-                && column < value_area.x + value_area.width
-                && row >= value_area.y
-                && row < value_area.y + value_area.height
-            {
-                // Scroll in value viewer
-                if delta > 0 {
-                    for _ in 0..delta.unsigned_abs() {
-                        self.ui_state.value_viewer.scroll_down();
-                    }
-                } else {
-                    for _ in 0..delta.unsigned_abs() {
-                        self.ui_state.value_viewer.scroll_up();
-                    }
-                }
-                return vec![Action::Tick];
-            }
+        // 2. Try Value Viewer
+        let active_id = self.app_state.connection_manager.get_active_id();
+        let capabilities =
+            active_id.and_then(|id| self.app_state.connection_manager.get_capabilities(id));
+        let selected_key = self
+            .app_state
+            .selected_key_index
+            .and_then(|idx| self.app_state.keys.get(idx).and_then(|k| k.as_ref()));
+        let value_viewer_props = ValueViewerProps {
+            selected_value: self.app_state.selected_value.as_ref(),
+            selected_key_type: selected_key.map(|k| k.value_type),
+            selected_key_name: selected_key.map(|k| k.name.as_str()),
+            selected_key,
+            error_message: self.app_state.error_message.as_ref(),
+            json_formatter: &self.app_state.json_formatter,
+            text_formatter: &self.app_state.text_formatter,
+            is_active: self.ui_state.active_panel == Panel::Value,
+            capabilities,
+            animation: &self.ui_state.animation,
+            now: std::time::SystemTime::now(),
+        };
+
+        let actions = self
+            .ui_state
+            .value_viewer
+            .handle_event(&event, value_viewer_props);
+        if !actions.is_empty() {
+            return actions;
         }
 
         vec![]
@@ -720,6 +698,7 @@ impl App {
 
             // Help
             "help.toggle" => Some(Action::ToggleHelp),
+            "help.close" => Some(Action::ToggleHelp),
 
             // Search commands
             "search.start" => {
@@ -958,7 +937,7 @@ impl App {
             }
 
             // Async results - delegated to async_handlers
-            Action::DidConnect(id, backend) => {
+            Action::DidConnect(id, backend, caps) => {
                 handle_did_connect(
                     &mut self.app_state,
                     &mut self.ui_state,
@@ -966,6 +945,7 @@ impl App {
                     &self.action_tx,
                     id,
                     backend,
+                    caps,
                 );
                 true
             }

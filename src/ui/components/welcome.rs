@@ -1,10 +1,9 @@
 use super::Component;
 use crate::action::Action;
-use crate::events::Event;
+use crate::events::{ComponentId, Event, EventKind, EventType};
 use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConfig};
 use crate::types::ConnectionConfig;
 use crate::ui::theme::{self, AnimationState};
-use crossterm::event::KeyCode;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -98,6 +97,29 @@ impl WelcomeScreen {
         };
         self.state.select(Some(i));
     }
+
+    /// Handle commands from keybindings
+    fn handle_command(&mut self, command: &str, props: &WelcomeScreenProps<'_>) -> Vec<Action> {
+        match command {
+            "navigation.next_item" => {
+                self.next(props.recent_configs.len());
+                vec![Action::Tick]
+            }
+            "navigation.prev_item" => {
+                self.prev(props.recent_configs.len());
+                vec![Action::Tick]
+            }
+            "navigation.enter" => {
+                if let Some(idx) = self.state.selected() {
+                    if let Some(config) = props.recent_configs.get(idx) {
+                        return vec![Action::FocusConnection(config.id.clone())];
+                    }
+                }
+                vec![]
+            }
+            _ => vec![],
+        }
+    }
 }
 
 impl Default for WelcomeScreen {
@@ -108,6 +130,31 @@ impl Default for WelcomeScreen {
 
 impl Component for WelcomeScreen {
     type Props<'a> = WelcomeScreenProps<'a>;
+
+    fn subscriptions(&self) -> Vec<EventType> {
+        vec![EventType::Key]
+    }
+
+    fn handle_event(&mut self, event: &Event, props: Self::Props<'_>) -> Vec<Action> {
+        // Handle events only when focused
+        if event.context.focused_component != Some(ComponentId::WelcomeScreen) {
+            return vec![];
+        }
+
+        // Only handle navigation if there are recent connections to navigate
+        if props.recent_configs.is_empty() {
+            return vec![];
+        }
+
+        if let EventKind::Key(key) = &event.kind {
+            // Use keybindings for navigation commands
+            if let Some(command) = props.keybindings.get_command(*key, BindingContext::Welcome) {
+                return self.handle_command(&command, &props);
+            }
+        }
+
+        vec![]
+    }
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
         // Fill background
@@ -270,39 +317,5 @@ impl Component for WelcomeScreen {
         ])];
         let footer = Paragraph::new(footer_text).alignment(Alignment::Center);
         f.render_widget(footer, chunks[2]);
-    }
-
-    fn handle_event(&mut self, event: &Event, props: Self::Props<'_>) -> Vec<Action> {
-        use crate::events::EventKind;
-
-        if props.recent_configs.is_empty() {
-            return vec![];
-        }
-
-        if let EventKind::Key(key) = &event.kind {
-            match key.code {
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.next(props.recent_configs.len());
-                    // Return Tick to indicate event was handled (prevents double-processing)
-                    vec![Action::Tick]
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.prev(props.recent_configs.len());
-                    // Return Tick to indicate event was handled (prevents double-processing)
-                    vec![Action::Tick]
-                }
-                KeyCode::Enter => {
-                    if let Some(idx) = self.state.selected() {
-                        if let Some(config) = props.recent_configs.get(idx) {
-                            return vec![Action::FocusConnection(config.id.clone())];
-                        }
-                    }
-                    vec![]
-                }
-                _ => vec![],
-            }
-        } else {
-            vec![]
-        }
     }
 }

@@ -409,8 +409,8 @@ impl App {
             if !actions.is_empty() {
                 return actions;
             }
-            // Fall through to keybinding lookup
-            return self.dispatch_keybinding(*key, BindingContext::Welcome);
+            // WelcomeScreen handles its own keybindings, no fallback needed
+            return vec![];
         }
 
         // 6. Search mode - special handling (only when actively typing in search input)

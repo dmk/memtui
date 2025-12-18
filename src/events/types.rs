@@ -15,6 +15,7 @@ pub enum ComponentId {
     StatusBar,
     Help,
     QuitConfirmation,
+    SearchInput,
 }
 
 /// Event types that components can subscribe to

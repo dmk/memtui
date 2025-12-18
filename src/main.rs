@@ -1,8 +1,8 @@
 use clap::Parser;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, MouseButton,
-        MouseEvent, MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, KeyCode, MouseButton, MouseEvent,
+        MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -31,6 +31,7 @@ use memtui::types::{ConnectionConfig, ValueType};
 use memtui::ui::components::connection_list::ConnectionListProps;
 use memtui::ui::components::debug as debug_ui;
 use memtui::ui::components::key_list::KeyListProps;
+use memtui::ui::components::search_input::{SearchInput, SearchInputProps};
 use memtui::ui::components::value_viewer::ValueViewerProps;
 use memtui::ui::components::welcome::WelcomeScreenProps;
 use memtui::ui::components::Component;
@@ -502,26 +503,14 @@ impl App {
 
     /// Dispatch key event for search mode
     fn dispatch_search_key(&mut self, event: &Event) -> Vec<Action> {
-        let EventKind::Key(key) = &event.kind else {
-            return vec![];
+        let props = SearchInputProps {
+            keybindings: &self.keybindings,
+            is_searching: self.app_state.is_searching,
         };
 
-        // Handle text input
-        match key.code {
-            KeyCode::Backspace if self.app_state.is_searching => {
-                return vec![Action::SearchDeleteChar];
-            }
-            KeyCode::Char(c)
-                if self.app_state.is_searching
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                return vec![Action::SearchAddChar(c)];
-            }
-            _ => {}
-        }
-
-        // Check keybindings
-        self.dispatch_keybinding(*key, BindingContext::Search)
+        // Use SearchInput component to handle the event
+        let mut search_input = SearchInput::new();
+        search_input.handle_event(event, props)
     }
 
     /// Dispatch mouse event

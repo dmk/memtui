@@ -4,6 +4,7 @@ pub mod debug;
 pub mod help;
 pub mod key_list;
 pub mod modal;
+pub mod search_input;
 pub mod status_bar;
 pub mod value_viewer;
 pub mod warning_message;

@@ -354,9 +354,18 @@ impl App {
             return vec![];
         };
 
-        // 1. Connection Form - handles text input directly
+        // 1. Connection Form
         if self.ui_state.show_connection_form {
-            return self.dispatch_connection_form_key(event);
+            let props = memtui::ui::components::connection_form::ConnectionFormProps {
+                keybindings: &self.keybindings,
+                error: self.ui_state.form_error.as_deref(),
+            };
+            let actions = self.ui_state.connection_form.handle_event(event, props);
+            if !actions.is_empty() {
+                return actions;
+            }
+            // ConnectionForm handles its own keybindings, no fallback needed
+            return vec![];
         }
 
         // 2. Help screen
@@ -409,8 +418,8 @@ impl App {
             if !actions.is_empty() {
                 return actions;
             }
-            // WelcomeScreen handles its own keybindings, no fallback needed
-            return vec![];
+            // Fall through to default keybindings for global commands (Ctrl+N, Ctrl+P, etc.)
+            return self.dispatch_keybinding(*key, BindingContext::Default);
         }
 
         // 6. Search mode - special handling (only when actively typing in search input)
@@ -481,19 +490,6 @@ impl App {
 
         // Fall back to default keybinding lookup
         self.dispatch_keybinding(*key, BindingContext::Default)
-    }
-
-    /// Dispatch key event for connection form
-    fn dispatch_connection_form_key(&mut self, event: &Event) -> Vec<Action> {
-        let EventKind::Key(key) = &event.kind else {
-            return vec![];
-        };
-
-        // Handle text input directly on form fields
-        self.ui_state.connection_form.handle_key_event(*key);
-
-        // Also check keybindings for form commands (Tab, Shift+Tab, Enter, Escape)
-        self.dispatch_keybinding(*key, BindingContext::ConnectionForm)
     }
 
     /// Dispatch key event for quit confirmation

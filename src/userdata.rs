@@ -518,8 +518,10 @@ fn generate_default_keybindings_json() -> String {
   "connection_form": {
     "connection.form.submit": ["enter"],
     "connection.form.close": ["esc"],
-    "connection.form.next_field": ["tab"],
-    "connection.form.prev_field": ["shift+tab"]
+    "connection.form.next_field": ["tab", "down"],
+    "connection.form.prev_field": ["shift+tab", "up"],
+    "connection.form.backend_type.next": ["right"],
+    "connection.form.backend_type.prev": ["left"]
   },
 
   // Connection palette - active when the connection palette is open
@@ -550,6 +552,19 @@ fn generate_default_keybindings_json() -> String {
     "debug.copy_frame": ["y", "c"],
     "debug.state.toggle": ["s"],
     "debug.mouse.toggle": ["i"]
+  },
+
+  // Text input - active when editing text fields (connection form, etc.)
+  // Note: alt+ keys are for macOS compatibility (Option key)
+  "text_input": {
+    "input.delete_char_back": ["backspace"],
+    "input.delete_char_forward": ["delete"],
+    "input.delete_word_back": ["ctrl+backspace", "alt+backspace"],
+    "input.delete_word_forward": ["ctrl+delete", "alt+delete"],
+    "input.move_word_left": ["ctrl+left", "alt+left"],
+    "input.move_word_right": ["ctrl+right", "alt+right"],
+    "input.move_start": ["home", "ctrl+a"],
+    "input.move_end": ["end", "ctrl+e"]
   }
 }
 "#

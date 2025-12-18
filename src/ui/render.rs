@@ -10,6 +10,7 @@ use std::time::SystemTime;
 use super::components::modal::{confirm_block_raw, render_modal};
 
 use super::components::{
+    connection_form::ConnectionFormProps,
     connection_list::ConnectionListProps,
     help::render_help,
     key_list::KeyListProps,
@@ -18,7 +19,6 @@ use super::components::{
     welcome::WelcomeScreenProps,
     Component,
 };
-use super::render_connection_form;
 use super::state::{Panel, TabRegion, UiState};
 use super::theme::{self, AnimationState};
 use super::widgets::{TabBar, TabItem};
@@ -157,7 +157,12 @@ pub fn render_at(
     }
 
     if ui_state.show_connection_form {
-        render_connection_form(f, &ui_state.connection_form, ui_state.form_error.as_deref());
+        let area = theme::centered_rect(70, 70, f.area());
+        let props = ConnectionFormProps {
+            keybindings,
+            error: ui_state.form_error.as_deref(),
+        };
+        ui_state.connection_form.render(f, area, props);
     } else if ui_state.show_help {
         render_help(f, keybindings);
     }

@@ -13,6 +13,7 @@ pub enum BindingContext {
     Welcome,
     Help,
     Debug,
+    TextInput,
 }
 
 /// Keybinding configuration - maps command names to key combinations
@@ -37,6 +38,8 @@ pub struct KeybindingsConfig {
     pub help: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub debug: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub text_input: HashMap<String, Vec<String>>,
 }
 
 impl KeybindingsConfig {
@@ -51,6 +54,7 @@ impl KeybindingsConfig {
             BindingContext::Welcome => &self.welcome,
             BindingContext::Help => &self.help,
             BindingContext::Debug => &self.debug,
+            BindingContext::TextInput => &self.text_input,
         }
     }
 
@@ -69,6 +73,7 @@ impl KeybindingsConfig {
             welcome: merge_hashmaps(defaults.welcome, user.welcome),
             help: merge_hashmaps(defaults.help, user.help),
             debug: merge_hashmaps(defaults.debug, user.debug),
+            text_input: merge_hashmaps(defaults.text_input, user.text_input),
         }
     }
 
@@ -373,11 +378,19 @@ pub fn default_keybindings() -> KeybindingsConfig {
     connection_form.insert("connection.form.close".to_string(), vec!["esc".to_string()]);
     connection_form.insert(
         "connection.form.next_field".to_string(),
-        vec!["tab".to_string()],
+        vec!["tab".to_string(), "down".to_string()],
     );
     connection_form.insert(
         "connection.form.prev_field".to_string(),
-        vec!["shift+tab".to_string()],
+        vec!["shift+tab".to_string(), "up".to_string()],
+    );
+    connection_form.insert(
+        "connection.form.backend_type.next".to_string(),
+        vec!["right".to_string()],
+    );
+    connection_form.insert(
+        "connection.form.backend_type.prev".to_string(),
+        vec!["left".to_string()],
     );
     config.connection_form = connection_form;
 
@@ -452,6 +465,43 @@ pub fn default_keybindings() -> KeybindingsConfig {
     debug.insert("debug.state.toggle".to_string(), vec!["s".to_string()]);
     debug.insert("debug.mouse.toggle".to_string(), vec!["i".to_string()]);
     config.debug = debug;
+
+    // Text input context bindings
+    // Note: alt+ keys are for macOS compatibility (Option key)
+    let mut text_input = HashMap::new();
+    text_input.insert(
+        "input.delete_char_back".to_string(),
+        vec!["backspace".to_string()],
+    );
+    text_input.insert(
+        "input.delete_char_forward".to_string(),
+        vec!["delete".to_string()],
+    );
+    text_input.insert(
+        "input.delete_word_back".to_string(),
+        vec!["ctrl+backspace".to_string(), "alt+backspace".to_string()],
+    );
+    text_input.insert(
+        "input.delete_word_forward".to_string(),
+        vec!["ctrl+delete".to_string(), "alt+delete".to_string()],
+    );
+    text_input.insert(
+        "input.move_word_left".to_string(),
+        vec!["ctrl+left".to_string(), "alt+left".to_string()],
+    );
+    text_input.insert(
+        "input.move_word_right".to_string(),
+        vec!["ctrl+right".to_string(), "alt+right".to_string()],
+    );
+    text_input.insert(
+        "input.move_start".to_string(),
+        vec!["home".to_string(), "ctrl+a".to_string()],
+    );
+    text_input.insert(
+        "input.move_end".to_string(),
+        vec!["end".to_string(), "ctrl+e".to_string()],
+    );
+    config.text_input = text_input;
 
     config
 }

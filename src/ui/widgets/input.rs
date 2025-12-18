@@ -124,6 +124,112 @@ impl InputState {
         self.value = value.into();
         self.cursor = self.value.chars().count();
     }
+
+    /// Get the current input value
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Get the visual cursor position (character index)
+    /// For simple rendering without scrolling, this is just the cursor position
+    pub fn visual_cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Get byte index of current cursor position
+    fn byte_index_of_cursor(&self) -> usize {
+        self.value
+            .char_indices()
+            .nth(self.cursor)
+            .map(|(i, _)| i)
+            .unwrap_or(self.value.len())
+    }
+
+    /// Find the start of the word before cursor (or start of text)
+    fn find_word_boundary_left(&self) -> usize {
+        if self.cursor == 0 {
+            return 0;
+        }
+
+        let chars: Vec<char> = self.value.chars().collect();
+        let mut pos = self.cursor;
+
+        // Skip whitespace backwards
+        while pos > 0 && chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+
+        // Skip word characters backwards
+        while pos > 0 && !chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+
+        pos
+    }
+
+    /// Find the end of the word after cursor (or end of text)
+    fn find_word_boundary_right(&self) -> usize {
+        let char_count = self.value.chars().count();
+        if self.cursor >= char_count {
+            return char_count;
+        }
+
+        let chars: Vec<char> = self.value.chars().collect();
+        let mut pos = self.cursor;
+
+        // Skip word characters forward
+        while pos < char_count && !chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        // Skip whitespace forward
+        while pos < char_count && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        pos
+    }
+
+    /// Move cursor to previous word boundary
+    pub fn move_word_left(&mut self) {
+        self.cursor = self.find_word_boundary_left();
+    }
+
+    /// Move cursor to next word boundary
+    pub fn move_word_right(&mut self) {
+        self.cursor = self.find_word_boundary_right();
+    }
+
+    /// Delete from cursor to previous word boundary
+    pub fn delete_word_back(&mut self) {
+        let start_char = self.find_word_boundary_left();
+        if start_char < self.cursor {
+            let start_byte = self
+                .value
+                .char_indices()
+                .nth(start_char)
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            let end_byte = self.byte_index_of_cursor();
+            self.value.replace_range(start_byte..end_byte, "");
+            self.cursor = start_char;
+        }
+    }
+
+    /// Delete from cursor to next word boundary
+    pub fn delete_word_forward(&mut self) {
+        let end_char = self.find_word_boundary_right();
+        if end_char > self.cursor {
+            let start_byte = self.byte_index_of_cursor();
+            let end_byte = self
+                .value
+                .char_indices()
+                .nth(end_char)
+                .map(|(i, _)| i)
+                .unwrap_or(self.value.len());
+            self.value.replace_range(start_byte..end_byte, "");
+        }
+    }
 }
 
 /// Style configuration for Input

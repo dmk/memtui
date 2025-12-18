@@ -1,11 +1,15 @@
-use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent};
+use super::Component;
+use crate::action::Action;
+use crate::events::{ComponentId, Event, EventKind, EventType};
+use crate::keybindings::{BindingContext, KeybindingsConfig};
+use crate::ui::widgets::InputState;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     text::{Line, Span},
     widgets::{Clear, Paragraph},
     Frame,
 };
-use tui_input::{backend::crossterm::EventHandler, Input};
 
 use crate::types::{Auth, BackendType, ConnectionConfig};
 use crate::ui::theme::{self, raw};
@@ -57,39 +61,84 @@ impl FormField {
     }
 }
 
+pub struct ConnectionFormProps<'a> {
+    pub keybindings: &'a KeybindingsConfig,
+    pub error: Option<&'a str>,
+}
+
 pub struct ConnectionForm {
-    pub name: Input,
-    pub host: Input,
-    pub port: Input,
-    pub password: Input,
-    pub database: Input,
+    pub name: InputState,
+    pub host: InputState,
+    pub port: InputState,
+    pub password: InputState,
+    pub database: InputState,
     pub active_field: FormField,
     pub backend_type: BackendType,
+    last_area: Option<Rect>,
 }
 
 impl ConnectionForm {
     pub fn new() -> Self {
         Self {
-            name: Input::default(),
-            host: Input::default().with_value("localhost".into()),
-            port: Input::default().with_value("6379".into()),
-            password: Input::default(),
-            database: Input::default().with_value("0".into()),
+            name: InputState::default(),
+            host: InputState::with_value("localhost"),
+            port: InputState::with_value("6379"),
+            password: InputState::default(),
+            database: InputState::with_value("0"),
             active_field: FormField::BackendType,
             backend_type: BackendType::Redis,
+            last_area: None,
+        }
+    }
+
+    /// Check if the active field is a text input field
+    fn is_text_field_focused(&self) -> bool {
+        !matches!(self.active_field, FormField::BackendType)
+    }
+
+    /// Handle commands from keybindings
+    /// Returns Some(actions) if command was handled, None if command should be ignored
+    fn handle_command(&mut self, command: &str) -> Option<Vec<Action>> {
+        match command {
+            "connection.form.submit" => Some(vec![Action::Enter]),
+            "connection.form.close" => Some(vec![Action::CloseConnectionForm]),
+            "connection.form.next_field" => {
+                self.next_field();
+                Some(vec![Action::Tick])
+            }
+            "connection.form.prev_field" => {
+                self.prev_field();
+                Some(vec![Action::Tick])
+            }
+            "connection.form.backend_type.next" => {
+                if self.active_field == FormField::BackendType {
+                    self.next_backend_type();
+                    Some(vec![Action::Tick])
+                } else {
+                    // Not on BackendType field, don't handle this command
+                    None
+                }
+            }
+            "connection.form.backend_type.prev" => {
+                if self.active_field == FormField::BackendType {
+                    self.prev_backend_type();
+                    Some(vec![Action::Tick])
+                } else {
+                    // Not on BackendType field, don't handle this command
+                    None
+                }
+            }
+            _ => None,
         }
     }
 
     pub fn select_backend_type(&mut self, backend: BackendType) {
         self.backend_type = backend;
-        self.port = Input::default().with_value(
-            match backend {
-                BackendType::Redis => "6379",
-                BackendType::Memcached => "11211",
-                BackendType::Etcd => "2379",
-            }
-            .into(),
-        );
+        self.port = InputState::with_value(match backend {
+            BackendType::Redis => "6379",
+            BackendType::Memcached => "11211",
+            BackendType::Etcd => "2379",
+        });
     }
 
     pub fn next_backend_type(&mut self) {
@@ -110,29 +159,84 @@ impl ConnectionForm {
         self.select_backend_type(prev);
     }
 
-    pub fn handle_key_event(&mut self, event: KeyEvent) {
+    /// Get mutable reference to the active input field
+    fn active_input_mut(&mut self) -> &mut InputState {
         match self.active_field {
-            FormField::BackendType => match event.code {
-                KeyCode::Left => self.prev_backend_type(),
-                KeyCode::Right => self.next_backend_type(),
+            FormField::Name => &mut self.name,
+            FormField::Host => &mut self.host,
+            FormField::Port => &mut self.port,
+            FormField::Password => &mut self.password,
+            FormField::Database => &mut self.database,
+            FormField::BackendType => unreachable!(), // Should not be called for BackendType
+        }
+    }
+
+    /// Handle text input through keybindings (only when text field is focused)
+    fn handle_text_input(&mut self, key: KeyEvent, keybindings: &KeybindingsConfig) -> bool {
+        // Check text input keybindings first
+        if let Some(command) = keybindings.get_command(key, BindingContext::TextInput) {
+            match command.as_str() {
+                "input.delete_char_back" => {
+                    self.active_input_mut().delete_back();
+                    return true;
+                }
+                "input.delete_char_forward" => {
+                    self.active_input_mut().delete_forward();
+                    return true;
+                }
+                "input.delete_word_back" => {
+                    self.active_input_mut().delete_word_back();
+                    return true;
+                }
+                "input.delete_word_forward" => {
+                    self.active_input_mut().delete_word_forward();
+                    return true;
+                }
+                "input.move_word_left" => {
+                    self.active_input_mut().move_word_left();
+                    return true;
+                }
+                "input.move_word_right" => {
+                    self.active_input_mut().move_word_right();
+                    return true;
+                }
+                "input.move_start" => {
+                    self.active_input_mut().move_start();
+                    return true;
+                }
+                "input.move_end" => {
+                    self.active_input_mut().move_end();
+                    return true;
+                }
                 _ => {}
-            },
-            FormField::Name => {
-                let _ = self.name.handle_event(&CrosstermEvent::Key(event));
-            }
-            FormField::Host => {
-                let _ = self.host.handle_event(&CrosstermEvent::Key(event));
-            }
-            FormField::Port => {
-                let _ = self.port.handle_event(&CrosstermEvent::Key(event));
-            }
-            FormField::Password => {
-                let _ = self.password.handle_event(&CrosstermEvent::Key(event));
-            }
-            FormField::Database => {
-                let _ = self.database.handle_event(&CrosstermEvent::Key(event));
             }
         }
+
+        // Handle arrow keys for character movement (if not bound to word movement)
+        match key.code {
+            KeyCode::Left if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.active_input_mut().move_left();
+                return true;
+            }
+            KeyCode::Right if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.active_input_mut().move_right();
+                return true;
+            }
+            _ => {}
+        }
+
+        // Printable characters without modifiers -> insert
+        if let KeyCode::Char(c) = key.code {
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                self.active_input_mut().insert(c);
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn next_field(&mut self) {
@@ -201,12 +305,12 @@ impl ConnectionForm {
     }
 
     pub fn clear(&mut self) {
-        self.name = Input::default();
-        self.host = Input::default().with_value("localhost".into());
+        self.name = InputState::default();
+        self.host = InputState::with_value("localhost");
         self.backend_type = BackendType::Redis;
-        self.port = Input::default().with_value("6379".into());
-        self.password = Input::default();
-        self.database = Input::default().with_value("0".into());
+        self.port = InputState::with_value("6379");
+        self.password = InputState::default();
+        self.database = InputState::with_value("0");
         self.active_field = FormField::BackendType;
     }
 }
@@ -217,9 +321,65 @@ impl Default for ConnectionForm {
     }
 }
 
+impl Component for ConnectionForm {
+    type Props<'a> = ConnectionFormProps<'a>;
+
+    fn subscriptions(&self) -> Vec<EventType> {
+        vec![EventType::Key]
+    }
+
+    fn handle_event(&mut self, event: &Event, props: Self::Props<'_>) -> Vec<Action> {
+        // Handle events only when focused
+        if event.context.focused_component != Some(ComponentId::ConnectionForm) {
+            return vec![];
+        }
+
+        if let EventKind::Key(key) = &event.kind {
+            // Try to find a matching command
+            if let Some(command) = props
+                .keybindings
+                .get_command(*key, BindingContext::ConnectionForm)
+            {
+                // Try to handle the command
+                if let Some(actions) = self.handle_command(&command) {
+                    return actions;
+                }
+                // Command not applicable (e.g., backend_type.next when not on BackendType)
+                // Continue to check if this key should go to text input
+            }
+
+            // Text input fields get keybindings-driven input when focused
+            if self.is_text_field_focused() && self.handle_text_input(*key, props.keybindings) {
+                return vec![Action::Tick];
+            }
+        }
+
+        vec![]
+    }
+
+    fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {
+        self.last_area = Some(area);
+        render_connection_form_internal(f, self, props.error, area);
+    }
+
+    fn area(&self) -> Option<Rect> {
+        self.last_area
+    }
+}
+
+/// Public render function (for backward compatibility)
 pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Option<&str>) {
     let area = theme::centered_rect(70, 70, f.area());
+    render_connection_form_internal(f, form, error, area);
+}
 
+/// Internal render function (used by Component::render)
+fn render_connection_form_internal(
+    f: &mut Frame,
+    form: &ConnectionForm,
+    error: Option<&str>,
+    area: Rect,
+) {
     let show_database = matches!(form.backend_type, BackendType::Redis);
 
     let mut constraints = vec![
@@ -288,34 +448,24 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
     let backend_type_field = Paragraph::new(Line::from(backend_spans))
         .block(raw::input_block("Backend Type (←/→)", is_backend_active));
 
-    // Use tui-input for name
-    let name_scroll = form
-        .name
-        .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
+    // Name field
     let name_field = Paragraph::new(form.name.value())
-        .scroll((0, name_scroll as u16))
         .style(raw::input_text())
         .block(raw::input_block(
             "Name (required)",
             form.active_field == FormField::Name,
         ));
 
-    let host_scroll = form
-        .host
-        .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
+    // Host field
     let host_field = Paragraph::new(form.host.value())
-        .scroll((0, host_scroll as u16))
         .style(raw::input_text())
         .block(raw::input_block(
             "Host",
             form.active_field == FormField::Host,
         ));
 
-    let port_scroll = form
-        .port
-        .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
+    // Port field
     let port_field = Paragraph::new(form.port.value())
-        .scroll((0, port_scroll as u16))
         .style(raw::input_text())
         .block(raw::input_block(
             "Port",
@@ -335,11 +485,8 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
             form.active_field == FormField::Password,
         ));
 
-    let database_scroll = form
-        .database
-        .visual_scroll((chunks[chunk_idx].width.max(2) - 2) as usize);
+    // Database field
     let database_field = Paragraph::new(form.database.value())
-        .scroll((0, database_scroll as u16))
         .style(raw::input_text())
         .block(raw::input_block(
             "Database",
@@ -412,36 +559,28 @@ pub fn render_connection_form(f: &mut Frame, form: &ConnectionForm, error: Optio
     // Render cursor for active input fields
     match form.active_field {
         FormField::Name => {
-            let cursor_x =
-                chunks[2].x + 1 + (form.name.visual_cursor().saturating_sub(name_scroll) as u16);
+            let cursor_x = chunks[2].x + 1 + (form.name.visual_cursor() as u16);
             let cursor_y = chunks[2].y + 1;
             f.set_cursor_position((cursor_x, cursor_y));
         }
         FormField::Host => {
-            let cursor_x =
-                chunks[3].x + 1 + (form.host.visual_cursor().saturating_sub(host_scroll) as u16);
+            let cursor_x = chunks[3].x + 1 + (form.host.visual_cursor() as u16);
             let cursor_y = chunks[3].y + 1;
             f.set_cursor_position((cursor_x, cursor_y));
         }
         FormField::Port => {
-            let cursor_x =
-                chunks[4].x + 1 + (form.port.visual_cursor().saturating_sub(port_scroll) as u16);
+            let cursor_x = chunks[4].x + 1 + (form.port.visual_cursor() as u16);
             let cursor_y = chunks[4].y + 1;
             f.set_cursor_position((cursor_x, cursor_y));
         }
         FormField::Password => {
-            // For password, cursor is at the end of masked text
-            let cursor_x = chunks[5].x + 1 + (form.password.value().len() as u16);
+            // For password, cursor position matches the actual cursor (even though we show masked text)
+            let cursor_x = chunks[5].x + 1 + (form.password.visual_cursor() as u16);
             let cursor_y = chunks[5].y + 1;
             f.set_cursor_position((cursor_x, cursor_y));
         }
         FormField::Database if show_database => {
-            let cursor_x = chunks[6].x
-                + 1
-                + (form
-                    .database
-                    .visual_cursor()
-                    .saturating_sub(database_scroll) as u16);
+            let cursor_x = chunks[6].x + 1 + (form.database.visual_cursor() as u16);
             let cursor_y = chunks[6].y + 1;
             f.set_cursor_position((cursor_x, cursor_y));
         }

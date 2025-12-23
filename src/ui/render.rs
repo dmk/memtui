@@ -144,7 +144,7 @@ pub fn render_at(
     }
 
     if app_state.connection_manager.get_active_id().is_some() {
-        render_body(f, app_state, ui_state, body_area, now);
+        render_body(f, app_state, ui_state, body_area, now, keybindings);
     } else {
         ui_state.last_key_area = None;
         ui_state.last_value_area = None;
@@ -154,7 +154,7 @@ pub fn render_at(
     render_status_bar(f, app_state, ui_state, keybindings, status_area);
 
     if ui_state.show_connection_palette {
-        render_connection_palette(f, app_state, ui_state);
+        render_connection_palette(f, app_state, ui_state, keybindings);
     }
 
     if ui_state.show_connection_form {
@@ -229,6 +229,7 @@ fn render_body(
     ui_state: &mut UiState,
     area: Rect,
     now: SystemTime,
+    keybindings: &KeybindingsConfig,
 ) {
     // Use the resizable pane split ratio
     let left_percent = ui_state.pane_split.left_percent();
@@ -249,8 +250,8 @@ fn render_body(
     // Render vertical separator
     render_separator(f, body_chunks[1]);
 
-    render_keys(f, ui_state, app_state, body_chunks[0], now);
-    render_value(f, ui_state, app_state, body_chunks[2], now);
+    render_keys(f, ui_state, app_state, body_chunks[0], now, keybindings);
+    render_value(f, ui_state, app_state, body_chunks[2], now, keybindings);
 }
 
 fn render_separator(f: &mut Frame, area: Rect) {
@@ -276,6 +277,7 @@ fn render_keys(
     app_state: &mut AppState,
     area: Rect,
     now: SystemTime,
+    keybindings: &KeybindingsConfig,
 ) {
     app_state.viewport_height = area.height.saturating_sub(2) as usize;
 
@@ -304,6 +306,7 @@ fn render_keys(
         animation: &ui_state.animation,
         search_match_positions: &app_state.search_match_positions,
         now,
+        keybindings,
     };
 
     ui_state.key_list.render(f, area, props);
@@ -315,6 +318,7 @@ fn render_value(
     app_state: &AppState,
     area: Rect,
     now: SystemTime,
+    keybindings: &KeybindingsConfig,
 ) {
     let selected_key = app_state
         .selected_key_index
@@ -339,6 +343,7 @@ fn render_value(
         capabilities,
         animation: &ui_state.animation,
         now,
+        keybindings,
     };
 
     ui_state.value_viewer.render(f, area, props);
@@ -366,7 +371,12 @@ fn render_welcome(
     ui_state.welcome_screen.render(f, area, props);
 }
 
-fn render_connection_palette(f: &mut Frame, app_state: &AppState, ui_state: &mut UiState) {
+fn render_connection_palette(
+    f: &mut Frame,
+    app_state: &AppState,
+    ui_state: &mut UiState,
+    keybindings: &KeybindingsConfig,
+) {
     use theme::raw;
 
     let area = centered_rect(60, 70, f.area());
@@ -387,6 +397,7 @@ fn render_connection_palette(f: &mut Frame, app_state: &AppState, ui_state: &mut
         statuses: app_state.connection_manager.get_statuses(),
         is_active: true,
         animation: &ui_state.animation,
+        keybindings,
     };
 
     ui_state.connection_list.render(f, chunks[0], props);

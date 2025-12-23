@@ -3,9 +3,9 @@ use crate::action::Action;
 use crate::backend::BackendCapabilities;
 use crate::events::{ComponentId, Event, EventKind, EventType};
 use crate::formatter::{Formatter, JsonFormatter, TextFormatter};
+use crate::keybindings::{BindingContext, KeybindingsConfig};
 use crate::types::{KeyMetadata, Value, ValueType};
 use crate::ui::theme::{self, AnimationState};
-use crossterm::event::KeyCode;
 use ratatui::{
     layout::{Alignment, Constraint, Rect},
     style::{Color, Modifier, Style},
@@ -90,6 +90,7 @@ pub struct ValueViewerProps<'a> {
     pub capabilities: Option<&'a BackendCapabilities>,
     pub animation: &'a AnimationState,
     pub now: SystemTime,
+    pub keybindings: &'a KeybindingsConfig,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1472,30 +1473,34 @@ impl Component for ValueViewer {
         vec![EventType::Key, EventType::Scroll]
     }
 
-    fn handle_event(&mut self, event: &Event, _props: Self::Props<'_>) -> Vec<Action> {
+    fn handle_event(&mut self, event: &Event, props: Self::Props<'_>) -> Vec<Action> {
         match &event.kind {
             EventKind::Key(key) => {
                 // Handle key events only when focused
                 if event.context.focused_component != Some(ComponentId::ValueViewer) {
                     return vec![];
                 }
-                match key.code {
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        self.scroll_down();
-                        return vec![Action::Tick];
+                if let Some(command) = props.keybindings.get_command(*key, BindingContext::Default)
+                {
+                    match command.as_str() {
+                        "navigation.next_item" => {
+                            self.scroll_down();
+                            return vec![Action::Tick];
+                        }
+                        "navigation.prev_item" => {
+                            self.scroll_up();
+                            return vec![Action::Tick];
+                        }
+                        _ => {}
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        self.scroll_up();
-                        return vec![Action::Tick];
-                    }
-                    _ => {}
                 }
             }
             EventKind::Scroll { column, row, delta } => {
-                // Handle scroll events only when mouse is over component
-                if event
-                    .context
-                    .point_in_component(ComponentId::ValueViewer, *column, *row)
+                // Only scroll if focused AND mouse is over component
+                if event.context.is_focused(ComponentId::ValueViewer)
+                    && event
+                        .context
+                        .point_in_component(ComponentId::ValueViewer, *column, *row)
                 {
                     self.scroll_by(*delta);
                     return vec![Action::Tick];

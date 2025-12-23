@@ -2,9 +2,9 @@ use super::Component;
 use crate::action::Action;
 use crate::app::ConnectionStatus;
 use crate::events::{ComponentId, Event, EventKind, EventType};
+use crate::keybindings::{BindingContext, KeybindingsConfig};
 use crate::types::ConnectionConfig;
 use crate::ui::theme::{self, raw, AnimationState};
-use crossterm::event::KeyCode;
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
@@ -19,6 +19,7 @@ pub struct ConnectionListProps<'a> {
     pub statuses: &'a std::collections::HashMap<String, ConnectionStatus>,
     pub is_active: bool,
     pub animation: &'a AnimationState,
+    pub keybindings: &'a KeybindingsConfig,
 }
 
 pub struct ConnectionList {
@@ -118,23 +119,28 @@ impl Component for ConnectionList {
         }
 
         if let EventKind::Key(key) = &event.kind {
-            match key.code {
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.next(props.configs.len());
-                    return vec![Action::Tick];
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.prev(props.configs.len());
-                    return vec![Action::Tick];
-                }
-                KeyCode::Enter => {
-                    if let Some(idx) = self.state.selected() {
-                        if let Some(config) = props.configs.get(idx) {
-                            return vec![Action::FocusConnection(config.id.clone())];
+            if let Some(command) = props
+                .keybindings
+                .get_command(*key, BindingContext::ConnectionPalette)
+            {
+                match command.as_str() {
+                    "connection.palette.next" => {
+                        self.next(props.configs.len());
+                        return vec![Action::Tick];
+                    }
+                    "connection.palette.prev" => {
+                        self.prev(props.configs.len());
+                        return vec![Action::Tick];
+                    }
+                    "connection.palette.select" => {
+                        if let Some(idx) = self.state.selected() {
+                            if let Some(config) = props.configs.get(idx) {
+                                return vec![Action::FocusConnection(config.id.clone())];
+                            }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 

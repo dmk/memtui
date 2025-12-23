@@ -403,6 +403,7 @@ impl App {
                 statuses: self.app_state.connection_manager.get_statuses(),
                 is_active: true,
                 animation: &self.ui_state.animation,
+                keybindings: &self.keybindings,
             };
 
             let actions = self.ui_state.connection_list.handle_event(event, props);
@@ -480,6 +481,7 @@ impl App {
                     animation: &self.ui_state.animation,
                     search_match_positions: &self.app_state.search_match_positions,
                     now: std::time::SystemTime::now(),
+                    keybindings: &self.keybindings,
                 };
                 let actions = self.ui_state.key_list.handle_event(event, props);
                 if !actions.is_empty() {
@@ -506,6 +508,7 @@ impl App {
                     capabilities,
                     animation: &self.ui_state.animation,
                     now: std::time::SystemTime::now(),
+                    keybindings: &self.keybindings,
                 };
                 let actions = self.ui_state.value_viewer.handle_event(event, props);
                 if !actions.is_empty() {
@@ -599,6 +602,7 @@ impl App {
             animation: &self.ui_state.animation,
             search_match_positions: &self.app_state.search_match_positions,
             now: std::time::SystemTime::now(),
+            keybindings: &self.keybindings,
         };
 
         let actions = self.ui_state.key_list.handle_event(&event, key_list_props);
@@ -649,6 +653,7 @@ impl App {
             capabilities,
             animation: &self.ui_state.animation,
             now: std::time::SystemTime::now(),
+            keybindings: &self.keybindings,
         };
 
         let actions = self

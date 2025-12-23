@@ -146,6 +146,11 @@ pub fn get_focused_component(ui_state: &UiState, app_state: &AppState) -> Option
         return Some(ComponentId::WelcomeScreen);
     }
 
+    // Search mode takes focus
+    if app_state.is_searching {
+        return Some(ComponentId::SearchInput);
+    }
+
     // Otherwise, based on active panel
     match ui_state.active_panel {
         Panel::Keys => Some(ComponentId::KeyList),

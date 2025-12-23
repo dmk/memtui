@@ -25,6 +25,7 @@ use super::Component;
 use crate::action::Action;
 use crate::backend::BackendCapabilities;
 use crate::events::{ComponentId, Event, EventKind, EventType};
+use crate::keybindings::{BindingContext, KeybindingsConfig};
 use crate::types::KeyMetadata;
 use crate::ui::theme::{self, AnimationState};
 
@@ -50,6 +51,8 @@ pub struct KeyListProps<'a> {
     /// Match positions for highlighting
     pub search_match_positions: &'a HashMap<usize, Vec<u32>>,
     pub now: SystemTime,
+    /// Keybindings configuration for command lookup
+    pub keybindings: &'a KeybindingsConfig,
 }
 
 /// KeyList component state
@@ -808,9 +811,11 @@ impl Component for KeyList {
                 }
             }
             EventKind::Scroll { column, row, delta } => {
-                if event
-                    .context
-                    .point_in_component(ComponentId::KeyList, *column, *row)
+                // Only scroll if focused AND mouse is over component
+                if event.context.is_focused(ComponentId::KeyList)
+                    && event
+                        .context
+                        .point_in_component(ComponentId::KeyList, *column, *row)
                 {
                     self.handle_scroll_event(*delta, &props)
                 } else {
@@ -900,53 +905,56 @@ impl KeyList {
             .map(|t| t as usize)
             .unwrap_or_else(|| props.keys.len());
 
-        match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
-                if total_count == 0 {
-                    return vec![];
-                }
-                let i = match self.state.selected() {
-                    Some(i) => {
-                        if i >= total_count - 1 {
-                            0
-                        } else {
-                            i + 1
-                        }
+        if let Some(command) = props.keybindings.get_command(*key, BindingContext::Default) {
+            match command.as_str() {
+                "navigation.next_item" => {
+                    if total_count == 0 {
+                        return vec![];
                     }
-                    None => 0,
-                };
-                self.state.select(Some(i));
-
-                let mut actions = vec![Action::SelectKey(i)];
-                if self.needs_loading_around(i, props.keys, total_count) {
-                    actions.push(Action::LoadMoreKeys(i));
-                }
-                actions
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if total_count == 0 {
-                    return vec![];
-                }
-                let i = match self.state.selected() {
-                    Some(i) => {
-                        if i == 0 {
-                            total_count - 1
-                        } else {
-                            i - 1
+                    let i = match self.state.selected() {
+                        Some(i) => {
+                            if i >= total_count - 1 {
+                                0
+                            } else {
+                                i + 1
+                            }
                         }
-                    }
-                    None => 0,
-                };
-                self.state.select(Some(i));
+                        None => 0,
+                    };
+                    self.state.select(Some(i));
 
-                let mut actions = vec![Action::SelectKey(i)];
-                if self.needs_loading_around(i, props.keys, total_count) {
-                    actions.push(Action::LoadMoreKeys(i));
+                    let mut actions = vec![Action::SelectKey(i)];
+                    if self.needs_loading_around(i, props.keys, total_count) {
+                        actions.push(Action::LoadMoreKeys(i));
+                    }
+                    return actions;
                 }
-                actions
+                "navigation.prev_item" => {
+                    if total_count == 0 {
+                        return vec![];
+                    }
+                    let i = match self.state.selected() {
+                        Some(i) => {
+                            if i == 0 {
+                                total_count - 1
+                            } else {
+                                i - 1
+                            }
+                        }
+                        None => 0,
+                    };
+                    self.state.select(Some(i));
+
+                    let mut actions = vec![Action::SelectKey(i)];
+                    if self.needs_loading_around(i, props.keys, total_count) {
+                        actions.push(Action::LoadMoreKeys(i));
+                    }
+                    return actions;
+                }
+                _ => {}
             }
-            _ => vec![],
         }
+        vec![]
     }
 
     fn handle_search_key_event(
@@ -959,39 +967,38 @@ impl KeyList {
             return vec![];
         }
 
-        match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
-                let current_search_idx = props.search_selection_index.unwrap_or(0);
-                let new_search_idx = if current_search_idx >= result_count - 1 {
-                    0
-                } else {
-                    current_search_idx + 1
-                };
+        if let Some(command) = props.keybindings.get_command(*key, BindingContext::Default) {
+            match command.as_str() {
+                "navigation.next_item" => {
+                    let current_search_idx = props.search_selection_index.unwrap_or(0);
+                    let new_search_idx = if current_search_idx >= result_count - 1 {
+                        0
+                    } else {
+                        current_search_idx + 1
+                    };
 
-                if let Some(&key_idx) = props.search_results_local.get(new_search_idx) {
-                    self.state.select(Some(key_idx));
-                    vec![Action::SearchNextResult]
-                } else {
-                    vec![]
+                    if let Some(&key_idx) = props.search_results_local.get(new_search_idx) {
+                        self.state.select(Some(key_idx));
+                        return vec![Action::SearchNextResult];
+                    }
                 }
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                let current_search_idx = props.search_selection_index.unwrap_or(0);
-                let new_search_idx = if current_search_idx == 0 {
-                    result_count - 1
-                } else {
-                    current_search_idx - 1
-                };
+                "navigation.prev_item" => {
+                    let current_search_idx = props.search_selection_index.unwrap_or(0);
+                    let new_search_idx = if current_search_idx == 0 {
+                        result_count - 1
+                    } else {
+                        current_search_idx - 1
+                    };
 
-                if let Some(&key_idx) = props.search_results_local.get(new_search_idx) {
-                    self.state.select(Some(key_idx));
-                    vec![Action::SearchPrevResult]
-                } else {
-                    vec![]
+                    if let Some(&key_idx) = props.search_results_local.get(new_search_idx) {
+                        self.state.select(Some(key_idx));
+                        return vec![Action::SearchPrevResult];
+                    }
                 }
+                _ => {}
             }
-            _ => vec![],
         }
+        vec![]
     }
 
     fn handle_scroll_event(&mut self, delta: isize, props: &KeyListProps<'_>) -> Vec<Action> {

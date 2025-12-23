@@ -2,25 +2,26 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Clear, Paragraph},
+    widgets::{Block, Paragraph},
     Frame,
 };
 use std::time::SystemTime;
 
-use super::components::modal::{confirm_block_raw, render_modal};
+use super::components::modal::render_modal;
 
 use super::components::{
     connection_form::ConnectionFormProps,
     connection_list::ConnectionListProps,
-    help::render_help,
+    help::HelpScreenProps,
     key_list::KeyListProps,
+    quit_confirmation::QuitConfirmationProps,
     value_viewer::ValueViewerProps,
     warning_message::{MessageKind, WarningMessage, WarningMessageProps},
     welcome::WelcomeScreenProps,
     Component,
 };
 use super::state::{Panel, TabRegion, UiState};
-use super::theme::{self, AnimationState};
+use super::theme;
 use super::widgets::{TabBar, TabItem};
 use crate::app::{AppState, ConnectionStatus};
 use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConfig};
@@ -164,12 +165,14 @@ pub fn render_at(
         };
         ui_state.connection_form.render(f, area, props);
     } else if ui_state.show_help {
-        render_help(f, keybindings);
+        let props = HelpScreenProps { keybindings };
+        ui_state.help_screen.render(f, f.area(), props);
     }
 
     // Quit confirmation should be rendered on top of everything
     if ui_state.show_quit_confirmation {
-        render_quit_confirmation(f, &ui_state.animation);
+        let props = QuitConfirmationProps { keybindings };
+        ui_state.quit_confirmation.render(f, f.area(), props);
     }
 
     // Restore theme to normal state after render
@@ -547,61 +550,6 @@ fn render_status_bar(
 
     let status_line = Paragraph::new(Line::from(spans)).style(theme::util_bg());
     f.render_widget(status_line, area);
-}
-
-fn render_quit_confirmation(f: &mut Frame, _animation: &AnimationState) {
-    use theme::raw;
-
-    let area = centered_rect(45, 25, f.area());
-    let area = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width.clamp(35, 55),
-        height: area.height.clamp(6, 8),
-    };
-    let area = Rect {
-        x: (f.area().width.saturating_sub(area.width)) / 2,
-        y: (f.area().height.saturating_sub(area.height)) / 2,
-        width: area.width,
-        height: area.height,
-    };
-
-    // Use raw (undimmed) colors for modal content
-    let text = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "Are you sure you want to quit?",
-            Style::default()
-                .fg(raw::TEXT_BRIGHT())
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                " y ",
-                Style::default()
-                    .fg(raw::BG_DEEP())
-                    .bg(raw::NEON_GREEN())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" yes  ", Style::default().fg(raw::TEXT_SECONDARY())),
-            Span::styled(
-                " n ",
-                Style::default()
-                    .fg(raw::BG_DEEP())
-                    .bg(raw::NEON_RED())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" no ", Style::default().fg(raw::TEXT_SECONDARY())),
-        ]),
-    ];
-
-    let dialog = Paragraph::new(text)
-        .block(confirm_block_raw("Quit"))
-        .alignment(Alignment::Center);
-
-    f.render_widget(Clear, area);
-    f.render_widget(dialog, area);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

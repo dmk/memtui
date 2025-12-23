@@ -1,5 +1,7 @@
 use super::components::connection_list::ConnectionList;
+use super::components::help::HelpScreen;
 use super::components::key_list::KeyList;
+use super::components::quit_confirmation::QuitConfirmation;
 use super::components::value_viewer::ValueViewer;
 use super::components::welcome::WelcomeScreen;
 use super::theme::{AnimationState, PaneSplit};
@@ -28,7 +30,9 @@ pub struct UiState {
     pub form_error: Option<String>,
 
     pub connection_list: ConnectionList,
+    pub help_screen: HelpScreen,
     pub key_list: KeyList,
+    pub quit_confirmation: QuitConfirmation,
     pub value_viewer: ValueViewer,
     pub welcome_screen: WelcomeScreen,
     pub last_key_area: Option<Rect>,
@@ -64,7 +68,9 @@ impl UiState {
             form_error: None,
 
             connection_list: ConnectionList::new(),
+            help_screen: HelpScreen::new(),
             key_list: KeyList::new(),
+            quit_confirmation: QuitConfirmation::new(),
             value_viewer: ValueViewer::new(),
             welcome_screen: WelcomeScreen::new(),
             last_key_area: None,

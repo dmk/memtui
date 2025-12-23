@@ -30,7 +30,9 @@ use memtui::terminal;
 use memtui::types::{ConnectionConfig, ValueType};
 use memtui::ui::components::connection_list::ConnectionListProps;
 use memtui::ui::components::debug as debug_ui;
+use memtui::ui::components::help::HelpScreenProps;
 use memtui::ui::components::key_list::KeyListProps;
+use memtui::ui::components::quit_confirmation::QuitConfirmationProps;
 use memtui::ui::components::search_input::{SearchInput, SearchInputProps};
 use memtui::ui::components::value_viewer::ValueViewerProps;
 use memtui::ui::components::welcome::WelcomeScreenProps;
@@ -371,12 +373,26 @@ impl App {
 
         // 2. Help screen
         if self.ui_state.show_help {
-            return self.dispatch_keybinding(*key, BindingContext::Help);
+            let props = HelpScreenProps {
+                keybindings: &self.keybindings,
+            };
+            let actions = self.ui_state.help_screen.handle_event(event, props);
+            if !actions.is_empty() {
+                return actions;
+            }
+            return vec![];
         }
 
         // 3. Quit confirmation
         if self.ui_state.show_quit_confirmation {
-            return self.dispatch_quit_confirmation_key(event);
+            let props = QuitConfirmationProps {
+                keybindings: &self.keybindings,
+            };
+            let actions = self.ui_state.quit_confirmation.handle_event(event, props);
+            if !actions.is_empty() {
+                return actions;
+            }
+            return vec![];
         }
 
         // 4. Connection palette
@@ -425,7 +441,16 @@ impl App {
 
         // 6. Search mode - special handling (only when actively typing in search input)
         if self.app_state.is_searching {
-            return self.dispatch_search_key(event);
+            let props = SearchInputProps {
+                keybindings: &self.keybindings,
+                is_searching: self.app_state.is_searching,
+            };
+            let mut search_input = SearchInput::new();
+            let actions = search_input.handle_event(event, props);
+            if !actions.is_empty() {
+                return actions;
+            }
+            // Fall through to default keybindings if search didn't handle it
         }
 
         // 7. Main panels - key_list or value_viewer based on active panel
@@ -491,26 +516,6 @@ impl App {
 
         // Fall back to default keybinding lookup
         self.dispatch_keybinding(*key, BindingContext::Default)
-    }
-
-    /// Dispatch key event for quit confirmation
-    fn dispatch_quit_confirmation_key(&mut self, event: &Event) -> Vec<Action> {
-        let EventKind::Key(key) = &event.kind else {
-            return vec![];
-        };
-        self.dispatch_keybinding(*key, BindingContext::QuitConfirmation)
-    }
-
-    /// Dispatch key event for search mode
-    fn dispatch_search_key(&mut self, event: &Event) -> Vec<Action> {
-        let props = SearchInputProps {
-            keybindings: &self.keybindings,
-            is_searching: self.app_state.is_searching,
-        };
-
-        // Use SearchInput component to handle the event
-        let mut search_input = SearchInput::new();
-        search_input.handle_event(event, props)
     }
 
     /// Dispatch mouse event

@@ -3,7 +3,6 @@
 //! This component subscribes to Key, Scroll, and Global events.
 //! It manages its own UI state (selection, scroll position).
 
-use crossterm::event::KeyCode;
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
@@ -799,9 +798,15 @@ impl Component for KeyList {
     fn handle_event(&mut self, event: &Event, props: Self::Props<'_>) -> Vec<Action> {
         match &event.kind {
             EventKind::Key(key) => {
-                // Handle global events regardless of focus
-                if key.code == KeyCode::Esc && !props.active_search_query.unwrap_or("").is_empty() {
-                    return vec![Action::ClearSearch];
+                // Handle search.clear globally (regardless of focus) via keybindings
+                if !props.active_search_query.unwrap_or("").is_empty() {
+                    if let Some(command) =
+                        props.keybindings.get_command(*key, BindingContext::Search)
+                    {
+                        if command == "search.clear" {
+                            return vec![Action::ClearSearch];
+                        }
+                    }
                 }
 
                 if event.context.focused_component == Some(ComponentId::KeyList) {
@@ -817,7 +822,14 @@ impl Component for KeyList {
                         .context
                         .point_in_component(ComponentId::KeyList, *column, *row)
                 {
-                    self.handle_scroll_event(*delta, &props)
+                    // When search is active, scroll through search results
+                    let has_active_search =
+                        props.is_searching || !props.active_search_query.unwrap_or("").is_empty();
+                    if has_active_search {
+                        self.handle_search_scroll_event(*delta, &props)
+                    } else {
+                        self.handle_scroll_event(*delta, &props)
+                    }
                 } else {
                     vec![]
                 }
@@ -967,9 +979,9 @@ impl KeyList {
             return vec![];
         }
 
-        if let Some(command) = props.keybindings.get_command(*key, BindingContext::Default) {
+        if let Some(command) = props.keybindings.get_command(*key, BindingContext::Search) {
             match command.as_str() {
-                "navigation.next_item" => {
+                "search.next_result" => {
                     let current_search_idx = props.search_selection_index.unwrap_or(0);
                     let new_search_idx = if current_search_idx >= result_count - 1 {
                         0
@@ -982,7 +994,7 @@ impl KeyList {
                         return vec![Action::SearchNextResult];
                     }
                 }
-                "navigation.prev_item" => {
+                "search.prev_result" => {
                     let current_search_idx = props.search_selection_index.unwrap_or(0);
                     let new_search_idx = if current_search_idx == 0 {
                         result_count - 1
@@ -1040,5 +1052,48 @@ impl KeyList {
         } else {
             vec![]
         }
+    }
+
+    fn handle_search_scroll_event(
+        &mut self,
+        delta: isize,
+        props: &KeyListProps<'_>,
+    ) -> Vec<Action> {
+        let result_count = props.search_results_local.len();
+        if result_count == 0 {
+            return vec![];
+        }
+
+        let current_search_idx = props.search_selection_index.unwrap_or(0);
+        let new_search_idx = if delta > 0 {
+            // Scroll down through results
+            let next = current_search_idx.saturating_add(delta.unsigned_abs());
+            if next >= result_count {
+                0
+            } else {
+                next
+            }
+        } else {
+            // Scroll up through results
+            let amount = delta.unsigned_abs();
+            if amount > current_search_idx {
+                result_count.saturating_sub(1)
+            } else {
+                current_search_idx - amount
+            }
+        };
+
+        if new_search_idx != current_search_idx {
+            if let Some(&key_idx) = props.search_results_local.get(new_search_idx) {
+                self.state.select(Some(key_idx));
+                let action = if delta > 0 {
+                    Action::SearchNextResult
+                } else {
+                    Action::SearchPrevResult
+                };
+                return vec![action];
+            }
+        }
+        vec![]
     }
 }

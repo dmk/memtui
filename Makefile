@@ -1,7 +1,7 @@
 # memtui Makefile
 # Convenience targets for build, test, lint, and development
 
-.PHONY: all build check test fmt clippy run clean help verify dev release lint
+.PHONY: all build check test fmt clippy run clean help verify dev release lint debug
 
 # Default target
 all: build
@@ -44,6 +44,12 @@ run:
 run-release:
 	cargo run --release
 
+# Run with debug action logging enabled
+# Override filters: MEMTUI_DEBUG_ACTIONS="Search*" make debug
+# Override excludes: MEMTUI_DEBUG_EXCLUDE="Tick" make debug
+debug:
+	cargo run -- --debug
+
 # Development mode - watch and rebuild
 dev:
 	cargo watch -x check -x test -x run
@@ -67,7 +73,12 @@ help:
 	@echo "  make fmt-check   - Check code formatting"
 	@echo "  make clippy      - Run linter"
 	@echo "  make run         - Run the TUI"
+	@echo "  make debug       - Run with action logging (logs to memtui-debug.log)"
 	@echo "  make verify      - Run all checks (CI)"
 	@echo "  make clean       - Remove build artifacts"
 	@echo "  make help        - Show this help"
+	@echo ""
+	@echo "Debug options (env vars):"
+	@echo "  MEMTUI_DEBUG_ACTIONS   - Include patterns (e.g., 'Search*,Did*')"
+	@echo "  MEMTUI_DEBUG_EXCLUDE   - Exclude patterns (default: 'Tick,Render')"
 

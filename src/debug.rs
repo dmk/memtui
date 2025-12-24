@@ -456,3 +456,214 @@ fn point_in_rect(area: Rect, column: u16, row: u16) -> bool {
     let within_y = row >= area.y && row < area.y.saturating_add(area.height);
     within_x && within_y
 }
+
+// ============================================================================
+// Action Logger
+// ============================================================================
+
+/// Configuration for action logging with glob pattern filtering.
+///
+/// Patterns support:
+/// - `*` matches any sequence of characters
+/// - `?` matches any single character
+/// - Literal text matches exactly
+///
+/// Examples:
+/// - `Search*` matches SearchAddChar, SearchDeleteChar, etc.
+/// - `Did*` matches DidConnect, DidScanKeys, etc.
+/// - `Tick` matches only Tick
+#[derive(Debug, Clone)]
+pub struct ActionLoggerConfig {
+    /// If non-empty, only log actions matching these patterns
+    pub include_patterns: Vec<String>,
+    /// Exclude actions matching these patterns (applied after include)
+    pub exclude_patterns: Vec<String>,
+}
+
+impl Default for ActionLoggerConfig {
+    fn default() -> Self {
+        Self {
+            include_patterns: Vec::new(),
+            // By default, exclude noisy high-frequency actions
+            exclude_patterns: vec!["Tick".to_string(), "Render".to_string()],
+        }
+    }
+}
+
+impl ActionLoggerConfig {
+    /// Create a new config from CLI/env arguments
+    ///
+    /// - `include`: comma-separated glob patterns (or None for all)
+    /// - `exclude`: comma-separated glob patterns (or None for default excludes)
+    pub fn new(include: Option<&str>, exclude: Option<&str>) -> Self {
+        let include_patterns = include
+            .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+            .unwrap_or_default();
+
+        let exclude_patterns = exclude
+            .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+            .unwrap_or_else(|| vec!["Tick".to_string(), "Render".to_string()]);
+
+        Self {
+            include_patterns,
+            exclude_patterns,
+        }
+    }
+
+    /// Check if an action name should be logged based on include/exclude patterns
+    pub fn should_log(&self, action_name: &str) -> bool {
+        // If include patterns specified, action must match at least one
+        if !self.include_patterns.is_empty() {
+            let matches_include = self
+                .include_patterns
+                .iter()
+                .any(|p| glob_match(p, action_name));
+            if !matches_include {
+                return false;
+            }
+        }
+
+        // Check exclude patterns
+        let matches_exclude = self
+            .exclude_patterns
+            .iter()
+            .any(|p| glob_match(p, action_name));
+
+        !matches_exclude
+    }
+}
+
+/// Action logger that logs actions via tracing with configurable filtering.
+///
+/// Uses tracing's debug level, so actions are only logged when:
+/// 1. `--debug` flag is passed
+/// 2. A log file is configured (via `--log-file`)
+/// 3. Log level includes debug (via `--log-level debug` or `RUST_LOG`)
+pub struct ActionLogger {
+    config: ActionLoggerConfig,
+}
+
+impl ActionLogger {
+    pub fn new(config: ActionLoggerConfig) -> Self {
+        Self { config }
+    }
+
+    /// Log an action if it passes the filter configuration.
+    /// Uses tracing::debug! so it respects the tracing subscriber configuration.
+    #[inline]
+    pub fn log(&self, action: &Action) {
+        let name = action.name();
+        if self.config.should_log(name) {
+            tracing::debug!(?action, "action");
+        }
+    }
+}
+
+/// Simple glob pattern matching supporting `*` and `?`.
+///
+/// - `*` matches zero or more characters
+/// - `?` matches exactly one character
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let text: Vec<char> = text.chars().collect();
+    glob_match_impl(&pattern, &text)
+}
+
+fn glob_match_impl(pattern: &[char], text: &[char]) -> bool {
+    let mut pi = 0;
+    let mut ti = 0;
+    let mut star_pi = None;
+    let mut star_ti = 0;
+
+    while ti < text.len() {
+        if pi < pattern.len() && (pattern[pi] == '?' || pattern[pi] == text[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pattern.len() && pattern[pi] == '*' {
+            star_pi = Some(pi);
+            star_ti = ti;
+            pi += 1;
+        } else if let Some(spi) = star_pi {
+            pi = spi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+
+    while pi < pattern.len() && pattern[pi] == '*' {
+        pi += 1;
+    }
+
+    pi == pattern.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_glob_match_exact() {
+        assert!(glob_match("Tick", "Tick"));
+        assert!(!glob_match("Tick", "Tock"));
+        assert!(!glob_match("Tick", "TickTock"));
+    }
+
+    #[test]
+    fn test_glob_match_star() {
+        assert!(glob_match("Search*", "SearchAddChar"));
+        assert!(glob_match("Search*", "SearchDeleteChar"));
+        assert!(glob_match("Search*", "Search"));
+        assert!(!glob_match("Search*", "StartSearch"));
+
+        assert!(glob_match("*Search", "StartSearch"));
+        assert!(glob_match("*Search*", "StartSearchNow"));
+
+        assert!(glob_match("Did*", "DidConnect"));
+        assert!(glob_match("Did*", "DidScanKeys"));
+    }
+
+    #[test]
+    fn test_glob_match_question() {
+        assert!(glob_match("Tick?", "Ticks"));
+        assert!(!glob_match("Tick?", "Tick"));
+        assert!(!glob_match("Tick?", "Tickss"));
+    }
+
+    #[test]
+    fn test_glob_match_combined() {
+        assert!(glob_match("*Add*", "SearchAddChar"));
+        assert!(glob_match("Connection*Add*", "ConnectionFormAddChar"));
+    }
+
+    #[test]
+    fn test_action_logger_config_include() {
+        let config = ActionLoggerConfig::new(Some("Search*,Connect"), None);
+        assert!(config.should_log("SearchAddChar"));
+        assert!(config.should_log("Connect"));
+        assert!(!config.should_log("Tick"));
+        assert!(!config.should_log("LoadKeys"));
+    }
+
+    #[test]
+    fn test_action_logger_config_exclude() {
+        let config = ActionLoggerConfig::new(None, Some("Tick,Render,LoadValue*"));
+        assert!(!config.should_log("Tick"));
+        assert!(!config.should_log("Render"));
+        assert!(!config.should_log("LoadValueDebounced"));
+        assert!(config.should_log("SearchAddChar"));
+        assert!(config.should_log("Connect"));
+    }
+
+    #[test]
+    fn test_action_logger_config_include_and_exclude() {
+        // Include Did* but exclude DidFail*
+        let config = ActionLoggerConfig::new(Some("Did*"), Some("DidFail*"));
+        assert!(config.should_log("DidConnect"));
+        assert!(config.should_log("DidScanKeys"));
+        assert!(!config.should_log("DidFailConnect"));
+        assert!(!config.should_log("DidFailScanKeys"));
+        assert!(!config.should_log("SearchAddChar")); // Not in include
+    }
+}

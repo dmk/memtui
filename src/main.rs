@@ -23,7 +23,7 @@ use memtui::app::{sync_event_context, AppState, EventRunner};
 use memtui::cli::{parse_connection_string, Cli, LogLevel};
 use memtui::clipboard;
 use memtui::config::Config;
-use memtui::debug::{self, DebugFreeze, DebugOverlay};
+use memtui::debug::{self, ActionLogger, ActionLoggerConfig, DebugFreeze, DebugOverlay};
 use memtui::events::{Event, EventKind};
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
 use memtui::terminal;
@@ -55,6 +55,8 @@ pub struct App {
     /// Debug mode enabled via --debug flag
     debug_mode_enabled: bool,
     debug_freeze: DebugFreeze,
+    /// Action logger for debug tracing
+    action_logger: Option<ActionLogger>,
     pub event_runner: EventRunner,
 }
 
@@ -130,6 +132,15 @@ impl App {
 
         let event_runner = EventRunner::new(tx.clone(), &config);
 
+        // Create action logger if debug mode is enabled
+        let action_logger = if cli.debug {
+            let config =
+                ActionLoggerConfig::new(cli.debug_actions.as_deref(), cli.debug_exclude.as_deref());
+            Some(ActionLogger::new(config))
+        } else {
+            None
+        };
+
         Self {
             app_state,
             ui_state,
@@ -142,6 +153,7 @@ impl App {
             auto_connect_name,
             debug_mode_enabled: cli.debug,
             debug_freeze: DebugFreeze::default(),
+            action_logger,
             event_runner,
         }
     }
@@ -743,6 +755,11 @@ impl App {
     async fn update(&mut self, action: Action) {
         use async_handlers::*;
         use sync_handlers::*;
+
+        // Log action if debug logging is enabled
+        if let Some(ref logger) = self.action_logger {
+            logger.log(&action);
+        }
 
         let should_render = match action {
             // Core lifecycle
@@ -1401,8 +1418,26 @@ async fn main() -> Result<(), io::Error> {
     // Parse CLI arguments
     let cli = Cli::parse();
 
-    // Initialize tracing (only if log file specified)
-    init_tracing(cli.log_file.as_ref(), cli.log_level);
+    // When --debug is enabled, use sensible defaults for logging
+    let (log_file, log_level) = if cli.debug {
+        // Default to memtui-debug.log if no log file specified
+        let file = cli
+            .log_file
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("memtui-debug.log"));
+        // Default to debug level if not explicitly set (info is the default)
+        let level = if matches!(cli.log_level, LogLevel::Info) {
+            LogLevel::Debug
+        } else {
+            cli.log_level
+        };
+        (Some(file), level)
+    } else {
+        (cli.log_file.clone(), cli.log_level)
+    };
+
+    // Initialize tracing
+    init_tracing(log_file.as_ref(), log_level);
 
     // Load and initialize the theme before any rendering
     let theme = userdata::load_theme();

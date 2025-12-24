@@ -1,6 +1,7 @@
 use crate::backend::{Backend, BackendCapabilities};
 use crate::types::{ConnectionConfig, KeyMetadata, KeyScanResult, Value};
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -105,4 +106,189 @@ pub enum Action {
     DebugToggleMouseCapture,
 
     Error(String),
+}
+
+impl Action {
+    /// Returns the variant name of the action (for filtering/logging)
+    pub fn name(&self) -> &'static str {
+        match self {
+            Action::Tick => "Tick",
+            Action::Render => "Render",
+            Action::Resize(_, _) => "Resize",
+            Action::Quit => "Quit",
+            Action::ShowQuitConfirmation => "ShowQuitConfirmation",
+            Action::ConfirmQuit => "ConfirmQuit",
+            Action::CancelQuit => "CancelQuit",
+            Action::NextPanel => "NextPanel",
+            Action::PrevPanel => "PrevPanel",
+            Action::NextItem => "NextItem",
+            Action::PrevItem => "PrevItem",
+            Action::CycleValueViewMode => "CycleValueViewMode",
+            Action::Enter => "Enter",
+            Action::Escape => "Escape",
+            Action::ToggleHelp => "ToggleHelp",
+            Action::OpenConnectionPalette => "OpenConnectionPalette",
+            Action::CloseConnectionPalette => "CloseConnectionPalette",
+            Action::NextConnectionTab => "NextConnectionTab",
+            Action::PrevConnectionTab => "PrevConnectionTab",
+            Action::OpenConnectionForm => "OpenConnectionForm",
+            Action::CloseConnectionForm => "CloseConnectionForm",
+            Action::SubmitConnectionForm(_) => "SubmitConnectionForm",
+            Action::ConnectionFormNextField => "ConnectionFormNextField",
+            Action::ConnectionFormPrevField => "ConnectionFormPrevField",
+            Action::ConnectionFormAddChar(_) => "ConnectionFormAddChar",
+            Action::ConnectionFormDeleteChar => "ConnectionFormDeleteChar",
+            Action::Connect(_) => "Connect",
+            Action::Disconnect(_) => "Disconnect",
+            Action::DeleteConnection(_) => "DeleteConnection",
+            Action::FocusConnection(_) => "FocusConnection",
+            Action::LoadKeys => "LoadKeys",
+            Action::LoadMoreKeys(_) => "LoadMoreKeys",
+            Action::SelectKey(_) => "SelectKey",
+            Action::LoadValueDebounced { .. } => "LoadValueDebounced",
+            Action::LoadValue { .. } => "LoadValue",
+            Action::StartSearch => "StartSearch",
+            Action::UpdateSearchQuery(_) => "UpdateSearchQuery",
+            Action::ClearSearch => "ClearSearch",
+            Action::ConfirmSearch => "ConfirmSearch",
+            Action::SearchAddChar(_) => "SearchAddChar",
+            Action::SearchDeleteChar => "SearchDeleteChar",
+            Action::SearchNextResult => "SearchNextResult",
+            Action::SearchPrevResult => "SearchPrevResult",
+            Action::DidConnect(_, _, _) => "DidConnect",
+            Action::DidDisconnect(_) => "DidDisconnect",
+            Action::DidFailConnect(_, _) => "DidFailConnect",
+            Action::DidScanKeys { .. } => "DidScanKeys",
+            Action::DidFailScanKeys(_) => "DidFailScanKeys",
+            Action::DidLoadValue { .. } => "DidLoadValue",
+            Action::DidFailLoadValue(_) => "DidFailLoadValue",
+            Action::DidSearchLocal { .. } => "DidSearchLocal",
+            Action::DidSearchServer { .. } => "DidSearchServer",
+            Action::ToggleDebug => "ToggleDebug",
+            Action::DebugCopyFrame => "DebugCopyFrame",
+            Action::DebugToggleStateView => "DebugToggleStateView",
+            Action::DebugToggleMouseCapture => "DebugToggleMouseCapture",
+            Action::Error(_) => "Error",
+        }
+    }
+}
+
+impl fmt::Debug for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // Simple variants
+            Action::Tick => write!(f, "Tick"),
+            Action::Render => write!(f, "Render"),
+            Action::Resize(w, h) => f.debug_tuple("Resize").field(w).field(h).finish(),
+            Action::Quit => write!(f, "Quit"),
+            Action::ShowQuitConfirmation => write!(f, "ShowQuitConfirmation"),
+            Action::ConfirmQuit => write!(f, "ConfirmQuit"),
+            Action::CancelQuit => write!(f, "CancelQuit"),
+            Action::NextPanel => write!(f, "NextPanel"),
+            Action::PrevPanel => write!(f, "PrevPanel"),
+            Action::NextItem => write!(f, "NextItem"),
+            Action::PrevItem => write!(f, "PrevItem"),
+            Action::CycleValueViewMode => write!(f, "CycleValueViewMode"),
+            Action::Enter => write!(f, "Enter"),
+            Action::Escape => write!(f, "Escape"),
+            Action::ToggleHelp => write!(f, "ToggleHelp"),
+            Action::OpenConnectionPalette => write!(f, "OpenConnectionPalette"),
+            Action::CloseConnectionPalette => write!(f, "CloseConnectionPalette"),
+            Action::NextConnectionTab => write!(f, "NextConnectionTab"),
+            Action::PrevConnectionTab => write!(f, "PrevConnectionTab"),
+            Action::OpenConnectionForm => write!(f, "OpenConnectionForm"),
+            Action::CloseConnectionForm => write!(f, "CloseConnectionForm"),
+            Action::SubmitConnectionForm(cfg) => f
+                .debug_tuple("SubmitConnectionForm")
+                .field(&cfg.name)
+                .finish(),
+            Action::ConnectionFormNextField => write!(f, "ConnectionFormNextField"),
+            Action::ConnectionFormPrevField => write!(f, "ConnectionFormPrevField"),
+            Action::ConnectionFormAddChar(c) => {
+                f.debug_tuple("ConnectionFormAddChar").field(c).finish()
+            }
+            Action::ConnectionFormDeleteChar => write!(f, "ConnectionFormDeleteChar"),
+            Action::Connect(id) => f.debug_tuple("Connect").field(id).finish(),
+            Action::Disconnect(id) => f.debug_tuple("Disconnect").field(id).finish(),
+            Action::DeleteConnection(id) => f.debug_tuple("DeleteConnection").field(id).finish(),
+            Action::FocusConnection(id) => f.debug_tuple("FocusConnection").field(id).finish(),
+            Action::LoadKeys => write!(f, "LoadKeys"),
+            Action::LoadMoreKeys(idx) => f.debug_tuple("LoadMoreKeys").field(idx).finish(),
+            Action::SelectKey(idx) => f.debug_tuple("SelectKey").field(idx).finish(),
+            Action::LoadValueDebounced { index, token } => f
+                .debug_struct("LoadValueDebounced")
+                .field("index", index)
+                .field("token", token)
+                .finish(),
+            Action::LoadValue { index, token } => f
+                .debug_struct("LoadValue")
+                .field("index", index)
+                .field("token", token)
+                .finish(),
+            Action::StartSearch => write!(f, "StartSearch"),
+            Action::UpdateSearchQuery(q) => f.debug_tuple("UpdateSearchQuery").field(q).finish(),
+            Action::ClearSearch => write!(f, "ClearSearch"),
+            Action::ConfirmSearch => write!(f, "ConfirmSearch"),
+            Action::SearchAddChar(c) => f.debug_tuple("SearchAddChar").field(c).finish(),
+            Action::SearchDeleteChar => write!(f, "SearchDeleteChar"),
+            Action::SearchNextResult => write!(f, "SearchNextResult"),
+            Action::SearchPrevResult => write!(f, "SearchPrevResult"),
+            // Async results - summarize large data
+            Action::DidConnect(id, _, caps) => f
+                .debug_struct("DidConnect")
+                .field("id", id)
+                .field("caps", caps)
+                .finish(),
+            Action::DidDisconnect(id) => f.debug_tuple("DidDisconnect").field(id).finish(),
+            Action::DidFailConnect(id, err) => f
+                .debug_tuple("DidFailConnect")
+                .field(id)
+                .field(err)
+                .finish(),
+            Action::DidScanKeys {
+                keys,
+                cursor,
+                has_more,
+                total_count,
+                reset,
+                center,
+            } => f
+                .debug_struct("DidScanKeys")
+                .field("keys_count", &keys.len())
+                .field("cursor", cursor)
+                .field("has_more", has_more)
+                .field("total_count", total_count)
+                .field("reset", reset)
+                .field("center", center)
+                .finish(),
+            Action::DidFailScanKeys(err) => f.debug_tuple("DidFailScanKeys").field(err).finish(),
+            Action::DidLoadValue { value, token } => f
+                .debug_struct("DidLoadValue")
+                .field("type", &value.value_type)
+                .field("bytes", &value.data.len())
+                .field("token", token)
+                .finish(),
+            Action::DidFailLoadValue(err) => f.debug_tuple("DidFailLoadValue").field(err).finish(),
+            Action::DidSearchLocal {
+                indices,
+                match_positions,
+                token,
+            } => f
+                .debug_struct("DidSearchLocal")
+                .field("results", &indices.len())
+                .field("highlighted", &match_positions.len())
+                .field("token", token)
+                .finish(),
+            Action::DidSearchServer { result, token } => f
+                .debug_struct("DidSearchServer")
+                .field("keys", &result.keys.len())
+                .field("token", token)
+                .finish(),
+            Action::ToggleDebug => write!(f, "ToggleDebug"),
+            Action::DebugCopyFrame => write!(f, "DebugCopyFrame"),
+            Action::DebugToggleStateView => write!(f, "DebugToggleStateView"),
+            Action::DebugToggleMouseCapture => write!(f, "DebugToggleMouseCapture"),
+            Action::Error(err) => f.debug_tuple("Error").field(err).finish(),
+        }
+    }
 }

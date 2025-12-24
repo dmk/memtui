@@ -32,8 +32,20 @@ pub struct Cli {
     pub connection_string: Option<String>,
 
     /// Enable debug mode (F12 to freeze UI and inspect)
-    #[arg(long)]
+    #[arg(long, env = "MEMTUI_DEBUG")]
     pub debug: bool,
+
+    /// Action patterns to include in debug logging (comma-separated globs)
+    /// Examples: "Search*,Did*" or "Connect,Disconnect"
+    /// If not specified, all actions are included (except those in --debug-exclude)
+    #[arg(long, value_name = "PATTERNS", env = "MEMTUI_DEBUG_ACTIONS")]
+    pub debug_actions: Option<String>,
+
+    /// Action patterns to exclude from debug logging (comma-separated globs)
+    /// Examples: "Tick,Render" or "LoadValue*"
+    /// Default: "Tick,Render" (high-frequency noise)
+    #[arg(long, value_name = "PATTERNS", env = "MEMTUI_DEBUG_EXCLUDE")]
+    pub debug_exclude: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]

@@ -588,7 +588,46 @@ impl App {
             .event_bus_mut()
             .create_event(EventKind::Scroll { column, row, delta });
 
-        // 1. Try Key List
+        // 1. Connection Palette (modal - takes priority)
+        if self.ui_state.show_connection_palette {
+            let configs = self.app_state.connection_manager.get_configs();
+            let statuses = self.app_state.connection_manager.get_statuses();
+            let active_id = self.app_state.connection_manager.get_active_id();
+            let props = ConnectionListProps {
+                configs,
+                active_id,
+                statuses,
+                is_active: true,
+                animation: &self.ui_state.animation,
+                keybindings: &self.keybindings,
+            };
+            let actions = self.ui_state.connection_list.handle_event(&event, props);
+            if !actions.is_empty() {
+                return actions;
+            }
+        }
+
+        // 2. Welcome Screen (when no active connection)
+        if self.app_state.connection_manager.get_active_id().is_none() {
+            let configs = self.app_state.connection_manager.get_configs();
+            let recent_configs: Vec<&ConnectionConfig> = self
+                .ui_state
+                .recent_connection_ids
+                .iter()
+                .filter_map(|id| configs.iter().find(|c| c.id == *id).copied())
+                .collect();
+            let props = WelcomeScreenProps {
+                recent_configs,
+                animation: &self.ui_state.animation,
+                keybindings: &self.keybindings,
+            };
+            let actions = self.ui_state.welcome_screen.handle_event(&event, props);
+            if !actions.is_empty() {
+                return actions;
+            }
+        }
+
+        // 3. Try Key List
         let active_id = self.app_state.connection_manager.get_active_id();
         let capabilities =
             active_id.and_then(|id| self.app_state.connection_manager.get_capabilities(id));

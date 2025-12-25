@@ -130,7 +130,7 @@ impl Component for WelcomeScreen {
     type Props<'a> = WelcomeScreenProps<'a>;
 
     fn subscriptions(&self) -> Vec<EventType> {
-        vec![EventType::Key]
+        vec![EventType::Key, EventType::Scroll]
     }
 
     fn handle_event(&mut self, event: &Event, props: Self::Props<'_>) -> Vec<Action> {
@@ -144,14 +144,24 @@ impl Component for WelcomeScreen {
             return vec![];
         }
 
-        if let EventKind::Key(key) = &event.kind {
-            // Use keybindings for navigation commands
-            if let Some(command) = props.keybindings.get_command(*key, BindingContext::Welcome) {
-                return self.handle_command(&command, &props);
+        match &event.kind {
+            EventKind::Scroll { delta, .. } => {
+                if *delta > 0 {
+                    vec![Action::WelcomeNextItem]
+                } else {
+                    vec![Action::WelcomePrevItem]
+                }
             }
+            EventKind::Key(key) => {
+                // Use keybindings for navigation commands
+                if let Some(command) = props.keybindings.get_command(*key, BindingContext::Welcome)
+                {
+                    return self.handle_command(&command, &props);
+                }
+                vec![]
+            }
+            _ => vec![],
         }
-
-        vec![]
     }
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {

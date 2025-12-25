@@ -46,3 +46,68 @@ fn open_palette_without_connections_clears_selection() {
         "palette should have no selection when there are no connections"
     );
 }
+
+#[rstest]
+fn delete_connection_removes_from_list() {
+    let (alpha, beta) = alpha_and_beta();
+
+    let mut app = AppHarness::new()
+        .with_connection_config(alpha.clone())
+        .with_connection_config(beta.clone());
+
+    // Open palette and select alpha
+    app.dispatch_action(Action::OpenConnectionPalette);
+    app.ui_state.connection_list.state.select(Some(0));
+
+    // Verify we have 2 connections
+    assert_eq!(app.app_state.connection_manager.get_configs().len(), 2);
+
+    // Delete alpha
+    assert!(app.dispatch_action(Action::DeleteConnection(alpha.id.clone())));
+
+    // Verify only beta remains
+    let configs = app.app_state.connection_manager.get_configs();
+    assert_eq!(configs.len(), 1);
+    assert_eq!(configs[0].id, beta.id);
+}
+
+#[rstest]
+fn delete_last_connection_closes_palette() {
+    let alpha = fixtures::connection("alpha");
+
+    let mut app = AppHarness::new().with_connection_config(alpha.clone());
+
+    app.dispatch_action(Action::OpenConnectionPalette);
+    assert!(app.ui_state.show_connection_palette);
+
+    // Delete the only connection
+    assert!(app.dispatch_action(Action::DeleteConnection(alpha.id.clone())));
+
+    // Palette should close when no connections remain
+    assert!(!app.ui_state.show_connection_palette);
+    assert_eq!(app.app_state.connection_manager.get_configs().len(), 0);
+}
+
+#[rstest]
+fn connection_list_scroll_navigates() {
+    let (alpha, beta) = alpha_and_beta();
+
+    let mut app = AppHarness::new()
+        .with_connection_config(alpha)
+        .with_connection_config(beta);
+
+    app.dispatch_action(Action::OpenConnectionPalette);
+    app.ui_state.connection_list.state.select(Some(0));
+
+    // Scroll down (ConnectionListNext)
+    assert!(app.dispatch_action(Action::ConnectionListNext));
+    assert_eq!(app.ui_state.connection_list.state.selected(), Some(1));
+
+    // Scroll up (ConnectionListPrev)
+    assert!(app.dispatch_action(Action::ConnectionListPrev));
+    assert_eq!(app.ui_state.connection_list.state.selected(), Some(0));
+
+    // Scroll up wraps to end
+    assert!(app.dispatch_action(Action::ConnectionListPrev));
+    assert_eq!(app.ui_state.connection_list.state.selected(), Some(1));
+}

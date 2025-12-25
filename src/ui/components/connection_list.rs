@@ -109,7 +109,7 @@ impl Component for ConnectionList {
     type Props<'a> = ConnectionListProps<'a>;
 
     fn subscriptions(&self) -> Vec<EventType> {
-        vec![EventType::Key]
+        vec![EventType::Key, EventType::Scroll]
     }
 
     fn handle_event(&mut self, event: &Event, props: Self::Props<'_>) -> Vec<Action> {
@@ -118,31 +118,51 @@ impl Component for ConnectionList {
             return vec![];
         }
 
-        if let EventKind::Key(key) = &event.kind {
-            if let Some(command) = props
-                .keybindings
-                .get_command(*key, BindingContext::ConnectionPalette)
-            {
-                match command.as_str() {
-                    "connection.palette.next" => {
-                        return vec![Action::ConnectionListNext];
-                    }
-                    "connection.palette.prev" => {
-                        return vec![Action::ConnectionListPrev];
-                    }
-                    "connection.palette.select" => {
-                        if let Some(idx) = self.state.selected() {
-                            if let Some(config) = props.configs.get(idx) {
-                                return vec![Action::FocusConnection(config.id.clone())];
-                            }
-                        }
-                    }
-                    _ => {}
+        match &event.kind {
+            EventKind::Scroll { delta, .. } => {
+                // Scroll through connections
+                if props.configs.is_empty() {
+                    return vec![];
+                }
+                if *delta > 0 {
+                    vec![Action::ConnectionListNext]
+                } else {
+                    vec![Action::ConnectionListPrev]
                 }
             }
+            EventKind::Key(key) => {
+                if let Some(command) = props
+                    .keybindings
+                    .get_command(*key, BindingContext::ConnectionPalette)
+                {
+                    match command.as_str() {
+                        "connection.palette.next" => {
+                            return vec![Action::ConnectionListNext];
+                        }
+                        "connection.palette.prev" => {
+                            return vec![Action::ConnectionListPrev];
+                        }
+                        "connection.palette.select" => {
+                            if let Some(idx) = self.state.selected() {
+                                if let Some(config) = props.configs.get(idx) {
+                                    return vec![Action::FocusConnection(config.id.clone())];
+                                }
+                            }
+                        }
+                        "connection.palette.delete" => {
+                            if let Some(idx) = self.state.selected() {
+                                if let Some(config) = props.configs.get(idx) {
+                                    return vec![Action::DeleteConnection(config.id.clone())];
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                vec![]
+            }
+            _ => vec![],
         }
-
-        vec![]
     }
 
     fn render(&mut self, f: &mut Frame, area: Rect, props: Self::Props<'_>) {

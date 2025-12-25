@@ -7,7 +7,7 @@ use memtui::config::Config;
 use memtui::keybindings::{default_keybindings, KeybindingsConfig};
 use memtui::types::KeyScanResult;
 use memtui::types::{ConnectionConfig, KeyMetadata};
-use memtui::ui::{Panel, UiState};
+use memtui::ui::UiState;
 
 use super::{fixtures, render};
 
@@ -89,10 +89,31 @@ impl AppHarness {
         )
     }
 
-    /// Dispatch a subset of actions through the same handlers the app uses.
+    /// Dispatch action and render, returning the buffer for assertions.
+    #[allow(dead_code)]
+    pub fn dispatch_and_render(
+        &mut self,
+        action: Action,
+        size: (u16, u16),
+    ) -> ratatui::buffer::Buffer {
+        self.dispatch_action(action);
+        self.render(size)
+    }
+
+    /// Dispatch multiple actions in sequence, returning whether any needed render.
+    #[allow(dead_code)]
+    pub fn dispatch_many(&mut self, actions: impl IntoIterator<Item = Action>) -> bool {
+        actions
+            .into_iter()
+            .fold(false, |acc, a| self.dispatch_action(a) || acc)
+    }
+
+    /// Dispatch actions through the same handlers the app uses.
+    /// Handles most sync actions; async result actions should use apply_* helpers.
     #[allow(dead_code)]
     pub fn dispatch_action(&mut self, action: Action) -> bool {
         match &action {
+            // Search input actions
             Action::StartSearch
             | Action::ClearSearch
             | Action::SearchAddChar(_)
@@ -109,6 +130,8 @@ impl AppHarness {
                     false
                 }
             }
+
+            // Navigation actions
             Action::NextItem | Action::PrevItem | Action::NextPanel | Action::PrevPanel => {
                 sync_handlers::handle_navigation(
                     &mut self.ui_state,
@@ -117,8 +140,9 @@ impl AppHarness {
                     &action,
                 )
             }
+
+            // Key selection (inline - matches main.rs behavior)
             Action::SelectKey(idx) => {
-                self.ui_state.active_panel = Panel::Keys;
                 self.ui_state.key_list.select(Some(*idx));
                 self.app_state.selected_key_index = Some(*idx);
                 self.app_state.selected_value = None;
@@ -126,9 +150,58 @@ impl AppHarness {
                 self.ui_state.value_viewer.reset_scroll();
                 true
             }
-            Action::OpenConnectionPalette | Action::CloseConnectionPalette => {
+
+            // UI state actions (Phase 3)
+            Action::FocusPanel(_)
+            | Action::SetPaneRatio(_)
+            | Action::SetSearchSelectionIndex(_)
+            | Action::ResetKeySelection
+            | Action::ExitSearchMode
+            | Action::StartResize
+            | Action::EndResize
+            | Action::SelectConnectionIndex(_)
+            | Action::SelectWelcomeIndex(_) => {
+                sync_handlers::handle_ui_state(&mut self.ui_state, &mut self.app_state, &action)
+            }
+
+            // UI toggle actions
+            Action::ShowQuitConfirmation
+            | Action::CancelQuit
+            | Action::ToggleHelp
+            | Action::OpenConnectionForm
+            | Action::CloseConnectionForm
+            | Action::OpenConnectionPalette
+            | Action::CloseConnectionPalette => {
                 sync_handlers::handle_ui_toggle(&mut self.ui_state, &self.app_state, &action)
             }
+
+            // Connection form actions
+            Action::ConnectionFormNextField
+            | Action::ConnectionFormPrevField
+            | Action::ConnectionFormAddChar(_)
+            | Action::ConnectionFormDeleteChar => sync_handlers::handle_connection_form(
+                &mut self.ui_state,
+                &mut self.app_state,
+                &self.action_tx,
+                &Config::default(),
+                &action,
+            ),
+
+            // Connection management (delete only - connect/disconnect need async)
+            Action::DeleteConnection(_) => sync_handlers::handle_connection_management(
+                &mut self.ui_state,
+                &mut self.app_state,
+                &action,
+            ),
+
+            // Search navigation - sends sub-actions via channel
+            Action::SearchNextResult | Action::SearchPrevResult | Action::ConfirmSearch => {
+                // These are handled inline in main.rs but send sub-actions
+                // For now, return false - use drain_actions to process emitted actions
+                false
+            }
+
+            // Not handled - async actions, results, debug, etc.
             _ => false,
         }
     }

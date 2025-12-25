@@ -99,15 +99,13 @@ impl WelcomeScreen {
     }
 
     /// Handle commands from keybindings
-    fn handle_command(&mut self, command: &str, props: &WelcomeScreenProps<'_>) -> Vec<Action> {
+    fn handle_command(&self, command: &str, props: &WelcomeScreenProps<'_>) -> Vec<Action> {
         match command {
             "navigation.next_item" => {
-                self.next(props.recent_configs.len());
-                vec![Action::Tick]
+                vec![Action::WelcomeNextItem]
             }
             "navigation.prev_item" => {
-                self.prev(props.recent_configs.len());
-                vec![Action::Tick]
+                vec![Action::WelcomePrevItem]
             }
             "navigation.enter" => {
                 if let Some(idx) = self.state.selected() {

@@ -893,6 +893,26 @@ impl App {
                     false
                 }
             }
+            Action::ValueViewerScrollUp
+            | Action::ValueViewerScrollDown
+            | Action::ValueViewerScrollBy(_) => handle_value_viewer(&mut self.ui_state, &action),
+
+            // Connection list (palette) - delegated to sync_handlers
+            Action::ConnectionListNext | Action::ConnectionListPrev => {
+                handle_connection_list(&mut self.ui_state, &self.app_state, &action)
+            }
+
+            // Welcome screen - delegated to sync_handlers
+            Action::WelcomeNextItem | Action::WelcomePrevItem => {
+                let configs = self.app_state.connection_manager.get_configs();
+                let recent_count = self
+                    .ui_state
+                    .recent_connection_ids
+                    .iter()
+                    .filter(|id| configs.iter().any(|c| &c.id == *id))
+                    .count();
+                handle_welcome(&mut self.ui_state, recent_count, &action)
+            }
 
             // Connection tabs (kept in App - accesses multiple fields)
             Action::NextConnectionTab => {
@@ -905,15 +925,27 @@ impl App {
             }
 
             // Connection form - delegated to sync_handlers
-            Action::ConnectionFormNextField | Action::ConnectionFormPrevField => {
-                handle_connection_form(
-                    &mut self.ui_state,
-                    &mut self.app_state,
-                    &self.action_tx,
-                    &self.config,
-                    &action,
-                )
-            }
+            Action::ConnectionFormNextField
+            | Action::ConnectionFormPrevField
+            | Action::ConnectionFormAddChar(_)
+            | Action::ConnectionFormDeleteChar
+            | Action::ConnectionFormDeleteForward
+            | Action::ConnectionFormDeleteWordBack
+            | Action::ConnectionFormDeleteWordForward
+            | Action::ConnectionFormMoveLeft
+            | Action::ConnectionFormMoveRight
+            | Action::ConnectionFormMoveWordLeft
+            | Action::ConnectionFormMoveWordRight
+            | Action::ConnectionFormMoveStart
+            | Action::ConnectionFormMoveEnd
+            | Action::ConnectionFormNextBackendType
+            | Action::ConnectionFormPrevBackendType => handle_connection_form(
+                &mut self.ui_state,
+                &mut self.app_state,
+                &self.action_tx,
+                &self.config,
+                &action,
+            ),
             Action::SubmitConnectionForm(_) => handle_connection_form(
                 &mut self.ui_state,
                 &mut self.app_state,
@@ -1268,7 +1300,13 @@ impl App {
         }
     }
     fn focus_connection(&mut self, id: String) {
-        if !self.app_state.connection_manager.set_active(&id) {
+        // Use sync handler to set active connection and record recents
+        if !sync_handlers::handle_set_active_connection(
+            &mut self.app_state,
+            &mut self.ui_state,
+            &self.config,
+            &id,
+        ) {
             return;
         }
 
@@ -1278,9 +1316,6 @@ impl App {
         let _ = self.action_tx.send(Action::ResetKeySelection);
 
         if self.app_state.connection_manager.is_connected(&id) {
-            if let Ok(ids) = userdata::record_recent_connection_id_with_config(&id, &self.config) {
-                self.ui_state.recent_connection_ids = ids;
-            }
             let _ = self.action_tx.send(Action::LoadKeys);
         } else {
             let _ = self.action_tx.send(Action::Connect(id));

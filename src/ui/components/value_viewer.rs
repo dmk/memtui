@@ -1484,12 +1484,10 @@ impl Component for ValueViewer {
                 {
                     match command.as_str() {
                         "navigation.next_item" => {
-                            self.scroll_down();
-                            return vec![Action::Tick];
+                            return vec![Action::ValueViewerScrollDown];
                         }
                         "navigation.prev_item" => {
-                            self.scroll_up();
-                            return vec![Action::Tick];
+                            return vec![Action::ValueViewerScrollUp];
                         }
                         _ => {}
                     }
@@ -1502,8 +1500,7 @@ impl Component for ValueViewer {
                         .context
                         .point_in_component(ComponentId::ValueViewer, *column, *row)
                 {
-                    self.scroll_by(*delta);
-                    return vec![Action::Tick];
+                    return vec![Action::ValueViewerScrollBy(*delta as i16)];
                 }
             }
             _ => {}

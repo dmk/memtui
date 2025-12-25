@@ -98,22 +98,15 @@ impl ConnectionForm {
 
     /// Handle commands from keybindings
     /// Returns Some(actions) if command was handled, None if command should be ignored
-    fn handle_command(&mut self, command: &str) -> Option<Vec<Action>> {
+    fn handle_command(&self, command: &str) -> Option<Vec<Action>> {
         match command {
             "connection.form.submit" => Some(vec![Action::Enter]),
             "connection.form.close" => Some(vec![Action::CloseConnectionForm]),
-            "connection.form.next_field" => {
-                self.next_field();
-                Some(vec![Action::Tick])
-            }
-            "connection.form.prev_field" => {
-                self.prev_field();
-                Some(vec![Action::Tick])
-            }
+            "connection.form.next_field" => Some(vec![Action::ConnectionFormNextField]),
+            "connection.form.prev_field" => Some(vec![Action::ConnectionFormPrevField]),
             "connection.form.backend_type.next" => {
                 if self.active_field == FormField::BackendType {
-                    self.next_backend_type();
-                    Some(vec![Action::Tick])
+                    Some(vec![Action::ConnectionFormNextBackendType])
                 } else {
                     // Not on BackendType field, don't handle this command
                     None
@@ -121,8 +114,7 @@ impl ConnectionForm {
             }
             "connection.form.backend_type.prev" => {
                 if self.active_field == FormField::BackendType {
-                    self.prev_backend_type();
-                    Some(vec![Action::Tick])
+                    Some(vec![Action::ConnectionFormPrevBackendType])
                 } else {
                     // Not on BackendType field, don't handle this command
                     None
@@ -172,42 +164,21 @@ impl ConnectionForm {
     }
 
     /// Handle text input through keybindings (only when text field is focused)
-    fn handle_text_input(&mut self, key: KeyEvent, keybindings: &KeybindingsConfig) -> bool {
+    /// Returns the action to perform, or None if no action is needed
+    fn handle_text_input(&self, key: KeyEvent, keybindings: &KeybindingsConfig) -> Option<Action> {
         // Check text input keybindings first
         if let Some(command) = keybindings.get_command(key, BindingContext::TextInput) {
             match command.as_str() {
-                "input.delete_char_back" => {
-                    self.active_input_mut().delete_back();
-                    return true;
-                }
-                "input.delete_char_forward" => {
-                    self.active_input_mut().delete_forward();
-                    return true;
-                }
-                "input.delete_word_back" => {
-                    self.active_input_mut().delete_word_back();
-                    return true;
-                }
+                "input.delete_char_back" => return Some(Action::ConnectionFormDeleteChar),
+                "input.delete_char_forward" => return Some(Action::ConnectionFormDeleteForward),
+                "input.delete_word_back" => return Some(Action::ConnectionFormDeleteWordBack),
                 "input.delete_word_forward" => {
-                    self.active_input_mut().delete_word_forward();
-                    return true;
+                    return Some(Action::ConnectionFormDeleteWordForward)
                 }
-                "input.move_word_left" => {
-                    self.active_input_mut().move_word_left();
-                    return true;
-                }
-                "input.move_word_right" => {
-                    self.active_input_mut().move_word_right();
-                    return true;
-                }
-                "input.move_start" => {
-                    self.active_input_mut().move_start();
-                    return true;
-                }
-                "input.move_end" => {
-                    self.active_input_mut().move_end();
-                    return true;
-                }
+                "input.move_word_left" => return Some(Action::ConnectionFormMoveWordLeft),
+                "input.move_word_right" => return Some(Action::ConnectionFormMoveWordRight),
+                "input.move_start" => return Some(Action::ConnectionFormMoveStart),
+                "input.move_end" => return Some(Action::ConnectionFormMoveEnd),
                 _ => {}
             }
         }
@@ -215,12 +186,10 @@ impl ConnectionForm {
         // Handle arrow keys for character movement (if not bound to word movement)
         match key.code {
             KeyCode::Left if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.active_input_mut().move_left();
-                return true;
+                return Some(Action::ConnectionFormMoveLeft);
             }
             KeyCode::Right if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.active_input_mut().move_right();
-                return true;
+                return Some(Action::ConnectionFormMoveRight);
             }
             _ => {}
         }
@@ -231,12 +200,11 @@ impl ConnectionForm {
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
             {
-                self.active_input_mut().insert(c);
-                return true;
+                return Some(Action::ConnectionFormAddChar(c));
             }
         }
 
-        false
+        None
     }
 
     pub fn next_field(&mut self) {
@@ -245,6 +213,83 @@ impl ConnectionForm {
 
     pub fn prev_field(&mut self) {
         self.active_field = self.active_field.prev(self.backend_type);
+    }
+
+    /// Insert a character into the active text field
+    pub fn insert_char(&mut self, c: char) {
+        if self.is_text_field_focused() {
+            self.active_input_mut().insert(c);
+        }
+    }
+
+    /// Delete character before cursor in the active text field
+    pub fn delete_char(&mut self) {
+        if self.is_text_field_focused() {
+            self.active_input_mut().delete_back();
+        }
+    }
+
+    /// Delete character after cursor in the active text field
+    pub fn delete_forward(&mut self) {
+        if self.is_text_field_focused() {
+            self.active_input_mut().delete_forward();
+        }
+    }
+
+    /// Delete word before cursor
+    pub fn delete_word_back(&mut self) {
+        if self.is_text_field_focused() {
+            self.active_input_mut().delete_word_back();
+        }
+    }
+
+    /// Delete word after cursor
+    pub fn delete_word_forward(&mut self) {
+        if self.is_text_field_focused() {
+            self.active_input_mut().delete_word_forward();
+        }
+    }
+
+    /// Move cursor left
+    pub fn move_left(&mut self) {
+        if self.is_text_field_focused() {
+            self.active_input_mut().move_left();
+        }
+    }
+
+    /// Move cursor right
+    pub fn move_right(&mut self) {
+        if self.is_text_field_focused() {
+            self.active_input_mut().move_right();
+        }
+    }
+
+    /// Move cursor one word left
+    pub fn move_word_left(&mut self) {
+        if self.is_text_field_focused() {
+            self.active_input_mut().move_word_left();
+        }
+    }
+
+    /// Move cursor one word right
+    pub fn move_word_right(&mut self) {
+        if self.is_text_field_focused() {
+            self.active_input_mut().move_word_right();
+        }
+    }
+
+    /// Move cursor to start of field
+    pub fn move_start(&mut self) {
+        if self.is_text_field_focused() {
+            self.active_input_mut().move_start();
+        }
+    }
+
+    /// Move cursor to end of field
+    pub fn move_end(&mut self) {
+        if self.is_text_field_focused() {
+            self.active_input_mut().move_end();
+        }
     }
 
     pub fn to_config(&self, default_timeout: Duration) -> Result<ConnectionConfig, String> {
@@ -349,8 +394,10 @@ impl Component for ConnectionForm {
             }
 
             // Text input fields get keybindings-driven input when focused
-            if self.is_text_field_focused() && self.handle_text_input(*key, props.keybindings) {
-                return vec![Action::Tick];
+            if self.is_text_field_focused() {
+                if let Some(action) = self.handle_text_input(*key, props.keybindings) {
+                    return vec![action];
+                }
             }
         }
 

@@ -221,6 +221,58 @@ pub fn handle_connection_form(
             ui_state.connection_form.prev_field();
             true
         }
+        Action::ConnectionFormAddChar(c) => {
+            ui_state.connection_form.insert_char(*c);
+            true
+        }
+        Action::ConnectionFormDeleteChar => {
+            ui_state.connection_form.delete_char();
+            true
+        }
+        Action::ConnectionFormDeleteForward => {
+            ui_state.connection_form.delete_forward();
+            true
+        }
+        Action::ConnectionFormDeleteWordBack => {
+            ui_state.connection_form.delete_word_back();
+            true
+        }
+        Action::ConnectionFormDeleteWordForward => {
+            ui_state.connection_form.delete_word_forward();
+            true
+        }
+        Action::ConnectionFormMoveLeft => {
+            ui_state.connection_form.move_left();
+            true
+        }
+        Action::ConnectionFormMoveRight => {
+            ui_state.connection_form.move_right();
+            true
+        }
+        Action::ConnectionFormMoveWordLeft => {
+            ui_state.connection_form.move_word_left();
+            true
+        }
+        Action::ConnectionFormMoveWordRight => {
+            ui_state.connection_form.move_word_right();
+            true
+        }
+        Action::ConnectionFormMoveStart => {
+            ui_state.connection_form.move_start();
+            true
+        }
+        Action::ConnectionFormMoveEnd => {
+            ui_state.connection_form.move_end();
+            true
+        }
+        Action::ConnectionFormNextBackendType => {
+            ui_state.connection_form.next_backend_type();
+            true
+        }
+        Action::ConnectionFormPrevBackendType => {
+            ui_state.connection_form.prev_backend_type();
+            true
+        }
         Action::Enter if ui_state.show_connection_form => {
             match ui_state
                 .connection_form
@@ -371,4 +423,79 @@ pub fn handle_did_fail_scan_keys(app_state: &mut AppState, error: String) {
 pub fn handle_did_fail_load_value(app_state: &mut AppState, error: String) {
     app_state.error_message = Some(format!("Error loading value: {}", error));
     app_state.selected_value = None;
+}
+
+/// Handle value viewer actions
+pub fn handle_value_viewer(ui_state: &mut UiState, action: &Action) -> bool {
+    match action {
+        Action::ValueViewerScrollUp => {
+            ui_state.value_viewer.scroll_up();
+            true
+        }
+        Action::ValueViewerScrollDown => {
+            ui_state.value_viewer.scroll_down();
+            true
+        }
+        Action::ValueViewerScrollBy(delta) => {
+            ui_state.value_viewer.scroll_by(*delta as isize);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Handle connection list (palette) actions
+pub fn handle_connection_list(
+    ui_state: &mut UiState,
+    app_state: &AppState,
+    action: &Action,
+) -> bool {
+    match action {
+        Action::ConnectionListNext => {
+            let len = app_state.connection_manager.get_configs().len();
+            if len > 0 {
+                ui_state.connection_list.next(len);
+            }
+            true
+        }
+        Action::ConnectionListPrev => {
+            let len = app_state.connection_manager.get_configs().len();
+            if len > 0 {
+                ui_state.connection_list.prev(len);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Handle welcome screen actions
+pub fn handle_welcome(ui_state: &mut UiState, recent_count: usize, action: &Action) -> bool {
+    match action {
+        Action::WelcomeNextItem => {
+            ui_state.welcome_screen.next(recent_count);
+            true
+        }
+        Action::WelcomePrevItem => {
+            ui_state.welcome_screen.prev(recent_count);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Handle SetActiveConnection action
+pub fn handle_set_active_connection(
+    app_state: &mut AppState,
+    ui_state: &mut UiState,
+    config: &crate::config::Config,
+    id: &str,
+) -> bool {
+    if !app_state.connection_manager.set_active(id) {
+        return false;
+    }
+    if let Ok(ids) = userdata::record_recent_connection_id_with_config(id, config) {
+        ui_state.recent_connection_ids = ids;
+    }
+    true
 }

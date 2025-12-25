@@ -125,12 +125,10 @@ impl Component for ConnectionList {
             {
                 match command.as_str() {
                     "connection.palette.next" => {
-                        self.next(props.configs.len());
-                        return vec![Action::Tick];
+                        return vec![Action::ConnectionListNext];
                     }
                     "connection.palette.prev" => {
-                        self.prev(props.configs.len());
-                        return vec![Action::Tick];
+                        return vec![Action::ConnectionListPrev];
                     }
                     "connection.palette.select" => {
                         if let Some(idx) = self.state.selected() {

@@ -901,7 +901,7 @@ impl Component for KeyList {
 
 impl KeyList {
     fn handle_key_event(
-        &mut self,
+        &self,
         key: &crossterm::event::KeyEvent,
         props: &KeyListProps<'_>,
     ) -> Vec<Action> {
@@ -933,8 +933,7 @@ impl KeyList {
                         }
                         None => 0,
                     };
-                    self.state.select(Some(i));
-
+                    // Return action - main.rs handler will update key_list.state
                     let mut actions = vec![Action::SelectKey(i)];
                     if self.needs_loading_around(i, props.keys, total_count) {
                         actions.push(Action::LoadMoreKeys(i));
@@ -955,8 +954,7 @@ impl KeyList {
                         }
                         None => 0,
                     };
-                    self.state.select(Some(i));
-
+                    // Return action - main.rs handler will update key_list.state
                     let mut actions = vec![Action::SelectKey(i)];
                     if self.needs_loading_around(i, props.keys, total_count) {
                         actions.push(Action::LoadMoreKeys(i));
@@ -970,7 +968,7 @@ impl KeyList {
     }
 
     fn handle_search_key_event(
-        &mut self,
+        &self,
         key: &crossterm::event::KeyEvent,
         props: &KeyListProps<'_>,
     ) -> Vec<Action> {
@@ -981,31 +979,12 @@ impl KeyList {
 
         if let Some(command) = props.keybindings.get_command(*key, BindingContext::Search) {
             match command.as_str() {
+                // Return action - main.rs handle_search_navigation will update key_list.state
                 "search.next_result" => {
-                    let current_search_idx = props.search_selection_index.unwrap_or(0);
-                    let new_search_idx = if current_search_idx >= result_count - 1 {
-                        0
-                    } else {
-                        current_search_idx + 1
-                    };
-
-                    if let Some(&key_idx) = props.search_results_local.get(new_search_idx) {
-                        self.state.select(Some(key_idx));
-                        return vec![Action::SearchNextResult];
-                    }
+                    return vec![Action::SearchNextResult];
                 }
                 "search.prev_result" => {
-                    let current_search_idx = props.search_selection_index.unwrap_or(0);
-                    let new_search_idx = if current_search_idx == 0 {
-                        result_count - 1
-                    } else {
-                        current_search_idx - 1
-                    };
-
-                    if let Some(&key_idx) = props.search_results_local.get(new_search_idx) {
-                        self.state.select(Some(key_idx));
-                        return vec![Action::SearchPrevResult];
-                    }
+                    return vec![Action::SearchPrevResult];
                 }
                 _ => {}
             }
@@ -1013,7 +992,7 @@ impl KeyList {
         vec![]
     }
 
-    fn handle_scroll_event(&mut self, delta: isize, props: &KeyListProps<'_>) -> Vec<Action> {
+    fn handle_scroll_event(&self, delta: isize, props: &KeyListProps<'_>) -> Vec<Action> {
         let total_count = props
             .total_count
             .map(|t| t as usize)
@@ -1043,7 +1022,7 @@ impl KeyList {
         };
 
         if new_index != current {
-            self.state.select(Some(new_index));
+            // Return action - main.rs handler will update key_list.state
             let mut actions = vec![Action::SelectKey(new_index)];
             if self.needs_loading_around(new_index, props.keys, total_count) {
                 actions.push(Action::LoadMoreKeys(new_index));
@@ -1054,11 +1033,7 @@ impl KeyList {
         }
     }
 
-    fn handle_search_scroll_event(
-        &mut self,
-        delta: isize,
-        props: &KeyListProps<'_>,
-    ) -> Vec<Action> {
+    fn handle_search_scroll_event(&self, delta: isize, props: &KeyListProps<'_>) -> Vec<Action> {
         let result_count = props.search_results_local.len();
         if result_count == 0 {
             return vec![];
@@ -1084,15 +1059,13 @@ impl KeyList {
         };
 
         if new_search_idx != current_search_idx {
-            if let Some(&key_idx) = props.search_results_local.get(new_search_idx) {
-                self.state.select(Some(key_idx));
-                let action = if delta > 0 {
-                    Action::SearchNextResult
-                } else {
-                    Action::SearchPrevResult
-                };
-                return vec![action];
-            }
+            // Return action - main.rs handle_search_navigation will update key_list.state
+            let action = if delta > 0 {
+                Action::SearchNextResult
+            } else {
+                Action::SearchPrevResult
+            };
+            return vec![action];
         }
         vec![]
     }

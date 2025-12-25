@@ -49,6 +49,33 @@ pub enum Action {
     ConnectionFormPrevField,
     ConnectionFormAddChar(char),
     ConnectionFormDeleteChar,
+    ConnectionFormDeleteForward,
+    ConnectionFormDeleteWordBack,
+    ConnectionFormDeleteWordForward,
+    ConnectionFormMoveLeft,
+    ConnectionFormMoveRight,
+    ConnectionFormMoveWordLeft,
+    ConnectionFormMoveWordRight,
+    ConnectionFormMoveStart,
+    ConnectionFormMoveEnd,
+    ConnectionFormNextBackendType,
+    ConnectionFormPrevBackendType,
+
+    // Value Viewer
+    ValueViewerScrollUp,
+    ValueViewerScrollDown,
+    ValueViewerScrollBy(i16),
+
+    // Connection List (palette)
+    ConnectionListNext,
+    ConnectionListPrev,
+
+    // Welcome Screen
+    WelcomeNextItem,
+    WelcomePrevItem,
+
+    // Connection State
+    SetActiveConnection(String),
 
     // Connection Actions (Intent)
     Connect(String),
@@ -159,6 +186,25 @@ impl Action {
             Action::ConnectionFormPrevField => "ConnectionFormPrevField",
             Action::ConnectionFormAddChar(_) => "ConnectionFormAddChar",
             Action::ConnectionFormDeleteChar => "ConnectionFormDeleteChar",
+            Action::ConnectionFormDeleteForward => "ConnectionFormDeleteForward",
+            Action::ConnectionFormDeleteWordBack => "ConnectionFormDeleteWordBack",
+            Action::ConnectionFormDeleteWordForward => "ConnectionFormDeleteWordForward",
+            Action::ConnectionFormMoveLeft => "ConnectionFormMoveLeft",
+            Action::ConnectionFormMoveRight => "ConnectionFormMoveRight",
+            Action::ConnectionFormMoveWordLeft => "ConnectionFormMoveWordLeft",
+            Action::ConnectionFormMoveWordRight => "ConnectionFormMoveWordRight",
+            Action::ConnectionFormMoveStart => "ConnectionFormMoveStart",
+            Action::ConnectionFormMoveEnd => "ConnectionFormMoveEnd",
+            Action::ConnectionFormNextBackendType => "ConnectionFormNextBackendType",
+            Action::ConnectionFormPrevBackendType => "ConnectionFormPrevBackendType",
+            Action::ValueViewerScrollUp => "ValueViewerScrollUp",
+            Action::ValueViewerScrollDown => "ValueViewerScrollDown",
+            Action::ValueViewerScrollBy(_) => "ValueViewerScrollBy",
+            Action::ConnectionListNext => "ConnectionListNext",
+            Action::ConnectionListPrev => "ConnectionListPrev",
+            Action::WelcomeNextItem => "WelcomeNextItem",
+            Action::WelcomePrevItem => "WelcomePrevItem",
+            Action::SetActiveConnection(_) => "SetActiveConnection",
             Action::Connect(_) => "Connect",
             Action::Disconnect(_) => "Disconnect",
             Action::DeleteConnection(_) => "DeleteConnection",
@@ -244,6 +290,29 @@ impl fmt::Debug for Action {
                 f.debug_tuple("ConnectionFormAddChar").field(c).finish()
             }
             Action::ConnectionFormDeleteChar => write!(f, "ConnectionFormDeleteChar"),
+            Action::ConnectionFormDeleteForward => write!(f, "ConnectionFormDeleteForward"),
+            Action::ConnectionFormDeleteWordBack => write!(f, "ConnectionFormDeleteWordBack"),
+            Action::ConnectionFormDeleteWordForward => write!(f, "ConnectionFormDeleteWordForward"),
+            Action::ConnectionFormMoveLeft => write!(f, "ConnectionFormMoveLeft"),
+            Action::ConnectionFormMoveRight => write!(f, "ConnectionFormMoveRight"),
+            Action::ConnectionFormMoveWordLeft => write!(f, "ConnectionFormMoveWordLeft"),
+            Action::ConnectionFormMoveWordRight => write!(f, "ConnectionFormMoveWordRight"),
+            Action::ConnectionFormMoveStart => write!(f, "ConnectionFormMoveStart"),
+            Action::ConnectionFormMoveEnd => write!(f, "ConnectionFormMoveEnd"),
+            Action::ConnectionFormNextBackendType => write!(f, "ConnectionFormNextBackendType"),
+            Action::ConnectionFormPrevBackendType => write!(f, "ConnectionFormPrevBackendType"),
+            Action::ValueViewerScrollUp => write!(f, "ValueViewerScrollUp"),
+            Action::ValueViewerScrollDown => write!(f, "ValueViewerScrollDown"),
+            Action::ValueViewerScrollBy(delta) => {
+                f.debug_tuple("ValueViewerScrollBy").field(delta).finish()
+            }
+            Action::ConnectionListNext => write!(f, "ConnectionListNext"),
+            Action::ConnectionListPrev => write!(f, "ConnectionListPrev"),
+            Action::WelcomeNextItem => write!(f, "WelcomeNextItem"),
+            Action::WelcomePrevItem => write!(f, "WelcomePrevItem"),
+            Action::SetActiveConnection(id) => {
+                f.debug_tuple("SetActiveConnection").field(id).finish()
+            }
             Action::Connect(id) => f.debug_tuple("Connect").field(id).finish(),
             Action::Disconnect(id) => f.debug_tuple("Disconnect").field(id).finish(),
             Action::DeleteConnection(id) => f.debug_tuple("DeleteConnection").field(id).finish(),

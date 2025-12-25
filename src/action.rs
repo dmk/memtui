@@ -1,5 +1,6 @@
 use crate::backend::{Backend, BackendCapabilities};
 use crate::types::{ConnectionConfig, KeyMetadata, KeyScanResult, Value};
+use crate::ui::Panel;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ pub enum Action {
     // Navigation
     NextPanel,
     PrevPanel,
+    FocusPanel(Panel),
     NextItem,
     PrevItem,
     CycleValueViewMode,
@@ -28,6 +30,16 @@ pub enum Action {
     CloseConnectionPalette,
     NextConnectionTab,
     PrevConnectionTab,
+    SelectConnectionIndex(usize),
+    SelectWelcomeIndex(usize),
+
+    // UI State
+    SetPaneRatio(f32),
+    SetSearchSelectionIndex(Option<usize>),
+    ResetKeySelection,
+    ExitSearchMode,
+    StartResize,
+    EndResize,
 
     // Connection Form
     OpenConnectionForm,
@@ -121,6 +133,7 @@ impl Action {
             Action::CancelQuit => "CancelQuit",
             Action::NextPanel => "NextPanel",
             Action::PrevPanel => "PrevPanel",
+            Action::FocusPanel(_) => "FocusPanel",
             Action::NextItem => "NextItem",
             Action::PrevItem => "PrevItem",
             Action::CycleValueViewMode => "CycleValueViewMode",
@@ -131,6 +144,14 @@ impl Action {
             Action::CloseConnectionPalette => "CloseConnectionPalette",
             Action::NextConnectionTab => "NextConnectionTab",
             Action::PrevConnectionTab => "PrevConnectionTab",
+            Action::SelectConnectionIndex(_) => "SelectConnectionIndex",
+            Action::SelectWelcomeIndex(_) => "SelectWelcomeIndex",
+            Action::SetPaneRatio(_) => "SetPaneRatio",
+            Action::SetSearchSelectionIndex(_) => "SetSearchSelectionIndex",
+            Action::ResetKeySelection => "ResetKeySelection",
+            Action::ExitSearchMode => "ExitSearchMode",
+            Action::StartResize => "StartResize",
+            Action::EndResize => "EndResize",
             Action::OpenConnectionForm => "OpenConnectionForm",
             Action::CloseConnectionForm => "CloseConnectionForm",
             Action::SubmitConnectionForm(_) => "SubmitConnectionForm",
@@ -186,6 +207,7 @@ impl fmt::Debug for Action {
             Action::CancelQuit => write!(f, "CancelQuit"),
             Action::NextPanel => write!(f, "NextPanel"),
             Action::PrevPanel => write!(f, "PrevPanel"),
+            Action::FocusPanel(panel) => f.debug_tuple("FocusPanel").field(panel).finish(),
             Action::NextItem => write!(f, "NextItem"),
             Action::PrevItem => write!(f, "PrevItem"),
             Action::CycleValueViewMode => write!(f, "CycleValueViewMode"),
@@ -196,6 +218,20 @@ impl fmt::Debug for Action {
             Action::CloseConnectionPalette => write!(f, "CloseConnectionPalette"),
             Action::NextConnectionTab => write!(f, "NextConnectionTab"),
             Action::PrevConnectionTab => write!(f, "PrevConnectionTab"),
+            Action::SelectConnectionIndex(idx) => {
+                f.debug_tuple("SelectConnectionIndex").field(idx).finish()
+            }
+            Action::SelectWelcomeIndex(idx) => {
+                f.debug_tuple("SelectWelcomeIndex").field(idx).finish()
+            }
+            Action::SetPaneRatio(ratio) => f.debug_tuple("SetPaneRatio").field(ratio).finish(),
+            Action::SetSearchSelectionIndex(idx) => {
+                f.debug_tuple("SetSearchSelectionIndex").field(idx).finish()
+            }
+            Action::ResetKeySelection => write!(f, "ResetKeySelection"),
+            Action::ExitSearchMode => write!(f, "ExitSearchMode"),
+            Action::StartResize => write!(f, "StartResize"),
+            Action::EndResize => write!(f, "EndResize"),
             Action::OpenConnectionForm => write!(f, "OpenConnectionForm"),
             Action::CloseConnectionForm => write!(f, "CloseConnectionForm"),
             Action::SubmitConnectionForm(cfg) => f

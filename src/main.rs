@@ -554,7 +554,7 @@ impl App {
                         && mouse.row >= body_area.y
                         && mouse.row < body_area.y + body_area.height
                     {
-                        self.ui_state.start_resize();
+                        let _ = self.action_tx.send(Action::StartResize);
                         return vec![Action::Tick];
                     }
                 }
@@ -563,7 +563,7 @@ impl App {
                 vec![Action::Tick]
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                self.ui_state.end_resize();
+                let _ = self.action_tx.send(Action::EndResize);
                 vec![Action::Tick]
             }
             MouseEventKind::Drag(MouseButton::Left) => {
@@ -572,8 +572,7 @@ impl App {
                         // Calculate new ratio based on mouse position
                         let relative_x = mouse.column.saturating_sub(body_area.x) as f32;
                         let new_ratio = relative_x / body_area.width as f32;
-                        self.ui_state.pane_split.ratio = new_ratio
-                            .clamp(self.ui_state.pane_split.min, self.ui_state.pane_split.max);
+                        let _ = self.action_tx.send(Action::SetPaneRatio(new_ratio));
                     }
                 }
                 vec![Action::Tick]
@@ -619,7 +618,7 @@ impl App {
 
         let actions = self.ui_state.key_list.handle_event(&event, key_list_props);
         if !actions.is_empty() {
-            // Special handling for search navigation via scroll
+            // Special handling for search navigation via scroll - sync search selection index
             if let Some(query) = self
                 .app_state
                 .search_query
@@ -636,7 +635,9 @@ impl App {
                                 .iter()
                                 .position(|i| i == idx)
                             {
-                                self.app_state.search_selection_index = Some(pos);
+                                let _ = self
+                                    .action_tx
+                                    .send(Action::SetSearchSelectionIndex(Some(pos)));
                             }
                         }
                     }
@@ -865,6 +866,19 @@ impl App {
                 )
             }
 
+            // UI state changes (panel focus, pane resize, list selection, search selection)
+            Action::FocusPanel(_)
+            | Action::SetPaneRatio(_)
+            | Action::SelectConnectionIndex(_)
+            | Action::SelectWelcomeIndex(_)
+            | Action::SetSearchSelectionIndex(_)
+            | Action::ResetKeySelection
+            | Action::ExitSearchMode
+            | Action::StartResize
+            | Action::EndResize => {
+                handle_ui_state(&mut self.ui_state, &mut self.app_state, &action)
+            }
+
             // Value viewer
             Action::CycleValueViewMode => {
                 if let Some(value) = self.app_state.selected_value.as_ref() {
@@ -977,6 +991,7 @@ impl App {
 
             // Key selection (kept in App - needs schedule_value_load)
             Action::SelectKey(idx) => {
+                self.ui_state.key_list.select(Some(idx));
                 self.app_state.selected_key_index = Some(idx);
                 self.app_state.selected_value = None;
                 self.app_state.error_message = None;
@@ -1066,7 +1081,7 @@ impl App {
             Action::ConfirmSearch => {
                 // Exit search input mode but keep current selection
                 if self.app_state.is_searching {
-                    self.app_state.is_searching = false;
+                    let _ = self.action_tx.send(Action::ExitSearchMode);
                 }
                 true
             }
@@ -1114,7 +1129,7 @@ impl App {
                             .connection_list
                             .index_at_position(area, column, row, total)
                         {
-                            self.ui_state.connection_list.state.select(Some(idx));
+                            let _ = self.action_tx.send(Action::SelectConnectionIndex(idx));
                             if let Some(config) =
                                 self.app_state.connection_manager.get_configs().get(idx)
                             {
@@ -1150,7 +1165,7 @@ impl App {
                         .welcome_screen
                         .index_at_position(area, column, row, total)
                     {
-                        self.ui_state.welcome_screen.state.select(Some(idx));
+                        let _ = self.action_tx.send(Action::SelectWelcomeIndex(idx));
                         if let Some(config) = recent_configs.get(idx) {
                             let _ = self
                                 .action_tx
@@ -1176,7 +1191,7 @@ impl App {
 
         if let Some(area) = self.ui_state.last_key_area {
             if Self::point_in_rect(area, column, row) {
-                self.ui_state.active_panel = Panel::Keys;
+                let _ = self.action_tx.send(Action::FocusPanel(Panel::Keys));
 
                 // Check if we're in search mode
                 let has_search = !self.app_state.search_query.is_empty();
@@ -1184,24 +1199,19 @@ impl App {
                 if has_search {
                     // Search mode: click on search results
                     if let Some(result_idx) = self.search_result_index_from_position(column, row) {
-                        // Update the search selection index
-                        self.app_state.search_selection_index = Some(result_idx);
+                        let _ = self
+                            .action_tx
+                            .send(Action::SetSearchSelectionIndex(Some(result_idx)));
 
                         // Get the key index from search results (now includes merged server keys)
                         if let Some(&key_idx) = self.app_state.search_results_local.get(result_idx)
                         {
-                            self.ui_state.key_list.select(Some(key_idx));
-                            self.app_state.selected_key_index = Some(key_idx);
-                            self.app_state.selected_value = None;
                             let _ = self.action_tx.send(Action::SelectKey(key_idx));
                         }
                     }
                 } else {
                     // Normal mode: click on full key list
                     if let Some(index) = self.key_index_from_position(column, row) {
-                        self.ui_state.key_list.select(Some(index));
-                        self.app_state.selected_key_index = Some(index);
-                        self.app_state.selected_value = None;
                         let _ = self.action_tx.send(Action::SelectKey(index));
                     }
                 }
@@ -1211,7 +1221,7 @@ impl App {
 
         if let Some(area) = self.ui_state.last_value_area {
             if Self::point_in_rect(area, column, row) {
-                self.ui_state.active_panel = Panel::Value;
+                let _ = self.action_tx.send(Action::FocusPanel(Panel::Value));
             }
         }
     }
@@ -1248,13 +1258,12 @@ impl App {
             current_idx - 1
         };
 
-        self.app_state.search_selection_index = Some(new_idx);
+        let _ = self
+            .action_tx
+            .send(Action::SetSearchSelectionIndex(Some(new_idx)));
 
-        // Select the key using normal SelectKey action
+        // Select the key using SelectKey action (handles key_list, selected_key_index, etc.)
         if let Some(&key_idx) = self.app_state.search_results_local.get(new_idx) {
-            self.ui_state.key_list.select(Some(key_idx));
-            self.app_state.selected_key_index = Some(key_idx);
-            self.app_state.selected_value = None;
             let _ = self.action_tx.send(Action::SelectKey(key_idx));
         }
     }
@@ -1263,11 +1272,10 @@ impl App {
             return;
         }
 
-        self.ui_state.close_connection_palette();
-        self.ui_state.active_panel = Panel::Keys;
-        self.ui_state.key_list.select(None);
-        self.app_state.reset_pagination();
-        self.app_state.error_message = None;
+        // Close palette and focus keys panel via actions (sync handlers)
+        let _ = self.action_tx.send(Action::CloseConnectionPalette);
+        let _ = self.action_tx.send(Action::FocusPanel(Panel::Keys));
+        let _ = self.action_tx.send(Action::ResetKeySelection);
 
         if self.app_state.connection_manager.is_connected(&id) {
             if let Ok(ids) = userdata::record_recent_connection_id_with_config(&id, &self.config) {

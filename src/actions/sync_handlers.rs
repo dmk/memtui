@@ -96,9 +96,8 @@ pub fn handle_navigation(
                     } else {
                         current_idx + 1
                     };
-                    app_state.search_selection_index = Some(new_idx);
+                    let _ = action_tx.send(Action::SetSearchSelectionIndex(Some(new_idx)));
                     if let Some(&key_idx) = app_state.search_results_local.get(new_idx) {
-                        ui_state.key_list.select(Some(key_idx));
                         let _ = action_tx.send(Action::SelectKey(key_idx));
                     }
                 }
@@ -132,9 +131,8 @@ pub fn handle_navigation(
                     } else {
                         current_idx - 1
                     };
-                    app_state.search_selection_index = Some(new_idx);
+                    let _ = action_tx.send(Action::SetSearchSelectionIndex(Some(new_idx)));
                     if let Some(&key_idx) = app_state.search_results_local.get(new_idx) {
-                        ui_state.key_list.select(Some(key_idx));
                         let _ = action_tx.send(Action::SelectKey(key_idx));
                     }
                 }
@@ -150,6 +148,56 @@ pub fn handle_navigation(
                     }
                 }
             }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Handle direct UI state actions (from mouse events, etc.)
+pub fn handle_ui_state(ui_state: &mut UiState, app_state: &mut AppState, action: &Action) -> bool {
+    match action {
+        Action::FocusPanel(panel) => {
+            // Exit search input mode when switching panels
+            if app_state.is_searching {
+                app_state.is_searching = false;
+            }
+            ui_state.active_panel = *panel;
+            true
+        }
+        Action::SetPaneRatio(ratio) => {
+            ui_state.pane_split.ratio =
+                ratio.clamp(ui_state.pane_split.min, ui_state.pane_split.max);
+            true
+        }
+        Action::SelectConnectionIndex(idx) => {
+            ui_state.connection_list.state.select(Some(*idx));
+            true
+        }
+        Action::SelectWelcomeIndex(idx) => {
+            ui_state.welcome_screen.state.select(Some(*idx));
+            true
+        }
+        Action::SetSearchSelectionIndex(idx) => {
+            app_state.search_selection_index = *idx;
+            true
+        }
+        Action::ResetKeySelection => {
+            ui_state.key_list.select(None);
+            app_state.reset_pagination();
+            app_state.error_message = None;
+            true
+        }
+        Action::ExitSearchMode => {
+            app_state.is_searching = false;
+            true
+        }
+        Action::StartResize => {
+            ui_state.start_resize();
+            true
+        }
+        Action::EndResize => {
+            ui_state.end_resize();
             true
         }
         _ => false,

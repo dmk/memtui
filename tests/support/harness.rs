@@ -179,13 +179,48 @@ impl AppHarness {
             Action::ConnectionFormNextField
             | Action::ConnectionFormPrevField
             | Action::ConnectionFormAddChar(_)
-            | Action::ConnectionFormDeleteChar => sync_handlers::handle_connection_form(
+            | Action::ConnectionFormDeleteChar
+            | Action::ConnectionFormDeleteForward
+            | Action::ConnectionFormDeleteWordBack
+            | Action::ConnectionFormDeleteWordForward
+            | Action::ConnectionFormMoveLeft
+            | Action::ConnectionFormMoveRight
+            | Action::ConnectionFormMoveWordLeft
+            | Action::ConnectionFormMoveWordRight
+            | Action::ConnectionFormMoveStart
+            | Action::ConnectionFormMoveEnd
+            | Action::ConnectionFormNextBackendType
+            | Action::ConnectionFormPrevBackendType => sync_handlers::handle_connection_form(
                 &mut self.ui_state,
                 &mut self.app_state,
                 &self.action_tx,
                 &Config::default(),
                 &action,
             ),
+
+            // Value viewer actions
+            Action::ValueViewerScrollUp
+            | Action::ValueViewerScrollDown
+            | Action::ValueViewerScrollBy(_) => {
+                sync_handlers::handle_value_viewer(&mut self.ui_state, &action)
+            }
+
+            // Connection list (palette) actions
+            Action::ConnectionListNext | Action::ConnectionListPrev => {
+                sync_handlers::handle_connection_list(&mut self.ui_state, &self.app_state, &action)
+            }
+
+            // Welcome screen actions
+            Action::WelcomeNextItem | Action::WelcomePrevItem => {
+                let configs = self.app_state.connection_manager.get_configs();
+                let recent_count = self
+                    .ui_state
+                    .recent_connection_ids
+                    .iter()
+                    .filter(|id| configs.iter().any(|c| &c.id == *id))
+                    .count();
+                sync_handlers::handle_welcome(&mut self.ui_state, recent_count, &action)
+            }
 
             // Connection management (delete only - connect/disconnect need async)
             Action::DeleteConnection(_) => sync_handlers::handle_connection_management(

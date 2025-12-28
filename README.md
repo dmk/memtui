@@ -25,6 +25,7 @@ See `ROADMAP.md` for planned features and milestones.
 - **Value inspection**
   - Handles large values with efficient wrapping/caching and scrolling
   - JSON pretty-print + syntax coloring (configurable)
+  - Binary/hex view mode (cycle with `v`)
 - **Customization**
   - `config.toml` for UI/performance/data/json formatting
   - `theme.json` for UI colors (JSON-with-`//` comments)
@@ -88,6 +89,8 @@ Keybindings are configurable in `~/.config/memtui/keybindings.json`.
   - `/`: start search
   - Type to filter; local results update immediately; server results arrive shortly after
   - `Esc`: clear search
+- **Value Viewer**
+  - `v`: cycle view mode (text / hex / binary)
 
 ## Supported Backends + Capability Matrix (Today)
 
@@ -147,16 +150,19 @@ string_color = "green"
 
 ## Architecture (Current Code)
 
+> **Note:** Core event/action infrastructure extracted to [`tui-dispatch`](https://github.com/dmk/tui-dispatch) framework in v0.4.0.
+
 High-level modules:
 
-- `src/main.rs`: owns `AppState` + `UiState`, runs the Tokio-driven event loop, dispatches `Action`s.
-- `src/action.rs`: `Action` enum (intents + async results).
+- `src/main.rs`: owns `AppState` + `UiState`, runs the Tokio-driven event loop, dispatches `Action`s
+- `src/action.rs`: `Action` enum with `#[derive(tui_dispatch::Action)]` for auto-generated helpers
 - `src/actions/`
   - `sync_handlers.rs`: synchronous state updates (UI toggles, navigation, search input edits)
   - `async_handlers.rs`: spawns async tasks (connect, scan keys, load values, hybrid search) and emits result `Action`s
 - `src/app/`: `ConnectionManager`, `EventRunner`
 - `src/backend/`: `Backend` trait + `RedisBackend` / `MemcachedBackend` / `EtcdBackend`
 - `src/ui/`: renderer + components (`KeyList`, `ValueViewer`, modals, status bar)
+- `src/events/`: re-exports `EventBus`, `Keybindings` from tui-dispatch
 - `src/search.rs`: fuzzy search + match positions
 - `src/userdata.rs`: config/theme/keybindings persistence
 

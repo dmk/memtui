@@ -1,271 +1,197 @@
 # memtui Roadmap
 
-This roadmap is milestone-based and aligned to the architectural pillars:
+## Architectural Pillars
 
-- **Action Enum is Law**: every state change goes through `Action`.
-- **Backend stays generic**: use **capabilities** so features gracefully disable per backend.
-- **Async / Sync split**:
-  - Sync: navigation, selection, rendering, local fuzzy search, virtual scrolling decisions
-  - Async: network I/O, clipboard, external editor spawning, server-side search, TTL polling
-- **Type-driven development**: define types first, then implement.
-
-> Note: This roadmap intentionally avoids claiming features that aren’t implemented today.
+- **Action Enum is Law**: every state change goes through `Action` ✅ (v0.4.0)
+- **Backend stays generic**: use capabilities, not type checks ✅
+- **Async / Sync split**: network I/O async, navigation/render sync ✅
+- **Type-driven development**: define types first, then implement
 
 ---
 
-## Architecture Notes (Contributors)
+## Milestone 0 — Foundation ✅ COMPLETE (v0.4.0)
 
-- Pillars: `Action` is the only way state changes; backend stays generic + capability-driven; sync work stays sync (nav/render/local search/windowing); async work stays async (I/O/clipboard/editor/server search/TTL polling); define types first.
-- Action flow: UI emits `Action` -> reducer updates sync state -> async dispatcher runs side effects -> dispatcher emits follow-up result `Action`s -> reducer updates state -> render.
+Extracted to `tui-dispatch` framework:
+- EventBus, keybindings, event types
+- Derive macros for Action, ComponentId, BindingContext
+- All state mutations go through actions
+- Test harness with ActionDispatcher trait
 
 ---
 
-## Milestone 0 — “Action Is Law” Enforcement (Foundation)
+## Milestone 1 — Command Palette (Next)
 
-**Goal:** make the current architecture consistent and testable without changing behavior.
+**Goal:** Unified input component for search, commands, goto.
 
 **Deliverables**
-- Centralize state transitions in a reducer-like layer:
-  - UI emits `Action`
-  - reducer updates sync state
-  - async dispatcher runs side effects and emits result `Action`s
-- Remove remaining direct state mutations in input handlers (scrolling, resizing, palette navigation) by introducing explicit actions for them.
-- Make keybinding “commands” map to real `Action`s (or remove/disable dead commands).
+- Generalize `SearchInput` → `InputLine` component
+  - Modes: Search (`/`), Command (`:`), Goto (`g`)
+  - Shared text editing (cursor, word movement, history)
+- Command mode (`:`)
+  - `:q` quit, `:help` help
+  - `:get <key>` jump to key
+  - `:del <key>` delete key (with confirmation)
+  - `:raw <cmd>` execute raw backend command
+- Tab completion for commands and keys
+- Command history (in-memory, then persisted)
 
-**Proposed code-level changes**
-- Add `src/effects.rs`:
-  - `enum Effect { Connect{...}, ScanKeys{...}, LoadValue{...}, SearchServer{...}, ... }`
-- Add `src/reducer.rs` (or `src/actions/reducer.rs`):
-  - `fn reduce(app: &mut AppState, ui: &mut UiState, action: Action) -> Vec<Effect>`
-- Convert `src/actions/async_handlers.rs` into an `Effect` dispatcher:
-  - `fn dispatch(effect: Effect, tx: ActionTx, ...)`
+**New Types**
+```rust
+enum InputMode { Search, Command, Goto }
+struct InputLineState { mode, buffer, cursor, history_idx }
+enum CommandAction { Quit, Help, Get(String), Del(String), Raw(String) }
+```
 
-**Tests**
-- Unit tests for reducer transitions (no Tokio required).
-- Keep existing backend unit tests; add a few “reducer-only” tests for navigation/search.
-
----
-
-## Milestone 1 — Capabilities 2.0 + Feature Gating (Foundation)
-
-**Goal:** unblock upcoming UI features without hardcoding backend type checks.
-
-**Why:** current `BackendCapabilities` conflates “can set TTL” with “can read TTL” (Memcached/etcd set TTL but don’t populate `KeyMetadata.ttl` today).
-
-**Proposed capabilities shape**
-- Evolve `BackendCapabilities` (keep it plain-data, copyable):
-  - `supports_key_scan`
-  - `supports_server_search`
-  - `supports_raw_commands`
-  - `supports_batch_get`
-  - `supports_ttl_read`
-  - `supports_ttl_write`
-  - `supports_expire` (set TTL on existing keys)
-  - `supports_value_range_get` (lazy value loading)
-  - `supports_write` (delete/set)
-- Store a **capabilities snapshot per connected connection** (so UI can gate synchronously without awaiting an RwLock).
-
-**Tests**
-- Unit tests for capability gating logic (“feature disabled” UI states).
-- Integration sanity checks (docker compose) can be added later.
+**Gating**
+- `:raw` requires `supports_raw_commands` capability
+- `:del` requires `supports_write` capability (new)
 
 ---
 
-## Milestone 2 — Search State Model + “Optimistic Hybrid Search” (Feature)
+## Milestone 2 — Key Operations
 
-**Goal:** formalize search and make merging behavior deterministic.
+**Goal:** CRUD operations on keys.
 
 **Deliverables**
-- Introduce a type-driven search model:
-  - `SearchState { mode, query, token, local, server, merged, selection }`
-  - `SearchResultItem` that can represent:
-    - “loaded key by index”
-    - “server-only key (name + metadata)”
-- Merge local + server results with stable ordering and dedupe.
-- Allow selecting server-only results and loading their value directly (even if not in the current key window), gated by capabilities.
+- Delete key (`d` or `:del`)
+  - Confirmation dialog
+  - Refresh key list after delete
+- Copy key name (`yk`)
+- Copy value (`yv`)
+  - Full value or truncated preview option
+- Rename key (`:rename <old> <new>`) - Redis only
 
-**Proposed files**
-- `src/app/search_state.rs` (or `src/model/search.rs`)
-- Add/adjust `Action`s:
-  - `Action::SearchOpened`, `Action::SearchQueryChanged`, `Action::SearchLocalReady`, `Action::SearchServerReady`, `Action::SearchSelectionMoved`, …
+**New Capabilities**
+```rust
+supports_write: bool,      // delete, set
+supports_rename: bool,     // Redis RENAME
+```
 
-**Tests**
-- Unit tests for merge + dedupe + stable ordering.
-- Mock-backend tests for “server-only selection loads value”.
+**Async Effects**
+- Clipboard operations (arboard crate)
+- Delete/rename network calls
 
 ---
 
-## Milestone 3 — Namespace “Rainbow” + Custom Highlight Rules (Feature)
+## Milestone 3 — Debug Framework (tui-dispatch)
 
-**Goal:** improve scanability of dense keyspaces.
+**Goal:** Extract memtui's debug overlay to tui-dispatch for reuse.
 
 **Deliverables**
-- **Rainbow namespaces**:
-  - Deterministic hash from namespace/prefix -> style color
-  - Configurable separator and depth
-- **GRC-style regex highlighting**:
-  - User-defined rules from config (keys/value/both)
-  - Priority + style merge rules
+- Move debug overlay to `tui-dispatch-debug` crate
+- Macro for easy integration: `#[derive(DebugState)]`
+- Features:
+  - State inspector (current)
+  - Actions log with filtering
+  - Action timeline / scrubber
+  - Copy state as JSON
+  - Breakpoint on action (pause until keypress)
 
-**Proposed files**
-- `src/style/namespace.rs`: `NamespaceStyle`, `NamespaceHasher`
-- `src/style/highlight.rs`: `HighlightRule`, compiled regex cache
-- Extend `Config`:
-  - `config.toml` gains `[namespaces]` and `[[highlight.rules]]`
+**Integration API**
+```rust
+// In app
+#[derive(DebugState)]
+struct AppState { ... }
 
-**Dependencies**
-- Regex highlighting requires adding a regex engine (likely `regex` crate).
-
-**Tests**
-- Unit tests for namespace hashing determinism.
-- Unit tests for highlighting rule matching and precedence.
+// Framework provides
+DebugOverlay::new()
+    .with_state(&app_state)
+    .with_actions(&action_log)
+    .render(frame, area);
+```
 
 ---
 
-## Milestone 4 — TTL Visualizer (Feature)
+## Milestone 4 — Capabilities 2.0
 
-**Goal:** show TTL and expiry progression live, without blocking UI.
+**Goal:** Finer-grained capability flags for feature gating.
+
+**New Capabilities**
+```rust
+pub struct BackendCapabilities {
+    // Existing
+    pub supports_ttl: bool,
+    pub supports_scan: bool,
+    pub supports_raw_commands: bool,
+    pub supports_batch_get: bool,
+    pub supports_efficient_pattern_search: bool,
+
+    // New
+    pub supports_ttl_read: bool,   // Can read TTL (vs just set)
+    pub supports_ttl_write: bool,  // Can set/update TTL
+    pub supports_write: bool,      // Delete/set keys
+    pub supports_rename: bool,     // Rename keys
+    pub supports_value_range: bool, // GETRANGE for lazy loading
+}
+```
+
+---
+
+## Milestone 5 — Search Improvements
+
+**Goal:** Formalize search state, improve UX.
 
 **Deliverables**
-- TTL display in key list and/or value header when available.
-- Live countdown for selected key (and optionally visible window), driven by polling:
-  - Async polling emits `Action::TtlUpdated { ... }`
-- Graceful “TTL unsupported/unknown” UX via capabilities.
-
-**Proposed types**
-- `TtlState { selected: Option<TtlSnapshot>, polling: bool, last_update: Instant, ... }`
-- `TtlSnapshot { ttl: Option<Duration>, fetched_at: Instant }`
-
-**Dependencies**
-- Requires `supports_ttl_read` and backend method(s) to refresh TTL cheaply (likely `key_info` or a dedicated TTL call).
-
-**Tests**
-- Unit tests for countdown math (time-based, but can be deterministic with injected clock).
-- Integration tests against Redis container.
+- `SearchState` type consolidating scattered fields
+- Stable merge of local + server results
+- Jump to server-only results (load value directly)
+- Search result count in status bar
+- Highlight match positions in key names
 
 ---
 
-## Milestone 5 — Raw Command Mode (`:` prompt) (Feature)
-
-**Goal:** direct backend access for advanced users, while staying safe by default.
+## Milestone 6 — Value UX
 
 **Deliverables**
-- `:` opens command prompt modal
-- Command history (in-memory initially)
-- Execute against backend if `supports_raw_commands`
-- Respect write safety: raw commands that mutate should be blocked unless write mode is enabled
-
-**Proposed types**
-- `CommandModeState { input, history, last_result, status }`
-- `CommandType` (optional): parsed command classification for safety gating
-
-**Tests**
-- Reducer tests: open/close prompt, input edits, history navigation.
-- Mock-backend tests for execute + result handling.
+- Format toggles: Text / Hex / JSON (partially done)
+- External editor integration (`$EDITOR`)
+- Simple inline edit for strings
+- Syntax highlighting for JSON
 
 ---
 
-## Milestone 6 — Value UX: Format Toggles + Clipboard + Simple Editor (Feature)
+## Milestone 7 — TTL Visualizer
 
 **Deliverables**
-- `ValueFormat` toggles: Text / Hex / JSON
-- Clipboard integration:
-  - yank key name
-  - yank value (or a safe truncated preview)
-- Simple built-in editor for primitive edits (string/int/json), gated by write mode + backend write support
-- External editor integration (`$EDITOR`):
-  - open value in editor
-  - save -> apply `set` back to backend
-
-**Async side effects**
-- Clipboard operations
-- Spawning editor processes
-- Writing temp files
-
-**Tests**
-- Unit tests for format toggling reducer logic.
-- Integration tests (where feasible) for write mode + Redis set.
+- Live countdown for selected key
+- Color-coded TTL warnings (done in key list)
+- Set/update TTL command
 
 ---
 
-## Milestone 7 — Lazy Value Loading (Feature)
+## Milestone 8 — Virtual Scrolling
 
-**Goal:** handle very large values without loading everything at once.
+**Goal:** Handle 1M+ keys without loading all into memory.
 
 **Deliverables**
-- Backend capability: `supports_value_range_get`
-- Backend API additions (example):
-  - `get_range(key, offset, len)` or `get_stream(key)`-like interface
-- UI streaming viewer:
-  - renders partial data progressively
-  - supports “jump to offset” / paging
-
-**Dependencies**
-- Requires backend support; Redis can support `GETRANGE` for string values.
-- Other backends may degrade to “full get” or disable the feature.
-
-**Tests**
-- Mock backend that yields chunks.
-- Reducer tests for streaming state machine.
+- Windowed key model with LRU cache
+- Stable selection during async loads
 
 ---
 
-## Milestone 8 — Virtual Scrolling for 1M+ Keys (Feature)
-
-**Goal:** keep memory bounded and UI responsive for huge keyspaces.
+## Milestone 9 — Bulk Operations
 
 **Deliverables**
-- Replace `Vec<Option<KeyMetadata>>` preallocation strategy with a windowed model:
-  - `KeyWindow { start, items, total_estimate, cursor_state }`
-  - LRU cache of pages (optional)
-- UI shows consistent scroll/selection without requiring all keys in memory.
-
-**Dependencies**
-- Must integrate with search state and selection semantics.
-- Works best when backend can provide stable-ish pagination (or accept best-effort ordering).
-
-**Tests**
-- Property tests for window math (bounds, wrapping, selection).
-- Integration tests that scan a large Redis dataset (docker).
+- Multi-select mode (Shift+Up/Down, `v` visual mode)
+- Bulk delete with confirmation
+- Bulk export (keys + values to file)
 
 ---
 
-## Milestone 9 — Bulk Actions (Feature)
+## Priority Order
 
-**Deliverables**
-- Bulk selection mode + multi-select (range, toggle)
-- Bulk delete / bulk expire (where supported)
-- Confirmation UX and safety checks
-
-**Dependencies**
-- Requires write mode
-- Requires backend capabilities:
-  - `supports_write`
-  - `supports_expire` for TTL operations
-
-**Tests**
-- Reducer tests for selection and bulk action workflows.
-- Integration tests for Redis.
+| Priority | Milestone | Why |
+|----------|-----------|-----|
+| 1 | Command Palette | Unlocks all command-based features |
+| 2 | Key Operations | Core CRUD, high user value |
+| 3 | Debug Framework | Enables better debugging, benefits tui-dispatch |
+| 4 | Search Improvements | Polish existing feature |
+| 5+ | Others | As needed |
 
 ---
 
-## Integration Test Strategy (Across Milestones)
+## See Also
 
-- Keep fast unit tests for reducers/state machines.
-- Use dockerized backends (`docker-compose.yml`) for integration tests:
-  - Redis, Memcached, etcd
-- Prefer a “test harness” that can be run locally and in CI:
-  - smoke tests for connect/scan/get
-  - feature-gated tests per backend capability
-
----
-
-## Next PRs (Smallest Shippable Slices)
-
-- Add `Effect` + `reduce()` skeleton (no behavior change); adapt existing async handlers to dispatch effects.
-- Store a capabilities snapshot per connected connection; expand TTL into read/write + add placeholders for range-get/write.
-- Replace remaining direct state mutations (scrolling/resizing/palette navigation) with explicit `Action`s.
-- Fix keybinding command coverage: wire `search.next_result` / `search.prev_result` into actions or remove dead defaults.
-- Consolidate current search fields into a single `SearchState` type (no UX change).
-- Add namespace rainbow hashing as a pure UI decoration (no config yet; deterministic by prefix).
-- Add `HighlightRule` types + config parsing stub (no regex execution until wired).
+- `ARCH_UPGRADE.md` - Completed architecture work
+- `REFACTOR.md` - Code hygiene backlog
+- `INTEGRATION_TESTS.md` - Test coverage tracking

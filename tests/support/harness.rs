@@ -1,6 +1,6 @@
 use tokio::sync::mpsc;
 
-use memtui::action::Action;
+use memtui::action::{Action, ActionDispatcher};
 use memtui::actions::{async_handlers::trigger_search, sync_handlers};
 use memtui::app::{AppState, ConnectionStatus};
 use memtui::config::Config;
@@ -108,19 +108,79 @@ impl AppHarness {
             .fold(false, |acc, a| self.dispatch_action(a) || acc)
     }
 
-    /// Dispatch actions through the same handlers the app uses.
-    /// Handles most sync actions; async result actions should use apply_* helpers.
+    /// Dispatch action using the generated ActionDispatcher trait.
+    /// Uses category-based routing for cleaner code.
     #[allow(dead_code)]
     pub fn dispatch_action(&mut self, action: Action) -> bool {
-        match &action {
-            // Search input actions
+        ActionDispatcher::dispatch(self, &action)
+    }
+}
+
+/// Implement the generated ActionDispatcher trait for AppHarness.
+/// Each category maps to its corresponding sync handler.
+impl ActionDispatcher for AppHarness {
+    fn dispatch_search(&mut self, action: &Action) -> bool {
+        if let Some((render_needed, needs_search)) =
+            sync_handlers::handle_search(&mut self.app_state, &mut self.ui_state, action)
+        {
+            if needs_search {
+                trigger_search(&mut self.app_state, &self.action_tx);
+            }
+            render_needed
+        } else {
+            false
+        }
+    }
+
+    fn dispatch_connection_form(&mut self, action: &Action) -> bool {
+        sync_handlers::handle_connection_form(
+            &mut self.ui_state,
+            &mut self.app_state,
+            &self.action_tx,
+            &Config::default(),
+            action,
+        )
+    }
+
+    fn dispatch_value_viewer(&mut self, action: &Action) -> bool {
+        sync_handlers::handle_value_viewer(&mut self.ui_state, action)
+    }
+
+    fn dispatch_connection_list(&mut self, action: &Action) -> bool {
+        sync_handlers::handle_connection_list(&mut self.ui_state, &self.app_state, action)
+    }
+
+    fn dispatch_welcome(&mut self, action: &Action) -> bool {
+        let configs = self.app_state.connection_manager.get_configs();
+        let recent_count = self
+            .ui_state
+            .recent_connection_ids
+            .iter()
+            .filter(|id| configs.iter().any(|c| &c.id == *id))
+            .count();
+        sync_handlers::handle_welcome(&mut self.ui_state, recent_count, action)
+    }
+
+    fn dispatch_async_result(&mut self, _action: &Action) -> bool {
+        // Async results should use apply_* helpers instead
+        false
+    }
+
+    fn dispatch_debug(&mut self, _action: &Action) -> bool {
+        // Debug actions not handled in tests
+        false
+    }
+
+    fn dispatch_uncategorized(&mut self, action: &Action) -> bool {
+        // Handle remaining uncategorized actions
+        match action {
+            // Search actions that start with a verb (StartSearch, ClearSearch, etc.)
             Action::StartSearch
             | Action::ClearSearch
-            | Action::SearchAddChar(_)
-            | Action::SearchDeleteChar
+            | Action::ConfirmSearch
             | Action::UpdateSearchQuery(_) => {
                 if let Some((render_needed, needs_search)) =
-                    sync_handlers::handle_search(&mut self.app_state, &mut self.ui_state, &action)
+                    sync_handlers::handle_search(&mut self.app_state, &mut self.ui_state, action)
                 {
                     if needs_search {
                         trigger_search(&mut self.app_state, &self.action_tx);
@@ -131,17 +191,17 @@ impl AppHarness {
                 }
             }
 
-            // Navigation actions
+            // Navigation
             Action::NextItem | Action::PrevItem | Action::NextPanel | Action::PrevPanel => {
                 sync_handlers::handle_navigation(
                     &mut self.ui_state,
                     &mut self.app_state,
                     &self.action_tx,
-                    &action,
+                    action,
                 )
             }
 
-            // Key selection (inline - matches main.rs behavior)
+            // Key selection
             Action::SelectKey(idx) => {
                 self.ui_state.key_list.select(Some(*idx));
                 self.app_state.selected_key_index = Some(*idx);
@@ -151,7 +211,7 @@ impl AppHarness {
                 true
             }
 
-            // UI state actions (Phase 3)
+            // UI state
             Action::FocusPanel(_)
             | Action::SetPaneRatio(_)
             | Action::SetSearchSelectionIndex(_)
@@ -161,10 +221,10 @@ impl AppHarness {
             | Action::EndResize
             | Action::SelectConnectionIndex(_)
             | Action::SelectWelcomeIndex(_) => {
-                sync_handlers::handle_ui_state(&mut self.ui_state, &mut self.app_state, &action)
+                sync_handlers::handle_ui_state(&mut self.ui_state, &mut self.app_state, action)
             }
 
-            // UI toggle actions
+            // UI toggles
             Action::ShowQuitConfirmation
             | Action::CancelQuit
             | Action::ToggleHelp
@@ -172,75 +232,22 @@ impl AppHarness {
             | Action::CloseConnectionForm
             | Action::OpenConnectionPalette
             | Action::CloseConnectionPalette => {
-                sync_handlers::handle_ui_toggle(&mut self.ui_state, &self.app_state, &action)
+                sync_handlers::handle_ui_toggle(&mut self.ui_state, &self.app_state, action)
             }
 
-            // Connection form actions
-            Action::ConnectionFormNextField
-            | Action::ConnectionFormPrevField
-            | Action::ConnectionFormAddChar(_)
-            | Action::ConnectionFormDeleteChar
-            | Action::ConnectionFormDeleteForward
-            | Action::ConnectionFormDeleteWordBack
-            | Action::ConnectionFormDeleteWordForward
-            | Action::ConnectionFormMoveLeft
-            | Action::ConnectionFormMoveRight
-            | Action::ConnectionFormMoveWordLeft
-            | Action::ConnectionFormMoveWordRight
-            | Action::ConnectionFormMoveStart
-            | Action::ConnectionFormMoveEnd
-            | Action::ConnectionFormNextBackendType
-            | Action::ConnectionFormPrevBackendType => sync_handlers::handle_connection_form(
-                &mut self.ui_state,
-                &mut self.app_state,
-                &self.action_tx,
-                &Config::default(),
-                &action,
-            ),
-
-            // Value viewer actions
-            Action::ValueViewerScrollUp
-            | Action::ValueViewerScrollDown
-            | Action::ValueViewerScrollBy(_) => {
-                sync_handlers::handle_value_viewer(&mut self.ui_state, &action)
-            }
-
-            // Connection list (palette) actions
-            Action::ConnectionListNext | Action::ConnectionListPrev => {
-                sync_handlers::handle_connection_list(&mut self.ui_state, &self.app_state, &action)
-            }
-
-            // Welcome screen actions
-            Action::WelcomeNextItem | Action::WelcomePrevItem => {
-                let configs = self.app_state.connection_manager.get_configs();
-                let recent_count = self
-                    .ui_state
-                    .recent_connection_ids
-                    .iter()
-                    .filter(|id| configs.iter().any(|c| &c.id == *id))
-                    .count();
-                sync_handlers::handle_welcome(&mut self.ui_state, recent_count, &action)
-            }
-
-            // Connection management (delete only - connect/disconnect need async)
+            // Connection management
             Action::DeleteConnection(_) => sync_handlers::handle_connection_management(
                 &mut self.ui_state,
                 &mut self.app_state,
-                &action,
+                action,
             ),
 
-            // Search navigation - sends sub-actions via channel
-            Action::SearchNextResult | Action::SearchPrevResult | Action::ConfirmSearch => {
-                // These are handled inline in main.rs but send sub-actions
-                // For now, return false - use drain_actions to process emitted actions
-                false
-            }
-
-            // Not handled - async actions, results, debug, etc.
             _ => false,
         }
     }
+}
 
+impl AppHarness {
     /// Drain any queued actions from the channel (e.g. emitted by trigger_search).
     #[allow(dead_code)]
     pub fn drain_actions(&mut self) -> Vec<Action> {
@@ -281,5 +288,25 @@ impl AppHarness {
             result.keys,
             token,
         );
+    }
+
+    /// Dispatch a sequence of actions.
+    ///
+    /// Returns whether any action triggered a render.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// app.dispatch_sequence([
+    ///     Action::NextItem,
+    ///     Action::NextItem,
+    ///     Action::NextItem,
+    /// ]);
+    /// ```
+    #[allow(dead_code)]
+    pub fn dispatch_sequence(&mut self, actions: impl IntoIterator<Item = Action>) -> bool {
+        actions
+            .into_iter()
+            .fold(false, |acc, action| self.dispatch_action(action) || acc)
     }
 }

@@ -145,20 +145,12 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::EventContext;
+    use crate::events::ComponentId;
     use crate::keybindings::default_keybindings;
-    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    use tui_dispatch::testing::key_event;
 
-    fn make_key_event(code: KeyCode, modifiers: KeyModifiers) -> Event {
-        Event {
-            kind: EventKind::Key(KeyEvent {
-                code,
-                modifiers,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::empty(),
-            }),
-            context: EventContext::default(),
-        }
+    fn event(s: &str) -> Event {
+        key_event::<ComponentId>(s)
     }
 
     #[test]
@@ -169,8 +161,7 @@ mod tests {
             keybindings: &keybindings,
         };
 
-        let event = make_key_event(KeyCode::Char('y'), KeyModifiers::empty());
-        let actions = quit_confirm.handle_event(&event, props);
+        let actions = quit_confirm.handle_event(&event("y"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::ConfirmQuit));
@@ -184,8 +175,7 @@ mod tests {
             keybindings: &keybindings,
         };
 
-        let event = make_key_event(KeyCode::Enter, KeyModifiers::empty());
-        let actions = quit_confirm.handle_event(&event, props);
+        let actions = quit_confirm.handle_event(&event("enter"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::ConfirmQuit));
@@ -199,8 +189,7 @@ mod tests {
             keybindings: &keybindings,
         };
 
-        let event = make_key_event(KeyCode::Char('n'), KeyModifiers::empty());
-        let actions = quit_confirm.handle_event(&event, props);
+        let actions = quit_confirm.handle_event(&event("n"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::CancelQuit));
@@ -214,8 +203,7 @@ mod tests {
             keybindings: &keybindings,
         };
 
-        let event = make_key_event(KeyCode::Esc, KeyModifiers::empty());
-        let actions = quit_confirm.handle_event(&event, props);
+        let actions = quit_confirm.handle_event(&event("esc"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::CancelQuit));
@@ -229,8 +217,7 @@ mod tests {
             keybindings: &keybindings,
         };
 
-        let event = make_key_event(KeyCode::Char('x'), KeyModifiers::empty());
-        let actions = quit_confirm.handle_event(&event, props);
+        let actions = quit_confirm.handle_event(&event("x"), props);
 
         assert!(actions.is_empty());
     }

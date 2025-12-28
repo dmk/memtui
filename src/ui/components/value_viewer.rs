@@ -930,7 +930,7 @@ impl ValueViewer {
 
         let mut table = Table::new(rows, constraints)
             .column_spacing(2)
-            .highlight_style(highlight_style);
+            .row_highlight_style(highlight_style);
 
         if !headers.is_empty() {
             let header_cells: Vec<Cell> = headers

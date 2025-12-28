@@ -2,6 +2,7 @@ mod support;
 
 use memtui::action::Action;
 use rstest::rstest;
+use tui_dispatch::ActionAssertions;
 
 use support::{fixtures, harness::AppHarness};
 
@@ -28,12 +29,10 @@ fn key_navigation_wraps_and_emits_select() {
     assert!(app.dispatch_action(Action::PrevItem));
     assert_eq!(app.ui_state.key_list.state.selected(), Some(2));
 
-    // Ensure emitted actions track the selection changes.
+    // Ensure emitted actions track the selection changes (using fluent API)
     let emitted = app.drain_actions();
-    assert!(
-        emitted.iter().any(|a| matches!(a, Action::SelectKey(2))),
-        "navigation should emit SelectKey actions for current index"
-    );
+    emitted.assert_not_empty();
+    emitted.assert_any_matches(|a| matches!(a, Action::SelectKey(2)));
 }
 
 #[rstest]

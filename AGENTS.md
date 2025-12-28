@@ -17,9 +17,11 @@ Components MUST follow these rules:
 
 Flow: `Event → Component::handle_event() → Action → sync_handlers → state mutation`
 
+
 ## After Meaningful Changes
 Run the sanity suite before sending anything up:
+
 ```bash
-make fmt test lint
+make verify
 ```
 

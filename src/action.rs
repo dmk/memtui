@@ -6,7 +6,8 @@ use std::fmt;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[derive(Clone)]
+#[derive(Clone, tui_dispatch::Action)]
+#[action(infer_categories, generate_dispatcher)]
 pub enum Action {
     Tick,
     Render,
@@ -145,99 +146,6 @@ pub enum Action {
     DebugToggleMouseCapture,
 
     Error(String),
-}
-
-impl Action {
-    /// Returns the variant name of the action (for filtering/logging)
-    pub fn name(&self) -> &'static str {
-        match self {
-            Action::Tick => "Tick",
-            Action::Render => "Render",
-            Action::Resize(_, _) => "Resize",
-            Action::Quit => "Quit",
-            Action::ShowQuitConfirmation => "ShowQuitConfirmation",
-            Action::ConfirmQuit => "ConfirmQuit",
-            Action::CancelQuit => "CancelQuit",
-            Action::NextPanel => "NextPanel",
-            Action::PrevPanel => "PrevPanel",
-            Action::FocusPanel(_) => "FocusPanel",
-            Action::NextItem => "NextItem",
-            Action::PrevItem => "PrevItem",
-            Action::CycleValueViewMode => "CycleValueViewMode",
-            Action::Enter => "Enter",
-            Action::Escape => "Escape",
-            Action::ToggleHelp => "ToggleHelp",
-            Action::OpenConnectionPalette => "OpenConnectionPalette",
-            Action::CloseConnectionPalette => "CloseConnectionPalette",
-            Action::NextConnectionTab => "NextConnectionTab",
-            Action::PrevConnectionTab => "PrevConnectionTab",
-            Action::SelectConnectionIndex(_) => "SelectConnectionIndex",
-            Action::SelectWelcomeIndex(_) => "SelectWelcomeIndex",
-            Action::SetPaneRatio(_) => "SetPaneRatio",
-            Action::SetSearchSelectionIndex(_) => "SetSearchSelectionIndex",
-            Action::ResetKeySelection => "ResetKeySelection",
-            Action::ExitSearchMode => "ExitSearchMode",
-            Action::StartResize => "StartResize",
-            Action::EndResize => "EndResize",
-            Action::OpenConnectionForm => "OpenConnectionForm",
-            Action::CloseConnectionForm => "CloseConnectionForm",
-            Action::SubmitConnectionForm(_) => "SubmitConnectionForm",
-            Action::ConnectionFormNextField => "ConnectionFormNextField",
-            Action::ConnectionFormPrevField => "ConnectionFormPrevField",
-            Action::ConnectionFormAddChar(_) => "ConnectionFormAddChar",
-            Action::ConnectionFormDeleteChar => "ConnectionFormDeleteChar",
-            Action::ConnectionFormDeleteForward => "ConnectionFormDeleteForward",
-            Action::ConnectionFormDeleteWordBack => "ConnectionFormDeleteWordBack",
-            Action::ConnectionFormDeleteWordForward => "ConnectionFormDeleteWordForward",
-            Action::ConnectionFormMoveLeft => "ConnectionFormMoveLeft",
-            Action::ConnectionFormMoveRight => "ConnectionFormMoveRight",
-            Action::ConnectionFormMoveWordLeft => "ConnectionFormMoveWordLeft",
-            Action::ConnectionFormMoveWordRight => "ConnectionFormMoveWordRight",
-            Action::ConnectionFormMoveStart => "ConnectionFormMoveStart",
-            Action::ConnectionFormMoveEnd => "ConnectionFormMoveEnd",
-            Action::ConnectionFormNextBackendType => "ConnectionFormNextBackendType",
-            Action::ConnectionFormPrevBackendType => "ConnectionFormPrevBackendType",
-            Action::ValueViewerScrollUp => "ValueViewerScrollUp",
-            Action::ValueViewerScrollDown => "ValueViewerScrollDown",
-            Action::ValueViewerScrollBy(_) => "ValueViewerScrollBy",
-            Action::ConnectionListNext => "ConnectionListNext",
-            Action::ConnectionListPrev => "ConnectionListPrev",
-            Action::WelcomeNextItem => "WelcomeNextItem",
-            Action::WelcomePrevItem => "WelcomePrevItem",
-            Action::SetActiveConnection(_) => "SetActiveConnection",
-            Action::Connect(_) => "Connect",
-            Action::Disconnect(_) => "Disconnect",
-            Action::DeleteConnection(_) => "DeleteConnection",
-            Action::FocusConnection(_) => "FocusConnection",
-            Action::LoadKeys => "LoadKeys",
-            Action::LoadMoreKeys(_) => "LoadMoreKeys",
-            Action::SelectKey(_) => "SelectKey",
-            Action::LoadValueDebounced { .. } => "LoadValueDebounced",
-            Action::LoadValue { .. } => "LoadValue",
-            Action::StartSearch => "StartSearch",
-            Action::UpdateSearchQuery(_) => "UpdateSearchQuery",
-            Action::ClearSearch => "ClearSearch",
-            Action::ConfirmSearch => "ConfirmSearch",
-            Action::SearchAddChar(_) => "SearchAddChar",
-            Action::SearchDeleteChar => "SearchDeleteChar",
-            Action::SearchNextResult => "SearchNextResult",
-            Action::SearchPrevResult => "SearchPrevResult",
-            Action::DidConnect(_, _, _) => "DidConnect",
-            Action::DidDisconnect(_) => "DidDisconnect",
-            Action::DidFailConnect(_, _) => "DidFailConnect",
-            Action::DidScanKeys { .. } => "DidScanKeys",
-            Action::DidFailScanKeys(_) => "DidFailScanKeys",
-            Action::DidLoadValue { .. } => "DidLoadValue",
-            Action::DidFailLoadValue(_) => "DidFailLoadValue",
-            Action::DidSearchLocal { .. } => "DidSearchLocal",
-            Action::DidSearchServer { .. } => "DidSearchServer",
-            Action::ToggleDebug => "ToggleDebug",
-            Action::DebugCopyFrame => "DebugCopyFrame",
-            Action::DebugToggleStateView => "DebugToggleStateView",
-            Action::DebugToggleMouseCapture => "DebugToggleMouseCapture",
-            Action::Error(_) => "Error",
-        }
-    }
 }
 
 impl fmt::Debug for Action {
@@ -395,5 +303,68 @@ impl fmt::Debug for Action {
             Action::DebugToggleMouseCapture => write!(f, "DebugToggleMouseCapture"),
             Action::Error(err) => f.debug_tuple("Error").field(err).finish(),
         }
+    }
+}
+
+#[cfg(test)]
+mod category_tests {
+    use super::*;
+
+    #[test]
+    fn test_category_inference() {
+        // Test connection_form category
+        assert_eq!(
+            Action::ConnectionFormNextField.category(),
+            Some("connection_form")
+        );
+        assert_eq!(
+            Action::ConnectionFormAddChar('x').category(),
+            Some("connection_form")
+        );
+        assert!(Action::ConnectionFormNextField.is_connection_form());
+
+        // Test value_viewer category
+        assert_eq!(Action::ValueViewerScrollUp.category(), Some("value_viewer"));
+        assert!(Action::ValueViewerScrollDown.is_value_viewer());
+
+        // Test search category
+        assert_eq!(Action::SearchAddChar('a').category(), Some("search"));
+        assert!(Action::SearchNextResult.is_search());
+
+        // Test async_result category (Did* prefix)
+        assert_eq!(
+            Action::DidDisconnect("test".into()).category(),
+            Some("async_result")
+        );
+        assert!(Action::DidFailConnect("id".into(), "error".into()).is_async_result());
+
+        // Test connection_list category
+        assert_eq!(
+            Action::ConnectionListNext.category(),
+            Some("connection_list")
+        );
+        assert!(Action::ConnectionListPrev.is_connection_list());
+
+        // Test welcome category
+        assert_eq!(Action::WelcomeNextItem.category(), Some("welcome"));
+
+        // Test debug category
+        assert_eq!(Action::DebugCopyFrame.category(), Some("debug"));
+        assert!(Action::DebugToggleStateView.is_debug());
+
+        // Uncategorized actions
+        assert_eq!(Action::Tick.category(), None);
+        assert_eq!(Action::Quit.category(), None);
+        assert_eq!(Action::NextItem.category(), None);
+    }
+
+    #[test]
+    fn test_category_enum() {
+        // super::ActionCategory is the generated enum (not the trait)
+        let action = Action::SearchAddChar('x');
+        assert_eq!(action.category_enum(), super::ActionCategory::Search);
+
+        let action = Action::Tick;
+        assert_eq!(action.category_enum(), super::ActionCategory::Uncategorized);
     }
 }

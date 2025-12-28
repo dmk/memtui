@@ -103,20 +103,12 @@ impl Component for SearchInput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::EventContext;
+    use crate::events::ComponentId;
     use crate::keybindings::default_keybindings;
-    use crossterm::event::{KeyEvent, KeyEventKind, KeyEventState};
+    use tui_dispatch::testing::key_event;
 
-    fn make_key_event(code: KeyCode, modifiers: KeyModifiers) -> Event {
-        Event {
-            kind: EventKind::Key(KeyEvent {
-                code,
-                modifiers,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::empty(),
-            }),
-            context: EventContext::default(),
-        }
+    fn event(s: &str) -> Event {
+        key_event::<ComponentId>(s)
     }
 
     #[test]
@@ -128,8 +120,7 @@ mod tests {
             is_searching: true,
         };
 
-        let event = make_key_event(KeyCode::Char('a'), KeyModifiers::empty());
-        let actions = search_input.handle_event(&event, props);
+        let actions = search_input.handle_event(&event("a"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::SearchAddChar('a')));
@@ -144,8 +135,7 @@ mod tests {
             is_searching: true,
         };
 
-        let event = make_key_event(KeyCode::Backspace, KeyModifiers::empty());
-        let actions = search_input.handle_event(&event, props);
+        let actions = search_input.handle_event(&event("backspace"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::SearchDeleteChar));
@@ -160,8 +150,7 @@ mod tests {
             is_searching: true,
         };
 
-        let event = make_key_event(KeyCode::Esc, KeyModifiers::empty());
-        let actions = search_input.handle_event(&event, props);
+        let actions = search_input.handle_event(&event("esc"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::ClearSearch));
@@ -176,8 +165,7 @@ mod tests {
             is_searching: true,
         };
 
-        let event = make_key_event(KeyCode::Enter, KeyModifiers::empty());
-        let actions = search_input.handle_event(&event, props);
+        let actions = search_input.handle_event(&event("enter"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::ConfirmSearch));
@@ -192,8 +180,7 @@ mod tests {
             is_searching: true,
         };
 
-        let event = make_key_event(KeyCode::Down, KeyModifiers::empty());
-        let actions = search_input.handle_event(&event, props);
+        let actions = search_input.handle_event(&event("down"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::SearchNextResult));
@@ -208,8 +195,7 @@ mod tests {
             is_searching: false,
         };
 
-        let event = make_key_event(KeyCode::Char('a'), KeyModifiers::empty());
-        let actions = search_input.handle_event(&event, props);
+        let actions = search_input.handle_event(&event("a"), props);
 
         assert!(actions.is_empty());
     }
@@ -224,8 +210,7 @@ mod tests {
         };
 
         // Ctrl+C should not produce SearchAddChar
-        let event = make_key_event(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        let actions = search_input.handle_event(&event, props);
+        let actions = search_input.handle_event(&event("ctrl+c"), props);
 
         // Should be empty since Ctrl+C isn't mapped to a search command
         assert!(actions.is_empty());

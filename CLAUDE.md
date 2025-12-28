@@ -1,5 +1,7 @@
 # Agent Notes
 
+This app uses patterns from `../tui-dispatch` (see its CLAUDE.md for state management docs).
+
 - Core loop: `src/main.rs` runs the Tokio event loop, owns `AppState`/`UiState`, and routes `Action`s (defined in `src/action.rs`) to sync/async handlers in `src/actions/`.
 - State + app layer: `src/app/` holds the connection manager and event runner that spawn tasks and push results back into the action pipeline.
 - Backends: `src/backend/` defines the `Backend` trait and the Redis/Memcached/etcd implementations with capability flags used by the UI.

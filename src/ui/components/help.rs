@@ -270,20 +270,12 @@ impl Component for HelpScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::EventContext;
+    use crate::events::ComponentId;
     use crate::keybindings::default_keybindings;
-    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    use tui_dispatch::testing::key_event;
 
-    fn make_key_event(code: KeyCode, modifiers: KeyModifiers) -> Event {
-        Event {
-            kind: EventKind::Key(KeyEvent {
-                code,
-                modifiers,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::empty(),
-            }),
-            context: EventContext::default(),
-        }
+    fn event(s: &str) -> Event {
+        key_event::<ComponentId>(s)
     }
 
     #[test]
@@ -294,8 +286,7 @@ mod tests {
             keybindings: &keybindings,
         };
 
-        let event = make_key_event(KeyCode::Char('?'), KeyModifiers::empty());
-        let actions = help_screen.handle_event(&event, props);
+        let actions = help_screen.handle_event(&event("?"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::ToggleHelp));
@@ -309,8 +300,7 @@ mod tests {
             keybindings: &keybindings,
         };
 
-        let event = make_key_event(KeyCode::Esc, KeyModifiers::empty());
-        let actions = help_screen.handle_event(&event, props);
+        let actions = help_screen.handle_event(&event("esc"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::ToggleHelp));
@@ -324,8 +314,7 @@ mod tests {
             keybindings: &keybindings,
         };
 
-        let event = make_key_event(KeyCode::Char('q'), KeyModifiers::empty());
-        let actions = help_screen.handle_event(&event, props);
+        let actions = help_screen.handle_event(&event("q"), props);
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], Action::ToggleHelp));
@@ -340,8 +329,7 @@ mod tests {
         };
 
         // 'x' is not mapped to help.close
-        let event = make_key_event(KeyCode::Char('x'), KeyModifiers::empty());
-        let actions = help_screen.handle_event(&event, props);
+        let actions = help_screen.handle_event(&event("x"), props);
 
         assert!(actions.is_empty());
     }

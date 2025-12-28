@@ -4,6 +4,7 @@ use memtui::action::Action;
 use memtui::actions::async_handlers;
 use memtui::search::fuzzy_search_keys_with_positions;
 use rstest::rstest;
+use tui_dispatch::{assert_emitted, ActionAssertions};
 
 use support::{fixtures, harness::AppHarness};
 
@@ -33,11 +34,12 @@ fn search_results_update_selection_and_emit_action() {
     assert_eq!(app.app_state.search_selection_index, Some(0));
     assert!(app.app_state.search_match_positions.contains_key(&2));
 
+    // Use fluent API for action assertions (predicate-based since Action doesn't impl PartialEq)
     let actions = app.drain_actions();
-    assert!(
-        actions.iter().any(|a| matches!(a, Action::SelectKey(2))),
-        "local search should emit SelectKey for the first match"
-    );
+    actions.assert_not_empty();
+    actions.assert_first_matches(|a| matches!(a, Action::SelectKey(2)));
+    // Also works with assert_emitted! macro
+    assert_emitted!(actions, Action::SelectKey(2));
 
     for action in actions {
         app.dispatch_action(action);

@@ -103,7 +103,7 @@ fn render_debug_banner(f: &mut Frame, keybindings: &KeybindingsConfig, debug: &D
 
     let toggle_key = keybindings
         .get_context_bindings(BindingContext::Debug)
-        .get("debug.toggle")
+        .and_then(|bindings| bindings.get("debug.toggle"))
         .and_then(|keys| {
             keys.iter()
                 .find(|k| k.eq_ignore_ascii_case("f12"))

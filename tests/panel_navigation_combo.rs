@@ -3,6 +3,7 @@ mod support;
 use memtui::action::Action;
 use memtui::ui::Panel;
 use rstest::rstest;
+use tui_dispatch::assert_emitted;
 
 use support::{fixtures, harness::AppHarness};
 
@@ -62,7 +63,7 @@ fn next_item_in_keys_panel_navigates_keys() {
 
     // Drain the SelectKey action that gets queued
     let actions = app.drain_actions();
-    assert!(actions.iter().any(|a| matches!(a, Action::SelectKey(1))));
+    assert_emitted!(actions, Action::SelectKey(1));
 }
 
 #[rstest]
@@ -77,7 +78,7 @@ fn prev_item_in_keys_panel_navigates_keys() {
     app.dispatch_action(Action::PrevItem);
 
     let actions = app.drain_actions();
-    assert!(actions.iter().any(|a| matches!(a, Action::SelectKey(0))));
+    assert_emitted!(actions, Action::SelectKey(0));
 }
 
 #[rstest]

@@ -1,11 +1,11 @@
 mod support;
 
-use rstest::rstest;
-
-use support::{fixtures, harness::AppHarness};
-
 use memtui::action::Action;
 use memtui::actions::async_handlers;
+use rstest::rstest;
+use tui_dispatch::assert_emitted;
+
+use support::{fixtures, harness::AppHarness};
 
 #[rstest]
 fn apply_scan_result_populates_keys_and_selection() {
@@ -41,8 +41,5 @@ fn initial_scan_emits_select_action() {
     assert_eq!(app.ui_state.key_list.state.selected(), Some(0));
 
     let emitted = app.drain_actions();
-    assert!(
-        emitted.iter().any(|a| matches!(a, Action::SelectKey(0))),
-        "initial scan should emit SelectKey for the first item"
-    );
+    assert_emitted!(emitted, Action::SelectKey(0));
 }

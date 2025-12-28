@@ -1,6 +1,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
+use tui_dispatch::Action as _;
 
 use crate::action::Action;
 use crate::app::AppState;

@@ -6,9 +6,11 @@ pub use runner::{
     get_active_modal, get_focused_component, is_modal_open, sync_event_context, EventRunner,
 };
 
+use crate::action::CmdLineMode;
+use crate::backend::CommandStatus;
 use crate::config::Config;
 use crate::formatter::{JsonColorConfig, JsonFormatter, TextFormatter};
-use crate::types::{KeyMetadata, Value};
+use crate::types::{KeyMetadata, Value, ValueType};
 use std::collections::HashMap;
 
 /// Main application state (backend connection + data)
@@ -17,6 +19,7 @@ pub struct AppState {
     pub keys: Vec<Option<KeyMetadata>>, // Sparse array - None = not loaded yet
     pub selected_value: Option<Value>,
     pub selected_key_index: Option<usize>,
+    pub command_result: Option<CommandResult>,
     pub value_request_token: u64,
     pub text_formatter: TextFormatter,
     pub json_formatter: JsonFormatter,
@@ -28,16 +31,44 @@ pub struct AppState {
     pub is_loading_keys: bool,
     pub keys_per_chunk: usize,
     pub viewport_height: usize, // Number of rows visible at once
-    // Search state
-    pub is_searching: bool,               // Whether search input is active
-    pub search_query: String,             // Current search query
+    // CmdLine state (vim-style command line)
+    pub cmdline_mode: Option<CmdLineMode>, // None = not in cmdline mode
+    pub cmdline_buffer: String,            // Current input buffer
+    pub cmdline_cursor: usize,             // Cursor position in buffer
+    pub cmdline_active: bool,              // True when cmdline is focused for input
+    // Search results (only used when cmdline_mode == Some(Search))
     pub search_results_local: Vec<usize>, // Indices of fuzzy-matched keys in loaded keys
-    pub search_results_server: Vec<KeyMetadata>, // Keys from server search (kept for compatibility, but merged into keys)
-    pub search_token: u64,                       // Token to cancel stale searches
-    pub is_server_searching: bool,               // Whether server search is in progress
-    pub search_selection_index: Option<usize>,   // Selection index within search results (0-based)
-    pub search_match_positions: HashMap<usize, Vec<u32>>, // Match positions for highlighting (key index -> char positions)
+    pub search_results_server: Vec<KeyMetadata>, // Keys from server search (merged into keys)
+    pub search_token: u64,                // Token to cancel stale searches
+    pub is_server_searching: bool,        // Whether server search is in progress
+    pub search_selection_index: Option<usize>, // Selection index within search results (0-based)
+    pub search_match_positions: HashMap<usize, Vec<u32>>, // Match positions for highlighting
     pub keys_length_before_search: usize, // Original keys array length before merging server results
+}
+
+#[derive(Clone, Debug)]
+pub struct CommandResult {
+    pub command: String,
+    pub title: String,
+    pub value: Value,
+    pub status: CommandStatus,
+}
+
+impl CommandResult {
+    pub fn new(command: String, output: String, status: CommandStatus) -> Self {
+        let title = format!("command results: {}", command);
+        let value = Value {
+            data: output.into_bytes(),
+            value_type: ValueType::String,
+            encoding: None,
+        };
+        Self {
+            command,
+            title,
+            value,
+            status,
+        }
+    }
 }
 
 impl AppState {
@@ -64,6 +95,7 @@ impl AppState {
             keys: Vec::new(),
             selected_value: None,
             selected_key_index: None,
+            command_result: None,
             value_request_token: 0,
             text_formatter: TextFormatter,
             json_formatter: JsonFormatter::new(json_color_config),
@@ -74,9 +106,12 @@ impl AppState {
             is_loading_keys: false,
             keys_per_chunk: config.data.keys_per_chunk,
             viewport_height: config.ui.viewport_height,
-            // Search state
-            is_searching: false,
-            search_query: String::new(),
+            // CmdLine state
+            cmdline_mode: None,
+            cmdline_buffer: String::new(),
+            cmdline_cursor: 0,
+            cmdline_active: false,
+            // Search results
             search_results_local: Vec::new(),
             search_results_server: Vec::new(),
             search_token: 0,
@@ -100,40 +135,82 @@ impl AppState {
         self.keys.clear();
         self.selected_value = None;
         self.selected_key_index = None;
-        self.reset_search();
+        self.command_result = None;
+        self.reset_cmdline();
     }
 
-    pub fn reset_search(&mut self) {
-        self.is_searching = false;
-        self.search_query.clear();
+    pub(crate) fn clear_search_state(&mut self) {
         // Remove server keys that were merged during search (only if we actually added any)
         if self.keys_length_before_search > 0 && self.keys.len() > self.keys_length_before_search {
             self.keys.truncate(self.keys_length_before_search);
         }
         self.search_results_local.clear();
         self.search_results_server.clear();
-        self.search_token = self.search_token.wrapping_add(1);
         self.is_server_searching = false;
         self.search_selection_index = None;
         self.search_match_positions.clear();
         self.keys_length_before_search = 0;
     }
 
-    pub fn start_search(&mut self) {
-        self.is_searching = true;
-        self.search_query.clear();
-        // Remove server keys from previous search (only if we actually added any)
-        if self.keys_length_before_search > 0 && self.keys.len() > self.keys_length_before_search {
-            self.keys.truncate(self.keys_length_before_search);
-        }
+    pub fn reset_cmdline(&mut self) {
+        self.cmdline_mode = None;
+        self.cmdline_buffer.clear();
+        self.cmdline_cursor = 0;
+        self.cmdline_active = false;
+        self.search_token = self.search_token.wrapping_add(1);
+        self.clear_search_state();
+    }
+
+    pub fn start_cmdline(&mut self, mode: CmdLineMode) {
+        self.cmdline_mode = Some(mode);
+        self.cmdline_buffer.clear();
+        self.cmdline_cursor = 0;
+        self.cmdline_active = true;
+        self.search_token = self.search_token.wrapping_add(1);
+        self.clear_search_state();
         // Track current keys length before merging new server results
         self.keys_length_before_search = self.keys.len();
-        self.search_results_local.clear();
-        self.search_results_server.clear();
-        self.search_token = self.search_token.wrapping_add(1);
-        self.is_server_searching = false;
-        self.search_selection_index = None;
-        self.search_match_positions.clear();
+    }
+
+    /// Helper to check if cmdline is active
+    pub fn is_cmdline_active(&self) -> bool {
+        self.cmdline_active
+    }
+
+    /// Helper to check if cmdline is visible
+    pub fn is_cmdline_visible(&self) -> bool {
+        self.cmdline_mode.is_some()
+    }
+
+    /// Focus cmdline for input without clearing the buffer
+    pub fn activate_cmdline(&mut self) {
+        let char_len = self.cmdline_buffer.chars().count();
+        self.cmdline_cursor = self.cmdline_cursor.min(char_len);
+        self.cmdline_active = true;
+    }
+
+    /// Unfocus cmdline while keeping it visible
+    pub fn deactivate_cmdline(&mut self) {
+        self.cmdline_active = false;
+    }
+
+    /// Helper to check if in search mode
+    pub fn is_searching(&self) -> bool {
+        self.cmdline_mode == Some(CmdLineMode::Search)
+    }
+
+    /// Helper to check if a search query is currently active
+    pub fn is_search_active(&self) -> bool {
+        self.cmdline_mode == Some(CmdLineMode::Search) && !self.cmdline_buffer.is_empty()
+    }
+
+    /// Returns the active search query, if any
+    pub fn active_search_query(&self) -> Option<&str> {
+        if self.cmdline_mode == Some(CmdLineMode::Search) {
+            Some(self.cmdline_buffer.as_str())
+        } else {
+            None
+        }
     }
 
     /// Calculate which indices in the sparse array are empty and should be filled

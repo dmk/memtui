@@ -1,6 +1,6 @@
 mod support;
 
-use memtui::action::Action;
+use memtui::action::{Action, CmdLineMode};
 use memtui::ui::Panel;
 use rstest::rstest;
 
@@ -62,10 +62,10 @@ fn search_selection_index_updates() {
 
     assert_eq!(app.app_state.search_selection_index, None);
 
-    assert!(app.dispatch_action(Action::SetSearchSelectionIndex(Some(2))));
+    assert!(app.dispatch_action(Action::SetCmdLineSelectionIndex(Some(2))));
     assert_eq!(app.app_state.search_selection_index, Some(2));
 
-    assert!(app.dispatch_action(Action::SetSearchSelectionIndex(None)));
+    assert!(app.dispatch_action(Action::SetCmdLineSelectionIndex(None)));
     assert_eq!(app.app_state.search_selection_index, None);
 }
 
@@ -90,10 +90,12 @@ fn reset_key_selection_clears_state() {
 fn exit_search_mode_clears_flag() {
     let mut app = AppHarness::new();
 
-    app.app_state.is_searching = true;
+    app.app_state.cmdline_mode = Some(CmdLineMode::Search);
+    app.app_state.cmdline_active = true;
 
-    assert!(app.dispatch_action(Action::ExitSearchMode));
-    assert!(!app.app_state.is_searching);
+    assert!(app.dispatch_action(Action::ExitCmdLineMode));
+    assert!(!app.app_state.cmdline_active);
+    assert_eq!(app.app_state.cmdline_mode, Some(CmdLineMode::Search));
 }
 
 #[rstest]

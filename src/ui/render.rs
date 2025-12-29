@@ -10,6 +10,7 @@ use std::time::SystemTime;
 use super::components::modal::render_modal;
 
 use super::components::{
+    cmdline::CmdLineProps,
     connection_form::ConnectionFormProps,
     connection_list::ConnectionListProps,
     help::HelpScreenProps,
@@ -25,6 +26,7 @@ use super::theme;
 use super::widgets::{TabBar, TabItem};
 use crate::app::{AppState, ConnectionStatus};
 use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConfig};
+use crate::types::ValueType;
 
 /// Main UI rendering function
 pub fn render_at(
@@ -74,20 +76,25 @@ pub fn render_at(
     let warning_height = if show_limited_keys_warning { 1 } else { 0 }
         + if show_temp_connection_warning { 1 } else { 0 };
 
+    // Command line height (1 when active, 0 otherwise)
+    let cmdline_height = if app_state.is_cmdline_visible() { 1 } else { 0 };
+
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(if show_tabs { 1 } else { 0 }), // Tabs - single line
             Constraint::Length(warning_height),
-            Constraint::Min(0),    // Body
-            Constraint::Length(1), // Status bar - single line
+            Constraint::Min(0),                 // Body
+            Constraint::Length(cmdline_height), // Command line (above status bar)
+            Constraint::Length(1),              // Status bar - single line
         ])
         .split(f.area());
 
     let tab_area = root[0];
     let warning_area = root[1];
     let body_area = root[2];
-    let status_area = root[3];
+    let cmdline_area = root[3];
+    let status_area = root[4];
 
     // Store body area for resize calculations
     ui_state.last_body_area = Some(body_area);
@@ -151,6 +158,12 @@ pub fn render_at(
         render_welcome(f, app_state, ui_state, body_area, keybindings);
     }
 
+    // Render command line above status bar when active
+    if app_state.is_cmdline_visible() {
+        render_cmdline(f, app_state, ui_state, keybindings, cmdline_area);
+    }
+
+    // Status bar is always visible
     render_status_bar(f, app_state, ui_state, keybindings, status_area);
 
     if ui_state.show_connection_palette {
@@ -281,12 +294,8 @@ fn render_keys(
 ) {
     app_state.viewport_height = area.height.saturating_sub(2) as usize;
 
-    // Search state
-    let active_search_query = if app_state.is_searching || !app_state.search_query.is_empty() {
-        Some(app_state.search_query.as_str())
-    } else {
-        None
-    };
+    // CmdLine/search state - only active when in search mode
+    let active_search_query = app_state.active_search_query();
 
     let active_id = app_state.connection_manager.get_active_id();
     let capabilities = active_id.and_then(|id| app_state.connection_manager.get_capabilities(id));
@@ -298,7 +307,7 @@ fn render_keys(
         active_search_query,
         is_active: ui_state.active_panel == Panel::Keys,
         capabilities,
-        is_searching: app_state.is_searching,
+        is_searching: app_state.is_searching(),
         search_results_local: &app_state.search_results_local,
         search_results_server: &app_state.search_results_server,
         is_server_searching: app_state.is_server_searching,
@@ -320,19 +329,34 @@ fn render_value(
     now: SystemTime,
     keybindings: &KeybindingsConfig,
 ) {
-    let selected_key = app_state
-        .selected_key_index
-        .and_then(|idx| app_state.keys.get(idx))
-        .and_then(|k| k.as_ref());
+    let command_result = app_state.command_result.as_ref();
+    let (selected_value, selected_key_type, selected_key_name, selected_key) =
+        if let Some(result) = command_result {
+            (
+                Some(&result.value),
+                Some(ValueType::String),
+                Some(result.title.as_str()),
+                None,
+            )
+        } else {
+            let selected_key = app_state
+                .selected_key_index
+                .and_then(|idx| app_state.keys.get(idx))
+                .and_then(|k| k.as_ref());
 
-    let selected_key_type = selected_key.map(|k| k.value_type);
-    let selected_key_name = selected_key.map(|k| k.name.as_str());
+            (
+                app_state.selected_value.as_ref(),
+                selected_key.map(|k| k.value_type),
+                selected_key.map(|k| k.name.as_str()),
+                selected_key,
+            )
+        };
 
     let active_id = app_state.connection_manager.get_active_id();
     let capabilities = active_id.and_then(|id| app_state.connection_manager.get_capabilities(id));
 
     let props = ValueViewerProps {
-        selected_value: app_state.selected_value.as_ref(),
+        selected_value,
         selected_key_type,
         selected_key_name,
         selected_key,
@@ -561,6 +585,32 @@ fn render_status_bar(
 
     let status_line = Paragraph::new(Line::from(spans)).style(theme::util_bg());
     f.render_widget(status_line, area);
+}
+
+fn render_cmdline(
+    f: &mut Frame,
+    app_state: &AppState,
+    ui_state: &mut UiState,
+    keybindings: &KeybindingsConfig,
+    area: Rect,
+) {
+    // Calculate search result count for display
+    let search_result_count = if app_state.is_searching() && !app_state.cmdline_buffer.is_empty() {
+        Some(app_state.search_results_local.len() + app_state.search_results_server.len())
+    } else {
+        None
+    };
+
+    let props = CmdLineProps {
+        keybindings,
+        mode: app_state.cmdline_mode,
+        buffer: &app_state.cmdline_buffer,
+        cursor: app_state.cmdline_cursor,
+        search_result_count,
+        is_server_searching: app_state.is_server_searching,
+    };
+
+    ui_state.cmdline.render(f, area, props);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

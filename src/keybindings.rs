@@ -5,7 +5,7 @@ pub use tui_dispatch::{parse_key_string, BindingContext as BindingContextTrait, 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, tui_dispatch::BindingContext)]
 pub enum BindingContext {
     Default,
-    Search,
+    CmdLine,
     ConnectionForm,
     ConnectionPalette,
     QuitConfirmation,
@@ -105,7 +105,9 @@ pub fn default_keybindings() -> KeybindingsConfig {
     kb.add_global("debug.toggle", vec!["f12".into(), "ctrl+d".into()]);
 
     // Default context bindings (when connected and browsing)
-    kb.add(BindingContext::Default, "search.start", vec!["/".into()]);
+    kb.add(BindingContext::Default, "cmdline.search", vec!["/".into()]);
+    kb.add(BindingContext::Default, "cmdline.command", vec![":".into()]);
+    kb.add(BindingContext::Default, "cmdline.goto", vec!["g".into()]);
     kb.add(
         BindingContext::Default,
         "navigation.next_panel",
@@ -157,23 +159,24 @@ pub fn default_keybindings() -> KeybindingsConfig {
         vec!["ctrl+l".into()],
     );
 
-    // Search context bindings
-    kb.add(BindingContext::Search, "search.clear", vec!["esc".into()]);
+    // CmdLine context bindings (search, command, goto modes)
+    kb.add(BindingContext::CmdLine, "cmdline.clear", vec!["esc".into()]);
     kb.add(
-        BindingContext::Search,
-        "search.next_result",
-        vec!["down".into(), "j".into()],
-    );
-    kb.add(
-        BindingContext::Search,
-        "search.prev_result",
-        vec!["up".into(), "k".into()],
-    );
-    kb.add(
-        BindingContext::Search,
-        "search.confirm",
+        BindingContext::CmdLine,
+        "cmdline.confirm",
         vec!["enter".into()],
     );
+    kb.add(
+        BindingContext::CmdLine,
+        "cmdline.next_result",
+        vec!["down".into(), "ctrl+n".into()],
+    );
+    kb.add(
+        BindingContext::CmdLine,
+        "cmdline.prev_result",
+        vec!["up".into(), "ctrl+p".into()],
+    );
+    // Note: cmdline.history_prev/next bindings will be added in Phase 7
 
     // Connection form context bindings
     kb.add(
@@ -394,7 +397,7 @@ mod tests {
             .get_context_bindings(BindingContext::Default)
             .is_some());
         assert!(bindings
-            .get_context_bindings(BindingContext::Search)
+            .get_context_bindings(BindingContext::CmdLine)
             .is_some());
     }
 

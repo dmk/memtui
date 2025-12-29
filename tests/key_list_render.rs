@@ -27,10 +27,10 @@ fn key_list_renders_with_and_without_search() {
 
     // Populate search state manually for deterministic highlighting
     let search = memtui::search::fuzzy_search_keys_with_positions(&app.app_state.keys, "user");
-    app.app_state.search_query = "user".to_string();
+    app.app_state.cmdline_buffer = "user".to_string();
     app.app_state.search_results_local = search.indices;
     app.app_state.search_match_positions = search.match_positions;
-    app.app_state.is_searching = false; // query is active, not editing
+    app.app_state.cmdline_mode = Some(memtui::action::CmdLineMode::Search);
 
     let with_search = buffer_to_string(&app.render((60, 18)));
     assert_snapshot!("key_list_search_user", with_search);

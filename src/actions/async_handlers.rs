@@ -172,20 +172,10 @@ pub fn handle_load_value_by_name(
 pub fn trigger_search(app_state: &mut AppState, action_tx: &mpsc::UnboundedSender<Action>) {
     app_state.search_token = app_state.search_token.wrapping_add(1);
     let token = app_state.search_token;
-    let query = app_state.search_query.clone();
+    let query = app_state.cmdline_buffer.clone();
 
     if query.is_empty() {
-        // Remove server keys that were merged during search (only if we actually added any)
-        if app_state.keys_length_before_search > 0
-            && app_state.keys.len() > app_state.keys_length_before_search
-        {
-            app_state.keys.truncate(app_state.keys_length_before_search);
-        }
-        app_state.search_results_local.clear();
-        app_state.search_results_server.clear();
-        app_state.search_match_positions.clear();
-        app_state.is_server_searching = false;
-        app_state.keys_length_before_search = 0;
+        app_state.clear_search_state();
         return;
     }
 
@@ -356,7 +346,7 @@ pub fn handle_did_search_local(
     match_positions: std::collections::HashMap<usize, Vec<u32>>,
     token: u64,
 ) -> bool {
-    if app_state.search_token == token && app_state.is_searching {
+    if app_state.search_token == token && app_state.is_search_active() {
         app_state.search_results_local = indices;
         app_state.search_match_positions = match_positions;
         if !app_state.search_results_local.is_empty() {
@@ -400,7 +390,7 @@ pub fn handle_did_search_server(
         if !unique_server_keys.is_empty() {
             // Append unique server keys to the keys array and compute match positions
             let start_idx = app_state.keys.len();
-            let query = &app_state.search_query;
+            let query = &app_state.cmdline_buffer;
 
             for key in unique_server_keys {
                 let key_idx = app_state.keys.len();

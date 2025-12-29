@@ -1,6 +1,6 @@
 mod support;
 
-use memtui::action::Action;
+use memtui::action::{Action, CmdLineMode};
 use memtui::actions::async_handlers;
 use memtui::search::fuzzy_search_keys_with_positions;
 use rstest::rstest;
@@ -14,10 +14,10 @@ fn search_results_update_selection_and_emit_action() {
         .with_connection("local")
         .with_keys(fixtures::sample_keys());
 
-    assert!(app.dispatch_action(Action::StartSearch));
+    assert!(app.dispatch_action(Action::SetCmdLineMode(CmdLineMode::Search)));
     let token = app.app_state.search_token;
     let query = "abc";
-    app.app_state.search_query = query.to_string();
+    app.app_state.cmdline_buffer = query.to_string();
 
     let search = fuzzy_search_keys_with_positions(&app.app_state.keys, query);
     assert_eq!(search.indices, vec![2]);
@@ -55,10 +55,10 @@ fn clear_search_resets_results_and_focuses_first_key() {
         .with_connection("local")
         .with_keys(fixtures::sample_keys());
 
-    assert!(app.dispatch_action(Action::StartSearch));
+    assert!(app.dispatch_action(Action::SetCmdLineMode(CmdLineMode::Search)));
     let token = app.app_state.search_token;
     let query = "abc";
-    app.app_state.search_query = query.to_string();
+    app.app_state.cmdline_buffer = query.to_string();
 
     let search = fuzzy_search_keys_with_positions(&app.app_state.keys, query);
     assert_eq!(search.indices, vec![2]);
@@ -76,12 +76,12 @@ fn clear_search_resets_results_and_focuses_first_key() {
     assert_eq!(app.app_state.selected_key_index, Some(2));
     assert_eq!(app.ui_state.key_list.state.selected(), Some(2));
 
-    assert!(app.dispatch_action(Action::ClearSearch));
+    assert!(app.dispatch_action(Action::CmdLineClear));
 
-    assert!(!app.app_state.is_searching);
+    assert!(app.app_state.is_searching());
     assert!(app.app_state.search_results_local.is_empty());
     assert!(app.app_state.search_match_positions.is_empty());
-    assert_eq!(app.app_state.search_query, "");
+    assert_eq!(app.app_state.cmdline_buffer, "");
     assert_eq!(app.ui_state.key_list.state.selected(), Some(0));
     assert_eq!(app.app_state.selected_key_index, Some(0));
 }

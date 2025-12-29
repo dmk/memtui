@@ -5,7 +5,7 @@
 
 mod support;
 
-use memtui::action::Action;
+use memtui::action::{Action, CmdLineMode};
 use rstest::rstest;
 use tui_dispatch::{
     assert_emitted, assert_not_emitted, count_emitted, find_emitted, ActionAssertions,
@@ -53,8 +53,8 @@ fn action_assertions_all_match_and_none_match() {
     // All emitted actions should be SelectKey variants
     actions.assert_all_match(|a| matches!(a, Action::SelectKey(_)));
 
-    // None should be search-related
-    actions.assert_none_match(|a| matches!(a, Action::StartSearch | Action::ClearSearch));
+    // None should be cmdline-related
+    actions.assert_none_match(|a| matches!(a, Action::SetCmdLineMode(_) | Action::CmdLineClear));
 }
 
 #[rstest]
@@ -110,10 +110,10 @@ fn assert_not_emitted_macro() {
 
     let actions = app.drain_actions();
 
-    // Navigation shouldn't emit search-related actions
-    assert_not_emitted!(actions, Action::StartSearch);
-    assert_not_emitted!(actions, Action::ClearSearch);
-    assert_not_emitted!(actions, Action::ConfirmSearch);
+    // Navigation shouldn't emit cmdline-related actions
+    assert_not_emitted!(actions, Action::SetCmdLineMode(_));
+    assert_not_emitted!(actions, Action::CmdLineClear);
+    assert_not_emitted!(actions, Action::CmdLineConfirm);
 
     // Should not emit SelectKey(99) since we only have 3 keys
     assert_not_emitted!(actions, Action::SelectKey(99));
@@ -209,15 +209,15 @@ fn search_mode_action_flow() {
     app.drain_actions(); // Clear navigation actions
 
     // Start search mode
-    app.dispatch_action(Action::StartSearch);
-    assert!(app.app_state.is_searching);
+    app.dispatch_action(Action::SetCmdLineMode(CmdLineMode::Search));
+    assert!(app.app_state.is_searching());
 
     // Clear search (exits search mode and resets to first key)
-    app.dispatch_action(Action::ClearSearch);
+    app.dispatch_action(Action::CmdLineClear);
 
     // Verify search mode is exited and selection reset
-    assert!(!app.app_state.is_searching);
-    assert!(app.app_state.search_query.is_empty());
+    assert!(!app.app_state.is_searching());
+    assert!(app.app_state.cmdline_buffer.is_empty());
     assert_eq!(app.ui_state.key_list.state.selected(), Some(0));
     assert_eq!(app.app_state.selected_key_index, Some(0));
 }

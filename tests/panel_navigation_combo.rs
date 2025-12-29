@@ -1,6 +1,6 @@
 mod support;
 
-use memtui::action::Action;
+use memtui::action::{Action, CmdLineMode};
 use memtui::ui::Panel;
 use rstest::rstest;
 use tui_dispatch::assert_emitted;
@@ -88,14 +88,15 @@ fn switching_panel_exits_search_mode() {
         .with_keys(fixtures::sample_keys());
 
     // Enter search mode
-    app.dispatch_action(Action::StartSearch);
-    assert!(app.app_state.is_searching);
+    app.dispatch_action(Action::SetCmdLineMode(CmdLineMode::Search));
+    assert!(app.app_state.is_searching());
 
     // Switch panels
     app.dispatch_action(Action::NextPanel);
 
-    // Should exit search mode
-    assert!(!app.app_state.is_searching);
+    // Should deactivate cmdline but keep search visible
+    assert!(!app.app_state.cmdline_active);
+    assert!(app.app_state.is_searching());
 }
 
 #[rstest]
@@ -105,14 +106,15 @@ fn focus_panel_exits_search_mode() {
         .with_keys(fixtures::sample_keys());
 
     // Enter search mode
-    app.dispatch_action(Action::StartSearch);
-    assert!(app.app_state.is_searching);
+    app.dispatch_action(Action::SetCmdLineMode(CmdLineMode::Search));
+    assert!(app.app_state.is_searching());
 
     // Focus another panel directly
     app.dispatch_action(Action::FocusPanel(Panel::Value));
 
-    // Should exit search mode
-    assert!(!app.app_state.is_searching);
+    // Should deactivate cmdline but keep search visible
+    assert!(!app.app_state.cmdline_active);
+    assert!(app.app_state.is_searching());
 }
 
 #[rstest]

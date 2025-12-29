@@ -14,7 +14,7 @@ pub enum ComponentId {
     StatusBar,
     Help,
     QuitConfirmation,
-    SearchInput,
+    CmdLine,
 }
 
 /// Event context with memtui's ComponentId

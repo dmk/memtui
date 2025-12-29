@@ -183,9 +183,9 @@ pub fn build_inspect_overlay(
             b.section("Region");
             b.entry("region", "key_list");
             b.entry("key_list.area", format!("{area:?}"));
-            b.entry("search.query", format!("{:?}", app_state.search_query));
+            b.entry("cmdline.buffer", format!("{:?}", app_state.cmdline_buffer));
 
-            if !app_state.search_query.is_empty() {
+            if !app_state.cmdline_buffer.is_empty() {
                 if let Some(result_idx) =
                     search_result_index_from_position(area, column, row, app_state)
                 {
@@ -366,9 +366,10 @@ fn push_value_section(b: &mut DebugTableBuilder, app_state: &AppState) {
 }
 
 fn push_search_section(b: &mut DebugTableBuilder, app_state: &AppState) {
-    b.section("Search");
-    b.entry("is_searching", app_state.is_searching.to_string());
-    b.entry("query", app_state.search_query.clone());
+    b.section("CmdLine");
+    b.entry("mode", format!("{:?}", app_state.cmdline_mode));
+    b.entry("buffer", app_state.cmdline_buffer.clone());
+    b.entry("cursor", app_state.cmdline_cursor.to_string());
     b.entry(
         "results.local",
         app_state.search_results_local.len().to_string(),

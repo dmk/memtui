@@ -146,9 +146,9 @@ pub fn get_focused_component(ui_state: &UiState, app_state: &AppState) -> Option
         return Some(ComponentId::WelcomeScreen);
     }
 
-    // Search mode takes focus
-    if app_state.is_searching {
-        return Some(ComponentId::SearchInput);
+    // CmdLine mode takes focus
+    if app_state.is_cmdline_active() {
+        return Some(ComponentId::CmdLine);
     }
 
     // Otherwise, based on active panel

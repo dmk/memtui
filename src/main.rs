@@ -17,9 +17,10 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
-use memtui::action::Action;
+use memtui::action::{Action, CmdLineMode};
 use memtui::actions::{async_handlers, sync_handlers};
 use memtui::app::{sync_event_context, AppState, EventRunner};
+use memtui::backend::CommandStatus;
 use memtui::cli::{parse_connection_string, Cli, LogLevel};
 use memtui::clipboard;
 use memtui::config::Config;
@@ -28,12 +29,12 @@ use memtui::events::{Event, EventKind};
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
 use memtui::terminal;
 use memtui::types::{ConnectionConfig, ValueType};
+use memtui::ui::components::cmdline::{CmdLine, CmdLineProps};
 use memtui::ui::components::connection_list::ConnectionListProps;
 use memtui::ui::components::debug as debug_ui;
 use memtui::ui::components::help::HelpScreenProps;
 use memtui::ui::components::key_list::KeyListProps;
 use memtui::ui::components::quit_confirmation::QuitConfirmationProps;
-use memtui::ui::components::search_input::{SearchInput, SearchInputProps};
 use memtui::ui::components::value_viewer::ValueViewerProps;
 use memtui::ui::components::welcome::WelcomeScreenProps;
 use memtui::ui::components::Component;
@@ -58,6 +59,12 @@ pub struct App {
     /// Action logger for debug tracing
     action_logger: Option<ActionLogger>,
     pub event_runner: EventRunner,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CmdLinePostAction {
+    KeepVisible,
+    Hide,
 }
 
 impl App {
@@ -452,18 +459,31 @@ impl App {
             return self.dispatch_keybinding(*key, BindingContext::Default);
         }
 
-        // 6. Search mode - special handling (only when actively typing in search input)
-        if self.app_state.is_searching {
-            let props = SearchInputProps {
+        // 6. CmdLine mode - special handling (only when actively typing in cmdline)
+        if self.app_state.is_cmdline_active() {
+            let props = CmdLineProps {
                 keybindings: &self.keybindings,
-                is_searching: self.app_state.is_searching,
+                mode: self.app_state.cmdline_mode,
+                buffer: &self.app_state.cmdline_buffer,
+                cursor: self.app_state.cmdline_cursor,
+                search_result_count: None,
+                is_server_searching: false,
             };
-            let mut search_input = SearchInput::new();
-            let actions = search_input.handle_event(event, props);
+            let mut cmdline = CmdLine::new();
+            let actions = cmdline.handle_event(event, props);
             if !actions.is_empty() {
                 return actions;
             }
-            // Fall through to default keybindings if search didn't handle it
+            // Fall through to default keybindings if cmdline didn't handle it
+        }
+
+        // 6b. CmdLine visible but inactive - allow clear
+        if self.app_state.is_cmdline_visible() && !self.app_state.is_cmdline_active() {
+            if let Some(command) = self.keybindings.get_command(*key, BindingContext::CmdLine) {
+                if command == "cmdline.clear" {
+                    return vec![Action::CmdLineClear];
+                }
+            }
         }
 
         // 7. Main panels - key_list or value_viewer based on active panel
@@ -472,12 +492,7 @@ impl App {
                 let active_id = self.app_state.connection_manager.get_active_id();
                 let capabilities =
                     active_id.and_then(|id| self.app_state.connection_manager.get_capabilities(id));
-                let active_search_query =
-                    if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
-                        Some(self.app_state.search_query.as_str())
-                    } else {
-                        None
-                    };
+                let active_search_query = self.app_state.active_search_query();
                 let props = KeyListProps {
                     keys: &self.app_state.keys,
                     total_count: self.app_state.total_key_count,
@@ -485,7 +500,7 @@ impl App {
                     active_search_query,
                     is_active: true,
                     capabilities,
-                    is_searching: self.app_state.is_searching,
+                    is_searching: self.app_state.is_searching(),
                     search_results_local: &self.app_state.search_results_local,
                     search_results_server: &self.app_state.search_results_server,
                     is_server_searching: self.app_state.is_server_searching,
@@ -504,14 +519,12 @@ impl App {
                 let active_id = self.app_state.connection_manager.get_active_id();
                 let capabilities =
                     active_id.and_then(|id| self.app_state.connection_manager.get_capabilities(id));
-                let selected_key = self
-                    .app_state
-                    .selected_key_index
-                    .and_then(|idx| self.app_state.keys.get(idx).and_then(|k| k.as_ref()));
+                let (selected_value, selected_key_type, selected_key_name, selected_key) =
+                    Self::value_viewer_context(&self.app_state);
                 let props = ValueViewerProps {
-                    selected_value: self.app_state.selected_value.as_ref(),
-                    selected_key_type: selected_key.map(|k| k.value_type),
-                    selected_key_name: selected_key.map(|k| k.name.as_str()),
+                    selected_value,
+                    selected_key_type,
+                    selected_key_name,
                     selected_key,
                     error_message: self.app_state.error_message.as_ref(),
                     json_formatter: &self.app_state.json_formatter,
@@ -631,12 +644,7 @@ impl App {
         let active_id = self.app_state.connection_manager.get_active_id();
         let capabilities =
             active_id.and_then(|id| self.app_state.connection_manager.get_capabilities(id));
-        let active_search_query =
-            if self.app_state.is_searching || !self.app_state.search_query.is_empty() {
-                Some(self.app_state.search_query.as_str())
-            } else {
-                None
-            };
+        let active_search_query = self.app_state.active_search_query();
         let key_list_props = KeyListProps {
             keys: &self.app_state.keys,
             total_count: self.app_state.total_key_count,
@@ -644,7 +652,7 @@ impl App {
             active_search_query,
             is_active: self.ui_state.active_panel == Panel::Keys,
             capabilities,
-            is_searching: self.app_state.is_searching,
+            is_searching: self.app_state.is_searching(),
             search_results_local: &self.app_state.search_results_local,
             search_results_server: &self.app_state.search_results_server,
             is_server_searching: self.app_state.is_server_searching,
@@ -660,7 +668,7 @@ impl App {
             // Special handling for search navigation via scroll - sync search selection index
             if let Some(query) = self
                 .app_state
-                .search_query
+                .cmdline_buffer
                 .as_str()
                 .split_whitespace()
                 .next()
@@ -676,7 +684,7 @@ impl App {
                             {
                                 let _ = self
                                     .action_tx
-                                    .send(Action::SetSearchSelectionIndex(Some(pos)));
+                                    .send(Action::SetCmdLineSelectionIndex(Some(pos)));
                             }
                         }
                     }
@@ -689,14 +697,12 @@ impl App {
         let active_id = self.app_state.connection_manager.get_active_id();
         let capabilities =
             active_id.and_then(|id| self.app_state.connection_manager.get_capabilities(id));
-        let selected_key = self
-            .app_state
-            .selected_key_index
-            .and_then(|idx| self.app_state.keys.get(idx).and_then(|k| k.as_ref()));
+        let (selected_value, selected_key_type, selected_key_name, selected_key) =
+            Self::value_viewer_context(&self.app_state);
         let value_viewer_props = ValueViewerProps {
-            selected_value: self.app_state.selected_value.as_ref(),
-            selected_key_type: selected_key.map(|k| k.value_type),
-            selected_key_name: selected_key.map(|k| k.name.as_str()),
+            selected_value,
+            selected_key_type,
+            selected_key_name,
             selected_key,
             error_message: self.app_state.error_message.as_ref(),
             json_formatter: &self.app_state.json_formatter,
@@ -747,20 +753,38 @@ impl App {
             "help.toggle" => Some(Action::ToggleHelp),
             "help.close" => Some(Action::ToggleHelp),
 
-            // Search commands
-            "search.start" => {
+            // CmdLine commands
+            "cmdline.search" => {
                 if self.app_state.connection_manager.get_active_id().is_some()
                     && !self.app_state.keys.is_empty()
                 {
-                    Some(Action::StartSearch)
+                    Some(Action::SetCmdLineMode(CmdLineMode::Search))
                 } else {
                     None
                 }
             }
-            "search.clear" => Some(Action::ClearSearch),
-            "search.confirm" => Some(Action::ConfirmSearch),
-            "search.next_result" => Some(Action::SearchNextResult),
-            "search.prev_result" => Some(Action::SearchPrevResult),
+            "cmdline.command" => {
+                if self.app_state.connection_manager.get_active_id().is_some() {
+                    Some(Action::SetCmdLineMode(CmdLineMode::Command))
+                } else {
+                    None
+                }
+            }
+            "cmdline.goto" => {
+                if self.app_state.connection_manager.get_active_id().is_some()
+                    && !self.app_state.keys.is_empty()
+                {
+                    Some(Action::SetCmdLineMode(CmdLineMode::Goto))
+                } else {
+                    None
+                }
+            }
+            "cmdline.clear" => Some(Action::CmdLineClear),
+            "cmdline.confirm" => Some(Action::CmdLineConfirm),
+            "cmdline.next_result" => Some(Action::CmdLineNextResult),
+            "cmdline.prev_result" => Some(Action::CmdLinePrevResult),
+            "cmdline.history_prev" => Some(Action::CmdLineHistoryPrev),
+            "cmdline.history_next" => Some(Action::CmdLineHistoryNext),
 
             // Navigation commands
             "navigation.next_panel" => Some(Action::NextPanel),
@@ -905,14 +929,14 @@ impl App {
                 )
             }
 
-            // UI state changes (panel focus, pane resize, list selection, search selection)
+            // UI state changes (panel focus, pane resize, list selection, cmdline selection)
             Action::FocusPanel(_)
             | Action::SetPaneRatio(_)
             | Action::SelectConnectionIndex(_)
             | Action::SelectWelcomeIndex(_)
-            | Action::SetSearchSelectionIndex(_)
+            | Action::SetCmdLineSelectionIndex(_)
             | Action::ResetKeySelection
-            | Action::ExitSearchMode
+            | Action::ExitCmdLineMode
             | Action::StartResize
             | Action::EndResize => {
                 handle_ui_state(&mut self.ui_state, &mut self.app_state, &action)
@@ -1062,6 +1086,7 @@ impl App {
 
             // Key selection (kept in App - needs schedule_value_load)
             Action::SelectKey(idx) => {
+                self.app_state.command_result = None;
                 self.ui_state.key_list.select(Some(idx));
                 self.app_state.selected_key_index = Some(idx);
                 self.app_state.selected_value = None;
@@ -1122,14 +1147,26 @@ impl App {
                 true
             }
 
-            // Search - delegated to sync_handlers (with trigger_search callback)
-            Action::StartSearch
-            | Action::ClearSearch
-            | Action::SearchAddChar(_)
-            | Action::SearchDeleteChar
-            | Action::UpdateSearchQuery(_) => {
+            // CmdLine - delegated to sync_handlers (with trigger_search callback)
+            Action::SetCmdLineMode(_)
+            | Action::CmdLineClear
+            | Action::CmdLineHide
+            | Action::CmdLineAddChar(_)
+            | Action::CmdLineDeleteChar
+            | Action::CmdLineDeleteForward
+            | Action::CmdLineDeleteWordBack
+            | Action::CmdLineDeleteWordForward
+            | Action::CmdLineMoveLeft
+            | Action::CmdLineMoveRight
+            | Action::CmdLineMoveWordLeft
+            | Action::CmdLineMoveWordRight
+            | Action::CmdLineMoveStart
+            | Action::CmdLineMoveEnd
+            | Action::CmdLineUpdateQuery(_)
+            | Action::CmdLineSetCommandResult { .. }
+            | Action::CmdLineClearCommandResult => {
                 if let Some((render, needs_search)) =
-                    handle_search(&mut self.app_state, &mut self.ui_state, &action)
+                    handle_cmdline(&mut self.app_state, &mut self.ui_state, &action)
                 {
                     if needs_search {
                         trigger_search(&mut self.app_state, &self.action_tx);
@@ -1140,21 +1177,49 @@ impl App {
                 }
             }
 
-            // Search navigation
-            Action::SearchNextResult => {
+            // CmdLine navigation (search results)
+            Action::CmdLineNextResult => {
                 self.handle_search_navigation(true);
                 true
             }
-            Action::SearchPrevResult => {
+            Action::CmdLinePrevResult => {
                 self.handle_search_navigation(false);
                 true
             }
-            Action::ConfirmSearch => {
-                // Exit search input mode but keep current selection
-                if self.app_state.is_searching {
-                    let _ = self.action_tx.send(Action::ExitSearchMode);
+            Action::CmdLineConfirm => {
+                match self.app_state.cmdline_mode {
+                    Some(CmdLineMode::Search) => {
+                        // Deactivate input but keep search visible
+                        let _ = self.action_tx.send(Action::ExitCmdLineMode);
+                    }
+                    Some(CmdLineMode::Command) => {
+                        // Parse and execute command
+                        let cmd = self.app_state.cmdline_buffer.trim().to_string();
+                        match self.execute_command(&cmd) {
+                            CmdLinePostAction::KeepVisible => {
+                                let _ = self.action_tx.send(Action::ExitCmdLineMode);
+                            }
+                            CmdLinePostAction::Hide => {
+                                let _ = self.action_tx.send(Action::CmdLineHide);
+                            }
+                        }
+                    }
+                    Some(CmdLineMode::Goto) => {
+                        // Jump to exact key match
+                        let key_name = self.app_state.cmdline_buffer.trim().to_string();
+                        if self.goto_key(&key_name) {
+                            let _ = self.action_tx.send(Action::CmdLineHide);
+                        } else {
+                            let _ = self.action_tx.send(Action::ExitCmdLineMode);
+                        }
+                    }
+                    None => {}
                 }
                 true
+            }
+            Action::CmdLineHistoryPrev | Action::CmdLineHistoryNext => {
+                // TODO: Implement history navigation in Phase 7
+                false
             }
 
             // Search results - delegated to async_handlers
@@ -1265,14 +1330,14 @@ impl App {
                 let _ = self.action_tx.send(Action::FocusPanel(Panel::Keys));
 
                 // Check if we're in search mode
-                let has_search = !self.app_state.search_query.is_empty();
+                let has_search = !self.app_state.cmdline_buffer.is_empty();
 
                 if has_search {
                     // Search mode: click on search results
                     if let Some(result_idx) = self.search_result_index_from_position(column, row) {
                         let _ = self
                             .action_tx
-                            .send(Action::SetSearchSelectionIndex(Some(result_idx)));
+                            .send(Action::SetCmdLineSelectionIndex(Some(result_idx)));
 
                         // Get the key index from search results (now includes merged server keys)
                         if let Some(&key_idx) = self.app_state.search_results_local.get(result_idx)
@@ -1309,6 +1374,37 @@ impl App {
         });
     }
 
+    fn value_viewer_context(
+        app_state: &AppState,
+    ) -> (
+        Option<&memtui::types::Value>,
+        Option<ValueType>,
+        Option<&str>,
+        Option<&memtui::types::KeyMetadata>,
+    ) {
+        if let Some(result) = app_state.command_result.as_ref() {
+            return (
+                Some(&result.value),
+                Some(ValueType::String),
+                Some(result.title.as_str()),
+                None,
+            );
+        }
+
+        let selected_key = app_state
+            .selected_key_index
+            .and_then(|idx| app_state.keys.get(idx).and_then(|k| k.as_ref()));
+        let selected_key_type = selected_key.map(|k| k.value_type);
+        let selected_key_name = selected_key.map(|k| k.name.as_str());
+
+        (
+            app_state.selected_value.as_ref(),
+            selected_key_type,
+            selected_key_name,
+            selected_key,
+        )
+    }
+
     /// Handle search navigation (next/prev result)
     fn handle_search_navigation(&mut self, forward: bool) {
         let total_count = self.app_state.search_results_local.len();
@@ -1331,13 +1427,176 @@ impl App {
 
         let _ = self
             .action_tx
-            .send(Action::SetSearchSelectionIndex(Some(new_idx)));
+            .send(Action::SetCmdLineSelectionIndex(Some(new_idx)));
 
         // Select the key using SelectKey action (handles key_list, selected_key_index, etc.)
         if let Some(&key_idx) = self.app_state.search_results_local.get(new_idx) {
             let _ = self.action_tx.send(Action::SelectKey(key_idx));
         }
     }
+
+    /// Execute a command mode command (e.g., :q, :help, :get <key>)
+    fn execute_command(&mut self, cmd: &str) -> CmdLinePostAction {
+        let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
+        let command = parts[0].to_lowercase();
+        let arg = parts.get(1).map(|s| s.trim());
+
+        match command.as_str() {
+            "q" | "quit" => {
+                let _ = self.action_tx.send(Action::ShowQuitConfirmation);
+                let _ = self.action_tx.send(Action::CmdLineClearCommandResult);
+                CmdLinePostAction::Hide
+            }
+            "h" | "help" => {
+                let _ = self.action_tx.send(Action::ToggleHelp);
+                let _ = self.action_tx.send(Action::CmdLineClearCommandResult);
+                CmdLinePostAction::Hide
+            }
+            "get" | "g" => {
+                if let Some(key_name) = arg {
+                    let _ = self.action_tx.send(Action::CmdLineClearCommandResult);
+                    if self.goto_key(key_name) {
+                        CmdLinePostAction::Hide
+                    } else {
+                        CmdLinePostAction::KeepVisible
+                    }
+                } else {
+                    let _ = self
+                        .action_tx
+                        .send(Action::Error("Usage: :get <key>".to_string()));
+                    CmdLinePostAction::KeepVisible
+                }
+            }
+            "del" | "delete" => {
+                if let Some(key_name) = arg {
+                    let _ = self.action_tx.send(Action::CmdLineClearCommandResult);
+                    self.delete_key(key_name);
+                    CmdLinePostAction::KeepVisible
+                } else {
+                    let _ = self
+                        .action_tx
+                        .send(Action::Error("Usage: :del <key>".to_string()));
+                    CmdLinePostAction::KeepVisible
+                }
+            }
+            "raw" => {
+                if let Some(raw_cmd) = arg {
+                    self.execute_raw_command(cmd.to_string(), raw_cmd.to_string());
+                    CmdLinePostAction::KeepVisible
+                } else {
+                    let _ = self
+                        .action_tx
+                        .send(Action::Error("Usage: :raw <command>".to_string()));
+                    CmdLinePostAction::KeepVisible
+                }
+            }
+            "" => {
+                // Empty command, do nothing
+                CmdLinePostAction::Hide
+            }
+            _ => {
+                let _ = self
+                    .action_tx
+                    .send(Action::Error(format!("Unknown command: {}", command)));
+                CmdLinePostAction::KeepVisible
+            }
+        }
+    }
+
+    /// Jump to a key by exact name match
+    fn goto_key(&mut self, key_name: &str) -> bool {
+        // Find key by name in the loaded keys
+        let found = self
+            .app_state
+            .keys
+            .iter()
+            .enumerate()
+            .find(|(_, k)| k.as_ref().map(|k| k.name.as_str()) == Some(key_name));
+
+        if let Some((idx, _)) = found {
+            let _ = self.action_tx.send(Action::SelectKey(idx));
+            true
+        } else {
+            let _ = self
+                .action_tx
+                .send(Action::Error(format!("Key not found: {}", key_name)));
+            false
+        }
+    }
+
+    /// Delete a key by name
+    fn delete_key(&mut self, key_name: &str) {
+        if let Some(backend) = self
+            .app_state
+            .connection_manager
+            .get_active_backend_handle()
+        {
+            let tx = self.action_tx.clone();
+            let name = key_name.to_string();
+            tokio::spawn(async move {
+                let backend = backend.read().await;
+                match backend.delete(&name).await {
+                    Ok(_) => {
+                        // Reload keys to reflect deletion
+                        let _ = tx.send(Action::LoadKeys);
+                        let _ = tx.send(Action::CmdLineHide);
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Action::Error(format!("Delete failed: {}", e)));
+                    }
+                }
+            });
+        } else {
+            let _ = self
+                .action_tx
+                .send(Action::Error("Not connected".to_string()));
+        }
+    }
+
+    /// Execute a raw backend command
+    fn execute_raw_command(&mut self, display_command: String, cmd: String) {
+        if let Some(backend) = self
+            .app_state
+            .connection_manager
+            .get_active_backend_handle()
+        {
+            let tx = self.action_tx.clone();
+            tokio::spawn(async move {
+                let backend = backend.read().await;
+                match backend.execute_raw(&cmd).await {
+                    Ok(result) => {
+                        let command = display_command.clone();
+                        let output = if let Some(err) = result.error_message.as_deref() {
+                            if result.output.is_empty() {
+                                err.to_string()
+                            } else {
+                                format!("{}\n{}", result.output, err)
+                            }
+                        } else {
+                            result.output
+                        };
+                        let _ = tx.send(Action::CmdLineSetCommandResult {
+                            command,
+                            output,
+                            status: result.status,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Action::CmdLineSetCommandResult {
+                            command: display_command,
+                            output: format!("Command failed: {}", e),
+                            status: CommandStatus::Error,
+                        });
+                    }
+                }
+            });
+        } else {
+            let _ = self
+                .action_tx
+                .send(Action::Error("Not connected".to_string()));
+        }
+    }
+
     fn focus_connection(&mut self, id: String) {
         // Use sync handler to set active connection and record recents
         if !sync_handlers::handle_set_active_connection(

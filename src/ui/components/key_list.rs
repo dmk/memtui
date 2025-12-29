@@ -190,33 +190,20 @@ impl KeyList {
         has_search: bool,
         display_count: usize,
     ) -> (String, String) {
-        if props.is_searching {
-            if let Some(query) = props.active_search_query {
-                if query.is_empty() {
-                    ("Keys │ ▍".to_string(), String::new())
-                } else {
-                    let server_indicator = if props.is_server_searching {
-                        format!(" {}", theme::spinner(props.animation))
-                    } else {
-                        String::new()
-                    };
-                    (
-                        format!("Keys │ {}▍{}", query, server_indicator),
-                        format!("{} found", display_count),
-                    )
-                }
+        // When searching, just show result count - the search input is in the cmdline
+        if props.is_searching || has_search {
+            let server_indicator = if props.is_server_searching {
+                format!(" {}", theme::spinner(props.animation))
             } else {
-                ("Keys │ ▍".to_string(), String::new())
+                String::new()
+            };
+            if display_count > 0 || !props.active_search_query.unwrap_or("").is_empty() {
+                return (
+                    "Keys".to_string(),
+                    format!("{} found{}", display_count, server_indicator),
+                );
             }
-        } else if has_search {
-            if let Some(query) = props.active_search_query {
-                (
-                    format!("Keys │ /{}", query),
-                    format!("{} results", display_count),
-                )
-            } else {
-                ("Keys".to_string(), String::new())
-            }
+            ("Keys".to_string(), server_indicator)
         } else {
             let total_count = props
                 .total_count
@@ -798,13 +785,13 @@ impl Component for KeyList {
     fn handle_event(&mut self, event: &Event, props: Self::Props<'_>) -> Vec<Action> {
         match &event.kind {
             EventKind::Key(key) => {
-                // Handle search.clear globally (regardless of focus) via keybindings
-                if !props.active_search_query.unwrap_or("").is_empty() {
+                // Handle cmdline.clear globally (regardless of focus) via keybindings
+                if props.is_searching || !props.active_search_query.unwrap_or("").is_empty() {
                     if let Some(command) =
-                        props.keybindings.get_command(*key, BindingContext::Search)
+                        props.keybindings.get_command(*key, BindingContext::CmdLine)
                     {
-                        if command == "search.clear" {
-                            return vec![Action::ClearSearch];
+                        if command == "cmdline.clear" {
+                            return vec![Action::CmdLineClear];
                         }
                     }
                 }
@@ -823,8 +810,7 @@ impl Component for KeyList {
                         .point_in_component(ComponentId::KeyList, *column, *row)
                 {
                     // When search is active, scroll through search results
-                    let has_active_search =
-                        props.is_searching || !props.active_search_query.unwrap_or("").is_empty();
+                    let has_active_search = !props.active_search_query.unwrap_or("").is_empty();
                     if has_active_search {
                         self.handle_search_scroll_event(*delta, &props)
                     } else {
@@ -977,14 +963,14 @@ impl KeyList {
             return vec![];
         }
 
-        if let Some(command) = props.keybindings.get_command(*key, BindingContext::Search) {
+        if let Some(command) = props.keybindings.get_command(*key, BindingContext::CmdLine) {
             match command.as_str() {
-                // Return action - main.rs handle_search_navigation will update key_list.state
-                "search.next_result" => {
-                    return vec![Action::SearchNextResult];
+                // Return action - main.rs handles cmdline navigation
+                "cmdline.next_result" => {
+                    return vec![Action::CmdLineNextResult];
                 }
-                "search.prev_result" => {
-                    return vec![Action::SearchPrevResult];
+                "cmdline.prev_result" => {
+                    return vec![Action::CmdLinePrevResult];
                 }
                 _ => {}
             }
@@ -1059,11 +1045,11 @@ impl KeyList {
         };
 
         if new_search_idx != current_search_idx {
-            // Return action - main.rs handle_search_navigation will update key_list.state
+            // Return action - main.rs handles cmdline navigation
             let action = if delta > 0 {
-                Action::SearchNextResult
+                Action::CmdLineNextResult
             } else {
-                Action::SearchPrevResult
+                Action::CmdLinePrevResult
             };
             return vec![action];
         }

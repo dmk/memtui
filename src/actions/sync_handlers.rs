@@ -65,17 +65,17 @@ pub fn handle_navigation(
 ) -> bool {
     match action {
         Action::NextPanel => {
-            // Exit search input mode when switching panels
-            if app_state.is_searching {
-                app_state.is_searching = false;
+            // Exit cmdline mode when switching panels
+            if app_state.is_cmdline_active() {
+                app_state.deactivate_cmdline();
             }
             ui_state.next_panel();
             true
         }
         Action::PrevPanel => {
-            // Exit search input mode when switching panels
-            if app_state.is_searching {
-                app_state.is_searching = false;
+            // Exit cmdline mode when switching panels
+            if app_state.is_cmdline_active() {
+                app_state.deactivate_cmdline();
             }
             ui_state.prev_panel();
             true
@@ -86,8 +86,8 @@ pub fn handle_navigation(
                 if connections_len > 0 {
                     ui_state.connection_list.next(connections_len);
                 }
-            } else if !app_state.search_query.is_empty() && ui_state.active_panel == Panel::Keys {
-                // Navigate through search results
+            } else if app_state.is_search_active() && ui_state.active_panel == Panel::Keys {
+                // Navigate through search results (only in search mode)
                 let total_count = app_state.search_results_local.len();
                 if total_count > 0 {
                     let current_idx = app_state.search_selection_index.unwrap_or(0);
@@ -96,7 +96,7 @@ pub fn handle_navigation(
                     } else {
                         current_idx + 1
                     };
-                    let _ = action_tx.send(Action::SetSearchSelectionIndex(Some(new_idx)));
+                    let _ = action_tx.send(Action::SetCmdLineSelectionIndex(Some(new_idx)));
                     if let Some(&key_idx) = app_state.search_results_local.get(new_idx) {
                         let _ = action_tx.send(Action::SelectKey(key_idx));
                     }
@@ -121,8 +121,8 @@ pub fn handle_navigation(
                 if connections_len > 0 {
                     ui_state.connection_list.prev(connections_len);
                 }
-            } else if !app_state.search_query.is_empty() && ui_state.active_panel == Panel::Keys {
-                // Navigate through search results
+            } else if app_state.is_search_active() && ui_state.active_panel == Panel::Keys {
+                // Navigate through search results (only in search mode)
                 let total_count = app_state.search_results_local.len();
                 if total_count > 0 {
                     let current_idx = app_state.search_selection_index.unwrap_or(0);
@@ -131,7 +131,7 @@ pub fn handle_navigation(
                     } else {
                         current_idx - 1
                     };
-                    let _ = action_tx.send(Action::SetSearchSelectionIndex(Some(new_idx)));
+                    let _ = action_tx.send(Action::SetCmdLineSelectionIndex(Some(new_idx)));
                     if let Some(&key_idx) = app_state.search_results_local.get(new_idx) {
                         let _ = action_tx.send(Action::SelectKey(key_idx));
                     }
@@ -158,9 +158,9 @@ pub fn handle_navigation(
 pub fn handle_ui_state(ui_state: &mut UiState, app_state: &mut AppState, action: &Action) -> bool {
     match action {
         Action::FocusPanel(panel) => {
-            // Exit search input mode when switching panels
-            if app_state.is_searching {
-                app_state.is_searching = false;
+            // Exit cmdline mode when switching panels
+            if app_state.is_cmdline_active() {
+                app_state.deactivate_cmdline();
             }
             ui_state.active_panel = *panel;
             true
@@ -178,7 +178,7 @@ pub fn handle_ui_state(ui_state: &mut UiState, app_state: &mut AppState, action:
             ui_state.welcome_screen.state.select(Some(*idx));
             true
         }
-        Action::SetSearchSelectionIndex(idx) => {
+        Action::SetCmdLineSelectionIndex(idx) => {
             app_state.search_selection_index = *idx;
             true
         }
@@ -188,8 +188,8 @@ pub fn handle_ui_state(ui_state: &mut UiState, app_state: &mut AppState, action:
             app_state.error_message = None;
             true
         }
-        Action::ExitSearchMode => {
-            app_state.is_searching = false;
+        Action::ExitCmdLineMode => {
+            app_state.deactivate_cmdline();
             true
         }
         Action::StartResize => {
@@ -333,59 +333,253 @@ pub fn handle_connection_management(
     }
 }
 
-/// Handle search actions - returns (handled, needs_trigger_search)
-pub fn handle_search(
+/// Handle cmdline actions - returns (handled, needs_trigger_search)
+pub fn handle_cmdline(
     app_state: &mut AppState,
     ui_state: &mut UiState,
     action: &Action,
 ) -> Option<(bool, bool)> {
+    use crate::action::CmdLineMode;
+
     match action {
-        Action::StartSearch => {
-            app_state.start_search();
-            Some((true, false))
-        }
-        Action::ClearSearch => {
-            app_state.reset_search();
-            if !app_state.keys.is_empty() {
-                ui_state.key_list.select(Some(0));
-                app_state.selected_key_index = Some(0);
-                app_state.selected_value = None;
-                ui_state.value_viewer.reset_scroll();
+        Action::SetCmdLineMode(mode) => {
+            if *mode == CmdLineMode::Search {
+                app_state.command_result = None;
             }
-            Some((true, false))
-        }
-        Action::SearchAddChar(c) => {
-            if app_state.is_searching {
-                app_state.search_query.push(*c);
-                Some((true, true)) // needs trigger_search
+            if app_state.cmdline_mode == Some(*mode) {
+                app_state.activate_cmdline();
             } else {
-                None
+                app_state.start_cmdline(*mode);
             }
+            let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search)
+                && !app_state.cmdline_buffer.is_empty();
+            Some((true, needs_search))
         }
-        Action::SearchDeleteChar => {
-            if app_state.is_searching {
-                app_state.search_query.pop();
-                if app_state.search_query.is_empty() {
-                    app_state.search_results_local.clear();
-                    app_state.search_results_server.clear();
-                    Some((true, false))
+        Action::CmdLineClear => {
+            let was_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
+            if was_search {
+                if app_state.cmdline_buffer.is_empty() {
+                    app_state.reset_cmdline();
                 } else {
-                    Some((true, true)) // needs trigger_search
+                    app_state.cmdline_buffer.clear();
+                    app_state.cmdline_cursor = 0;
+                    app_state.cmdline_active = false;
+                    app_state.search_token = app_state.search_token.wrapping_add(1);
+                    app_state.clear_search_state();
+                }
+                if !app_state.keys.is_empty() {
+                    ui_state.key_list.select(Some(0));
+                    app_state.selected_key_index = Some(0);
+                    app_state.selected_value = None;
+                    ui_state.value_viewer.reset_scroll();
                 }
             } else {
+                app_state.reset_cmdline();
+            }
+            Some((true, false))
+        }
+        Action::CmdLineHide => {
+            if app_state.cmdline_mode != Some(CmdLineMode::Search) {
+                app_state.reset_cmdline();
+                Some((true, false))
+            } else {
+                Some((false, false))
+            }
+        }
+        Action::CmdLineSetCommandResult {
+            command,
+            output,
+            status,
+        } => {
+            app_state.command_result = Some(crate::app::CommandResult::new(
+                command.clone(),
+                output.clone(),
+                *status,
+            ));
+            app_state.selected_key_index = None;
+            app_state.selected_value = None;
+            app_state.error_message = None;
+            ui_state.key_list.select(None);
+            ui_state.value_viewer.reset_scroll();
+            Some((true, false))
+        }
+        Action::CmdLineClearCommandResult => {
+            app_state.command_result = None;
+            Some((true, false))
+        }
+        Action::CmdLineAddChar(c) => {
+            if app_state.is_cmdline_active() {
+                // Insert at cursor position (cursor is char index, need byte index for insert)
+                let byte_idx =
+                    char_to_byte_index(&app_state.cmdline_buffer, app_state.cmdline_cursor);
+                app_state.cmdline_buffer.insert(byte_idx, *c);
+                app_state.cmdline_cursor += 1;
+                // Only trigger search in search mode
+                let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
+                Some((true, needs_search))
+            } else {
                 None
             }
         }
-        Action::UpdateSearchQuery(query) => {
-            if app_state.is_searching {
-                app_state.search_query = query.clone();
-                Some((true, true)) // needs trigger_search
+        Action::CmdLineDeleteChar => {
+            if app_state.is_cmdline_active() && app_state.cmdline_cursor > 0 {
+                app_state.cmdline_cursor -= 1;
+                // Convert char index to byte index for remove
+                let byte_idx =
+                    char_to_byte_index(&app_state.cmdline_buffer, app_state.cmdline_cursor);
+                app_state.cmdline_buffer.remove(byte_idx);
+                if app_state.cmdline_buffer.is_empty() {
+                    if app_state.cmdline_mode == Some(CmdLineMode::Search) {
+                        app_state.search_token = app_state.search_token.wrapping_add(1);
+                        app_state.clear_search_state();
+                    }
+                    Some((true, false))
+                } else {
+                    let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
+                    Some((true, needs_search))
+                }
+            } else {
+                Some((true, false))
+            }
+        }
+        Action::CmdLineDeleteForward => {
+            let char_len = app_state.cmdline_buffer.chars().count();
+            if app_state.is_cmdline_active() && app_state.cmdline_cursor < char_len {
+                // Convert char index to byte index for remove
+                let byte_idx =
+                    char_to_byte_index(&app_state.cmdline_buffer, app_state.cmdline_cursor);
+                app_state.cmdline_buffer.remove(byte_idx);
+                let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
+                Some((true, needs_search))
+            } else {
+                Some((true, false))
+            }
+        }
+        Action::CmdLineMoveLeft => {
+            if app_state.is_cmdline_active() && app_state.cmdline_cursor > 0 {
+                app_state.cmdline_cursor -= 1;
+            }
+            Some((true, false))
+        }
+        Action::CmdLineMoveRight => {
+            let char_len = app_state.cmdline_buffer.chars().count();
+            if app_state.is_cmdline_active() && app_state.cmdline_cursor < char_len {
+                app_state.cmdline_cursor += 1;
+            }
+            Some((true, false))
+        }
+        Action::CmdLineMoveStart => {
+            if app_state.is_cmdline_active() {
+                app_state.cmdline_cursor = 0;
+            }
+            Some((true, false))
+        }
+        Action::CmdLineMoveEnd => {
+            if app_state.is_cmdline_active() {
+                app_state.cmdline_cursor = app_state.cmdline_buffer.chars().count();
+            }
+            Some((true, false))
+        }
+        Action::CmdLineMoveWordLeft => {
+            if app_state.is_cmdline_active() {
+                app_state.cmdline_cursor =
+                    find_word_boundary_left(&app_state.cmdline_buffer, app_state.cmdline_cursor);
+            }
+            Some((true, false))
+        }
+        Action::CmdLineMoveWordRight => {
+            if app_state.is_cmdline_active() {
+                app_state.cmdline_cursor =
+                    find_word_boundary_right(&app_state.cmdline_buffer, app_state.cmdline_cursor);
+            }
+            Some((true, false))
+        }
+        Action::CmdLineDeleteWordBack => {
+            if app_state.is_cmdline_active() && app_state.cmdline_cursor > 0 {
+                let new_cursor =
+                    find_word_boundary_left(&app_state.cmdline_buffer, app_state.cmdline_cursor);
+                // Convert char indices to byte indices for drain
+                let start_byte = char_to_byte_index(&app_state.cmdline_buffer, new_cursor);
+                let end_byte =
+                    char_to_byte_index(&app_state.cmdline_buffer, app_state.cmdline_cursor);
+                app_state.cmdline_buffer.drain(start_byte..end_byte);
+                app_state.cmdline_cursor = new_cursor;
+                let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
+                Some((true, needs_search))
+            } else {
+                Some((true, false))
+            }
+        }
+        Action::CmdLineDeleteWordForward => {
+            let char_len = app_state.cmdline_buffer.chars().count();
+            if app_state.is_cmdline_active() && app_state.cmdline_cursor < char_len {
+                let end =
+                    find_word_boundary_right(&app_state.cmdline_buffer, app_state.cmdline_cursor);
+                // Convert char indices to byte indices for drain
+                let start_byte =
+                    char_to_byte_index(&app_state.cmdline_buffer, app_state.cmdline_cursor);
+                let end_byte = char_to_byte_index(&app_state.cmdline_buffer, end);
+                app_state.cmdline_buffer.drain(start_byte..end_byte);
+                let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
+                Some((true, needs_search))
+            } else {
+                Some((true, false))
+            }
+        }
+        Action::CmdLineUpdateQuery(query) => {
+            if app_state.is_cmdline_active() {
+                app_state.cmdline_buffer = query.clone();
+                app_state.cmdline_cursor = query.chars().count();
+                let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
+                Some((true, needs_search))
             } else {
                 None
             }
         }
         _ => None,
     }
+}
+
+/// Convert a character index to a byte index in the string
+fn char_to_byte_index(s: &str, char_idx: usize) -> usize {
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(byte_idx, _)| byte_idx)
+        .unwrap_or(s.len())
+}
+
+/// Find word boundary to the left of cursor (cursor is char index)
+fn find_word_boundary_left(s: &str, cursor: usize) -> usize {
+    if cursor == 0 {
+        return 0;
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let mut pos = cursor.min(chars.len());
+    // Skip trailing whitespace
+    while pos > 0 && chars[pos - 1].is_whitespace() {
+        pos -= 1;
+    }
+    // Find start of word
+    while pos > 0 && !chars[pos - 1].is_whitespace() {
+        pos -= 1;
+    }
+    pos
+}
+
+/// Find word boundary to the right of cursor (cursor is char index)
+fn find_word_boundary_right(s: &str, cursor: usize) -> usize {
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+    let mut pos = cursor.min(len);
+    // Skip current word
+    while pos < len && !chars[pos].is_whitespace() {
+        pos += 1;
+    }
+    // Skip whitespace
+    while pos < len && chars[pos].is_whitespace() {
+        pos += 1;
+    }
+    pos
 }
 
 /// Handle Enter action for connection palette

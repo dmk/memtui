@@ -1,10 +1,19 @@
-use crate::backend::{Backend, BackendCapabilities};
+use crate::backend::{Backend, BackendCapabilities, CommandStatus};
 use crate::types::{ConnectionConfig, KeyMetadata, KeyScanResult, Value};
 use crate::ui::Panel;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// Command line mode (vim-style bottom line)
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CmdLineMode {
+    #[default]
+    Search, // / - fuzzy search keys
+    Command, // : - execute commands
+    Goto,    // g - jump to exact key
+}
 
 #[derive(Clone, tui_dispatch::Action)]
 #[action(infer_categories, generate_dispatcher)]
@@ -36,9 +45,9 @@ pub enum Action {
 
     // UI State
     SetPaneRatio(f32),
-    SetSearchSelectionIndex(Option<usize>),
+    SetCmdLineSelectionIndex(Option<usize>),
     ResetKeySelection,
-    ExitSearchMode,
+    ExitCmdLineMode,
     StartResize,
     EndResize,
 
@@ -97,15 +106,35 @@ pub enum Action {
         token: u64,
     },
 
-    // Search Actions
-    StartSearch,               // Open search input
-    UpdateSearchQuery(String), // User typed in search
-    ClearSearch,               // Reset to normal view (Esc or empty query)
-    ConfirmSearch,             // Confirm search (exit input mode, keep selection)
-    SearchAddChar(char),       // Add character to search input
-    SearchDeleteChar,          // Delete character from search input
-    SearchNextResult,          // Navigate to next search result
-    SearchPrevResult,          // Navigate to previous search result
+    // CmdLine Actions (vim-style command line)
+    SetCmdLineMode(CmdLineMode), // Enter cmdline mode
+    CmdLineUpdateQuery(String),  // Direct query update (for async results)
+    CmdLineClear,                // Reset to normal view (Esc or empty query)
+    CmdLineHide,                 // Hide cmdline without resetting selection
+    CmdLineConfirm,              // Execute/confirm based on mode
+    CmdLineAddChar(char),        // Insert character at cursor
+    CmdLineDeleteChar,           // Backspace at cursor
+    CmdLineDeleteForward,        // Delete at cursor
+    CmdLineDeleteWordBack,       // Delete word backwards (Ctrl+Backspace)
+    CmdLineDeleteWordForward,    // Delete word forwards (Ctrl+Delete)
+    CmdLineMoveLeft,             // Move cursor left
+    CmdLineMoveRight,            // Move cursor right
+    CmdLineMoveWordLeft,         // Move cursor word left (Ctrl+Left)
+    CmdLineMoveWordRight,        // Move cursor word right (Ctrl+Right)
+    CmdLineMoveStart,            // Move cursor to start (Home)
+    CmdLineMoveEnd,              // Move cursor to end (End)
+    CmdLineNextResult,           // Navigate to next search result (search mode)
+    CmdLinePrevResult,           // Navigate to previous search result (search mode)
+    CmdLineHistoryPrev,          // Previous history entry
+    CmdLineHistoryNext,          // Next history entry
+
+    // Command results
+    CmdLineSetCommandResult {
+        command: String,
+        output: String,
+        status: CommandStatus,
+    },
+    CmdLineClearCommandResult,
 
     // Async Events (Results)
     DidConnect(String, Arc<RwLock<Box<dyn Backend>>>, BackendCapabilities),
@@ -179,11 +208,12 @@ impl fmt::Debug for Action {
                 f.debug_tuple("SelectWelcomeIndex").field(idx).finish()
             }
             Action::SetPaneRatio(ratio) => f.debug_tuple("SetPaneRatio").field(ratio).finish(),
-            Action::SetSearchSelectionIndex(idx) => {
-                f.debug_tuple("SetSearchSelectionIndex").field(idx).finish()
-            }
+            Action::SetCmdLineSelectionIndex(idx) => f
+                .debug_tuple("SetCmdLineSelectionIndex")
+                .field(idx)
+                .finish(),
             Action::ResetKeySelection => write!(f, "ResetKeySelection"),
-            Action::ExitSearchMode => write!(f, "ExitSearchMode"),
+            Action::ExitCmdLineMode => write!(f, "ExitCmdLineMode"),
             Action::StartResize => write!(f, "StartResize"),
             Action::EndResize => write!(f, "EndResize"),
             Action::OpenConnectionForm => write!(f, "OpenConnectionForm"),
@@ -238,14 +268,37 @@ impl fmt::Debug for Action {
                 .field("index", index)
                 .field("token", token)
                 .finish(),
-            Action::StartSearch => write!(f, "StartSearch"),
-            Action::UpdateSearchQuery(q) => f.debug_tuple("UpdateSearchQuery").field(q).finish(),
-            Action::ClearSearch => write!(f, "ClearSearch"),
-            Action::ConfirmSearch => write!(f, "ConfirmSearch"),
-            Action::SearchAddChar(c) => f.debug_tuple("SearchAddChar").field(c).finish(),
-            Action::SearchDeleteChar => write!(f, "SearchDeleteChar"),
-            Action::SearchNextResult => write!(f, "SearchNextResult"),
-            Action::SearchPrevResult => write!(f, "SearchPrevResult"),
+            Action::SetCmdLineMode(mode) => f.debug_tuple("SetCmdLineMode").field(mode).finish(),
+            Action::CmdLineUpdateQuery(q) => f.debug_tuple("CmdLineUpdateQuery").field(q).finish(),
+            Action::CmdLineClear => write!(f, "CmdLineClear"),
+            Action::CmdLineHide => write!(f, "CmdLineHide"),
+            Action::CmdLineConfirm => write!(f, "CmdLineConfirm"),
+            Action::CmdLineAddChar(c) => f.debug_tuple("CmdLineAddChar").field(c).finish(),
+            Action::CmdLineDeleteChar => write!(f, "CmdLineDeleteChar"),
+            Action::CmdLineDeleteForward => write!(f, "CmdLineDeleteForward"),
+            Action::CmdLineDeleteWordBack => write!(f, "CmdLineDeleteWordBack"),
+            Action::CmdLineDeleteWordForward => write!(f, "CmdLineDeleteWordForward"),
+            Action::CmdLineMoveLeft => write!(f, "CmdLineMoveLeft"),
+            Action::CmdLineMoveRight => write!(f, "CmdLineMoveRight"),
+            Action::CmdLineMoveWordLeft => write!(f, "CmdLineMoveWordLeft"),
+            Action::CmdLineMoveWordRight => write!(f, "CmdLineMoveWordRight"),
+            Action::CmdLineMoveStart => write!(f, "CmdLineMoveStart"),
+            Action::CmdLineMoveEnd => write!(f, "CmdLineMoveEnd"),
+            Action::CmdLineNextResult => write!(f, "CmdLineNextResult"),
+            Action::CmdLinePrevResult => write!(f, "CmdLinePrevResult"),
+            Action::CmdLineHistoryPrev => write!(f, "CmdLineHistoryPrev"),
+            Action::CmdLineHistoryNext => write!(f, "CmdLineHistoryNext"),
+            Action::CmdLineSetCommandResult {
+                command,
+                output,
+                status,
+            } => f
+                .debug_struct("CmdLineSetCommandResult")
+                .field("command", command)
+                .field("output", output)
+                .field("status", status)
+                .finish(),
+            Action::CmdLineClearCommandResult => write!(f, "CmdLineClearCommandResult"),
             // Async results - summarize large data
             Action::DidConnect(id, _, caps) => f
                 .debug_struct("DidConnect")
@@ -327,9 +380,9 @@ mod category_tests {
         assert_eq!(Action::ValueViewerScrollUp.category(), Some("value_viewer"));
         assert!(Action::ValueViewerScrollDown.is_value_viewer());
 
-        // Test search category
-        assert_eq!(Action::SearchAddChar('a').category(), Some("search"));
-        assert!(Action::SearchNextResult.is_search());
+        // Test cmd_line category
+        assert_eq!(Action::CmdLineAddChar('a').category(), Some("cmd_line"));
+        assert!(Action::CmdLineNextResult.is_cmd_line());
 
         // Test async_result category (Did* prefix)
         assert_eq!(
@@ -361,8 +414,8 @@ mod category_tests {
     #[test]
     fn test_category_enum() {
         // super::ActionCategory is the generated enum (not the trait)
-        let action = Action::SearchAddChar('x');
-        assert_eq!(action.category_enum(), super::ActionCategory::Search);
+        let action = Action::CmdLineAddChar('x');
+        assert_eq!(action.category_enum(), super::ActionCategory::CmdLine);
 
         let action = Action::Tick;
         assert_eq!(action.category_enum(), super::ActionCategory::Uncategorized);

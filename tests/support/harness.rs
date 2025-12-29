@@ -119,9 +119,9 @@ impl AppHarness {
 /// Implement the generated ActionDispatcher trait for AppHarness.
 /// Each category maps to its corresponding sync handler.
 impl ActionDispatcher for AppHarness {
-    fn dispatch_search(&mut self, action: &Action) -> bool {
+    fn dispatch_cmd_line(&mut self, action: &Action) -> bool {
         if let Some((render_needed, needs_search)) =
-            sync_handlers::handle_search(&mut self.app_state, &mut self.ui_state, action)
+            sync_handlers::handle_cmdline(&mut self.app_state, &mut self.ui_state, action)
         {
             if needs_search {
                 trigger_search(&mut self.app_state, &self.action_tx);
@@ -174,13 +174,16 @@ impl ActionDispatcher for AppHarness {
     fn dispatch_uncategorized(&mut self, action: &Action) -> bool {
         // Handle remaining uncategorized actions
         match action {
-            // Search actions that start with a verb (StartSearch, ClearSearch, etc.)
-            Action::StartSearch
-            | Action::ClearSearch
-            | Action::ConfirmSearch
-            | Action::UpdateSearchQuery(_) => {
+            // CmdLine actions that start with a verb (SetCmdLineMode, CmdLineClear, etc.)
+            Action::SetCmdLineMode(_)
+            | Action::CmdLineClear
+            | Action::CmdLineHide
+            | Action::CmdLineConfirm
+            | Action::CmdLineUpdateQuery(_)
+            | Action::CmdLineSetCommandResult { .. }
+            | Action::CmdLineClearCommandResult => {
                 if let Some((render_needed, needs_search)) =
-                    sync_handlers::handle_search(&mut self.app_state, &mut self.ui_state, action)
+                    sync_handlers::handle_cmdline(&mut self.app_state, &mut self.ui_state, action)
                 {
                     if needs_search {
                         trigger_search(&mut self.app_state, &self.action_tx);
@@ -214,9 +217,9 @@ impl ActionDispatcher for AppHarness {
             // UI state
             Action::FocusPanel(_)
             | Action::SetPaneRatio(_)
-            | Action::SetSearchSelectionIndex(_)
+            | Action::SetCmdLineSelectionIndex(_)
             | Action::ResetKeySelection
-            | Action::ExitSearchMode
+            | Action::ExitCmdLineMode
             | Action::StartResize
             | Action::EndResize
             | Action::SelectConnectionIndex(_)

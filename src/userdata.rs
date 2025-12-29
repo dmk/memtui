@@ -478,7 +478,7 @@ pub fn load_keybindings() -> KeybindingsConfig {
 fn generate_default_keybindings_json() -> String {
     r#"// Keybindings Configuration for memtui
 // Customize keyboard shortcuts by editing this file.
-// Commands use dot-separated names (e.g., 'quit.show', 'search.start').
+// Commands use dot-separated names (e.g., 'quit.show', 'cmdline.search').
 // Keys can be simple ('q', 'esc') or with modifiers ('ctrl+p', 'shift+tab').
 // Only specify bindings you want to override; others will use defaults.
 // Lines starting with // are comments and will be ignored.
@@ -494,7 +494,9 @@ fn generate_default_keybindings_json() -> String {
 
   // Default context - active when connected and browsing
   "default": {
-    "search.start": ["/"],
+    "cmdline.search": ["/"],
+    "cmdline.command": [":"],
+    "cmdline.goto": ["g"],
     "navigation.next_panel": ["tab"],
     "navigation.prev_panel": ["shift+tab"],
     "navigation.next_item": ["down", "j"],
@@ -506,12 +508,12 @@ fn generate_default_keybindings_json() -> String {
     "pane.resize.right": ["ctrl+l"]
   },
 
-  // Search mode - active when search input is focused
-  "search": {
-    "search.clear": ["esc"],
-    "search.next_result": ["down", "j"],
-    "search.prev_result": ["up", "k"],
-    "search.confirm": ["enter"]
+  // CmdLine mode - active when the command line is focused
+  "cmdline": {
+    "cmdline.clear": ["esc"],
+    "cmdline.confirm": ["enter"],
+    "cmdline.next_result": ["down", "ctrl+n"],
+    "cmdline.prev_result": ["up", "ctrl+p"]
   },
 
   // Connection form - active when adding/editing a connection

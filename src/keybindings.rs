@@ -131,6 +131,26 @@ pub fn default_keybindings() -> KeybindingsConfig {
     );
     kb.add(
         BindingContext::Default,
+        "navigation.page_down",
+        vec!["pagedown".into()],
+    );
+    kb.add(
+        BindingContext::Default,
+        "navigation.page_up",
+        vec!["pageup".into()],
+    );
+    kb.add(
+        BindingContext::Default,
+        "navigation.home",
+        vec!["home".into()],
+    );
+    kb.add(
+        BindingContext::Default,
+        "navigation.end",
+        vec!["end".into()],
+    );
+    kb.add(
+        BindingContext::Default,
         "navigation.enter",
         vec!["enter".into()],
     );
@@ -214,11 +234,6 @@ pub fn default_keybindings() -> KeybindingsConfig {
     // Connection palette context bindings
     kb.add(
         BindingContext::ConnectionPalette,
-        "connection.palette.close",
-        vec!["esc".into()],
-    );
-    kb.add(
-        BindingContext::ConnectionPalette,
         "connection.palette.select",
         vec!["enter".into()],
     );
@@ -236,6 +251,11 @@ pub fn default_keybindings() -> KeybindingsConfig {
         BindingContext::ConnectionPalette,
         "connection.palette.delete",
         vec!["d".into()],
+    );
+    kb.add(
+        BindingContext::ConnectionPalette,
+        "connection.palette.close",
+        vec!["esc".into()],
     );
 
     // Quit confirmation context bindings
@@ -391,6 +411,29 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_function_keys() {
+        let mapping = [
+            ("f1", KeyCode::F(1)),
+            ("f2", KeyCode::F(2)),
+            ("f3", KeyCode::F(3)),
+            ("f4", KeyCode::F(4)),
+            ("f5", KeyCode::F(5)),
+            ("f6", KeyCode::F(6)),
+            ("f7", KeyCode::F(7)),
+            ("f8", KeyCode::F(8)),
+            ("f9", KeyCode::F(9)),
+            ("f10", KeyCode::F(10)),
+            ("f11", KeyCode::F(11)),
+            ("f12", KeyCode::F(12)),
+        ];
+
+        for (key_str, expected) in mapping {
+            let result = parse_key_string(key_str).unwrap();
+            assert_eq!(result.code, expected);
+        }
+    }
+
+    #[test]
     fn test_default_keybindings() {
         let bindings = default_keybindings();
         // Verify some bindings exist
@@ -403,6 +446,47 @@ mod tests {
     }
 
     #[test]
+    fn test_keybinding_form_context() {
+        let bindings = default_keybindings();
+        let key_tab = KeyEvent {
+            code: KeyCode::Tab,
+            modifiers: KeyModifiers::empty(),
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::empty(),
+        };
+        let command = bindings.get_command(key_tab, BindingContext::ConnectionForm);
+        assert_eq!(command, Some("connection.form.next_field".to_string()));
+    }
+
+    #[test]
+    fn test_keybinding_palette_context() {
+        let bindings = default_keybindings();
+        let key_delete = KeyEvent {
+            code: KeyCode::Char('d'),
+            modifiers: KeyModifiers::empty(),
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::empty(),
+        };
+        let command = bindings.get_command(key_delete, BindingContext::ConnectionPalette);
+        assert_eq!(
+            command,
+            Some("connection.palette.delete".to_string())
+        );
+
+        let key_esc = KeyEvent {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::empty(),
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::empty(),
+        };
+        let command = bindings.get_command(key_esc, BindingContext::ConnectionPalette);
+        assert_eq!(
+            command,
+            Some("connection.palette.close".to_string())
+        );
+    }
+
+    #[test]
     fn test_get_command() {
         let bindings = default_keybindings();
         let key = KeyEvent {
@@ -412,6 +496,19 @@ mod tests {
             state: crossterm::event::KeyEventState::empty(),
         };
         let command = bindings.get_command(key, BindingContext::Default);
+        assert_eq!(command, Some("quit.show".to_string()));
+    }
+
+    #[test]
+    fn test_keybinding_global_fallback() {
+        let bindings = default_keybindings();
+        let key = KeyEvent {
+            code: KeyCode::Char('q'),
+            modifiers: KeyModifiers::empty(),
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::empty(),
+        };
+        let command = bindings.get_command(key, BindingContext::ConnectionForm);
         assert_eq!(command, Some("quit.show".to_string()));
     }
 
@@ -434,6 +531,28 @@ mod tests {
         assert!(merged
             .global_bindings()
             .contains_key("connection.palette.toggle"));
+    }
+
+    #[test]
+    fn test_keybinding_custom_override() {
+        let defaults = default_keybindings();
+        let mut user = KeybindingsConfig::new();
+        user.add(
+            BindingContext::ConnectionForm,
+            "connection.form.next_field",
+            vec!["ctrl+j".into()],
+        );
+
+        let merged = KeybindingsConfig::merge(defaults, user);
+
+        let key = KeyEvent {
+            code: KeyCode::Char('j'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::empty(),
+        };
+        let command = merged.get_command(key, BindingContext::ConnectionForm);
+        assert_eq!(command, Some("connection.form.next_field".to_string()));
     }
 
     #[test]

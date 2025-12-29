@@ -356,6 +356,15 @@ impl KeyList {
             .total_count
             .map(|t| t as usize)
             .unwrap_or_else(|| props.keys.len());
+        if total_count == 0 {
+            let item = ListItem::new(Span::styled(
+                "  No keys found",
+                Style::default()
+                    .fg(theme::TEXT_DIM())
+                    .add_modifier(Modifier::ITALIC),
+            ));
+            return (vec![item], 0, None);
+        }
 
         let selected_abs = self
             .state

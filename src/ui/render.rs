@@ -576,17 +576,27 @@ fn render_status_bar(
     let center_width = total_width * 30 / 100;
     let right_width = total_width.saturating_sub(left_width + center_width);
 
-    // Left section: key name (truncate if needed)
-    let key_display = if let Some(name) = selected_key_name {
+    // Left section: error or key name (truncate if needed)
+    let (key_display, key_style) = if let Some(error) = app_state.error_message.as_ref() {
+        let max_len = left_width.saturating_sub(2);
+        let display = if error.chars().count() > max_len {
+            let truncated: String = error.chars().take(max_len.saturating_sub(1)).collect();
+            format!(" ✕ {}…", truncated)
+        } else {
+            format!(" ✕ {}", error)
+        };
+        (display, Style::default().fg(theme::NEON_RED()))
+    } else if let Some(name) = selected_key_name {
         let max_len = left_width.saturating_sub(2); // leave some margin
-        if name.chars().count() > max_len {
+        let display = if name.chars().count() > max_len {
             let truncated: String = name.chars().take(max_len.saturating_sub(1)).collect();
             format!(" {}…", truncated)
         } else {
             format!(" {}", name)
-        }
+        };
+        (display, Style::default().fg(theme::TEXT_PRIMARY()))
     } else {
-        String::new()
+        (String::new(), Style::default().fg(theme::TEXT_PRIMARY()))
     };
     let left_len = key_display.chars().count();
     let left_padding = left_width.saturating_sub(left_len);
@@ -601,7 +611,7 @@ fn render_status_bar(
     // Build the status line with fixed positions
     let spans = vec![
         // Left section
-        Span::styled(&key_display, Style::default().fg(theme::TEXT_PRIMARY())),
+        Span::styled(&key_display, key_style),
         Span::raw(" ".repeat(left_padding)),
         // Center section
         Span::raw(" ".repeat(center_left_pad)),

@@ -108,6 +108,7 @@ pub fn default_keybindings() -> KeybindingsConfig {
     kb.add(BindingContext::Default, "cmdline.search", vec!["/".into()]);
     kb.add(BindingContext::Default, "cmdline.command", vec![":".into()]);
     kb.add(BindingContext::Default, "cmdline.goto", vec!["g".into()]);
+    kb.add(BindingContext::Default, "cmdline.raw", vec![">".into()]);
     kb.add(
         BindingContext::Default,
         "navigation.next_panel",

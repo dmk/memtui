@@ -11,6 +11,7 @@ use super::components::modal::render_modal;
 
 use super::components::{
     cmdline::CmdLineProps,
+    command_suggestions::{command_suggestions, goto_suggestions, CommandSuggestionsProps},
     connection_form::ConnectionFormProps,
     connection_list::ConnectionListProps,
     help::HelpScreenProps,
@@ -24,6 +25,7 @@ use super::components::{
 use super::state::{Panel, TabRegion, UiState};
 use super::theme;
 use super::widgets::{TabBar, TabItem};
+use crate::action::CmdLineMode;
 use crate::app::{AppState, ConnectionStatus};
 use crate::keybindings::{format_key_for_display, BindingContext, KeybindingsConfig};
 use crate::types::ValueType;
@@ -79,22 +81,42 @@ pub fn render_at(
     // Command line height (1 when active, 0 otherwise)
     let cmdline_height = if app_state.is_cmdline_visible() { 1 } else { 0 };
 
+    // CmdLine suggestions popup height (command/goto modes)
+    let (cmdline_suggestions, suggestions_title) = match app_state.cmdline_mode {
+        Some(CmdLineMode::Command) => {
+            (command_suggestions(&app_state.cmdline_buffer), " Commands ")
+        }
+        Some(CmdLineMode::Goto) => (
+            goto_suggestions(&app_state.cmdline_buffer, &app_state.keys),
+            " Goto ",
+        ),
+        _ => (Vec::new(), ""),
+    };
+    let suggestions_height = if !cmdline_suggestions.is_empty() {
+        // Height = commands (max 6) + 2 for borders
+        (cmdline_suggestions.len().min(6) + 2) as u16
+    } else {
+        0
+    };
+
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(if show_tabs { 1 } else { 0 }), // Tabs - single line
             Constraint::Length(warning_height),
-            Constraint::Min(0),                 // Body
-            Constraint::Length(cmdline_height), // Command line (above status bar)
-            Constraint::Length(1),              // Status bar - single line
+            Constraint::Min(0),                     // Body
+            Constraint::Length(suggestions_height), // Command suggestions popup
+            Constraint::Length(cmdline_height),     // Command line (above status bar)
+            Constraint::Length(1),                  // Status bar - single line
         ])
         .split(f.area());
 
     let tab_area = root[0];
     let warning_area = root[1];
     let body_area = root[2];
-    let cmdline_area = root[3];
-    let status_area = root[4];
+    let suggestions_area = root[3];
+    let cmdline_area = root[4];
+    let status_area = root[5];
 
     // Store body area for resize calculations
     ui_state.last_body_area = Some(body_area);
@@ -156,6 +178,18 @@ pub fn render_at(
         ui_state.last_key_area = None;
         ui_state.last_value_area = None;
         render_welcome(f, app_state, ui_state, body_area, keybindings);
+    }
+
+    // Render cmdline suggestions popup when in command/goto mode
+    if !cmdline_suggestions.is_empty() {
+        let props = CommandSuggestionsProps {
+            items: &cmdline_suggestions,
+            title: suggestions_title,
+            selected_index: app_state.suggestions_index,
+        };
+        ui_state
+            .command_suggestions
+            .render(f, suggestions_area, props);
     }
 
     // Render command line above status bar when active
@@ -604,6 +638,7 @@ fn render_cmdline(
     let props = CmdLineProps {
         keybindings,
         mode: app_state.cmdline_mode,
+        is_active: app_state.cmdline_active,
         buffer: &app_state.cmdline_buffer,
         cursor: app_state.cmdline_cursor,
         search_result_count,

@@ -13,6 +13,7 @@ pub enum CmdLineMode {
     Search, // / - fuzzy search keys
     Command, // : - execute commands
     Goto,    // g - jump to exact key
+    Raw,     // > - execute raw backend command
 }
 
 #[derive(Clone, tui_dispatch::Action)]
@@ -127,6 +128,10 @@ pub enum Action {
     CmdLinePrevResult,           // Navigate to previous search result (search mode)
     CmdLineHistoryPrev,          // Previous history entry
     CmdLineHistoryNext,          // Next history entry
+    // Command suggestions (command mode only)
+    CmdLineSuggestionsNext,   // Select next suggestion
+    CmdLineSuggestionsPrev,   // Select previous suggestion
+    CmdLineSuggestionsSelect, // Insert selected suggestion
 
     // Command results
     CmdLineSetCommandResult {
@@ -288,6 +293,9 @@ impl fmt::Debug for Action {
             Action::CmdLinePrevResult => write!(f, "CmdLinePrevResult"),
             Action::CmdLineHistoryPrev => write!(f, "CmdLineHistoryPrev"),
             Action::CmdLineHistoryNext => write!(f, "CmdLineHistoryNext"),
+            Action::CmdLineSuggestionsNext => write!(f, "CmdLineSuggestionsNext"),
+            Action::CmdLineSuggestionsPrev => write!(f, "CmdLineSuggestionsPrev"),
+            Action::CmdLineSuggestionsSelect => write!(f, "CmdLineSuggestionsSelect"),
             Action::CmdLineSetCommandResult {
                 command,
                 output,

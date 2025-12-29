@@ -44,6 +44,8 @@ pub struct AppState {
     pub search_selection_index: Option<usize>, // Selection index within search results (0-based)
     pub search_match_positions: HashMap<usize, Vec<u32>>, // Match positions for highlighting
     pub keys_length_before_search: usize, // Original keys array length before merging server results
+    // Cmdline suggestions (used in command/goto modes)
+    pub suggestions_index: Option<usize>, // Selected suggestion in popup (0-based)
 }
 
 #[derive(Clone, Debug)]
@@ -119,6 +121,8 @@ impl AppState {
             search_selection_index: None,
             search_match_positions: HashMap::new(),
             keys_length_before_search: 0,
+            // Command suggestions
+            suggestions_index: None,
         }
     }
 
@@ -157,6 +161,7 @@ impl AppState {
         self.cmdline_buffer.clear();
         self.cmdline_cursor = 0;
         self.cmdline_active = false;
+        self.suggestions_index = None;
         self.search_token = self.search_token.wrapping_add(1);
         self.clear_search_state();
     }
@@ -170,6 +175,12 @@ impl AppState {
         self.clear_search_state();
         // Track current keys length before merging new server results
         self.keys_length_before_search = self.keys.len();
+        // Reset cmdline suggestions
+        self.suggestions_index = if matches!(mode, CmdLineMode::Command | CmdLineMode::Goto) {
+            Some(0) // Start with first suggestion selected
+        } else {
+            None
+        };
     }
 
     /// Helper to check if cmdline is active

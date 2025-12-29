@@ -26,6 +26,8 @@ pub struct CmdLineProps<'a> {
     pub keybindings: &'a KeybindingsConfig,
     /// Current command line mode (None = inactive)
     pub mode: Option<CmdLineMode>,
+    /// Whether the cmdline is currently focused for input
+    pub is_active: bool,
     /// The current buffer content
     pub buffer: &'a str,
     /// Cursor position in the buffer
@@ -62,11 +64,12 @@ impl CmdLine {
     }
 
     /// Get the mode prefix character
-    fn mode_prefix(mode: CmdLineMode) -> char {
+    fn mode_prefix(mode: CmdLineMode) -> &'static str {
         match mode {
-            CmdLineMode::Search => '/',
-            CmdLineMode::Command => ':',
-            CmdLineMode::Goto => 'g',
+            CmdLineMode::Search => "/",
+            CmdLineMode::Command => ":",
+            CmdLineMode::Goto => "g ",
+            CmdLineMode::Raw => "> ",
         }
     }
 }
@@ -120,6 +123,7 @@ impl Component for CmdLine {
         };
 
         let prefix = Self::mode_prefix(mode);
+        let prefix_len = prefix.chars().count();
 
         // Build the command line content with cursor
         let before_cursor: String = props.buffer.chars().take(props.cursor).collect();
@@ -143,45 +147,49 @@ impl Component for CmdLine {
             }
             CmdLineMode::Command => String::new(),
             CmdLineMode::Goto => String::new(),
+            CmdLineMode::Raw => String::new(),
         };
 
         // Calculate available width for command line
         let total_width = area.width as usize;
         let right_len = right_info.chars().count();
-        let prefix_len = 1; // "/" or ":" or "g"
         let _buffer_max_width = total_width.saturating_sub(prefix_len + right_len + 2);
 
         // Build spans
         let mut spans = vec![
             // Mode prefix
-            Span::styled(
-                format!("{}", prefix),
-                Style::default().fg(theme::NEON_CYAN()),
-            ),
+            Span::styled(prefix, Style::default().fg(theme::NEON_CYAN())),
         ];
 
-        // Buffer content before cursor
-        spans.push(Span::styled(
-            before_cursor,
-            Style::default().fg(theme::TEXT_PRIMARY()),
-        ));
+        if props.is_active {
+            // Buffer content before cursor
+            spans.push(Span::styled(
+                before_cursor,
+                Style::default().fg(theme::TEXT_PRIMARY()),
+            ));
 
-        // Cursor (inverted colors)
-        spans.push(Span::styled(
-            cursor_char.to_string(),
-            Style::default()
-                .fg(theme::BG_DEEP())
-                .bg(theme::TEXT_PRIMARY()),
-        ));
+            // Cursor (inverted colors)
+            spans.push(Span::styled(
+                cursor_char.to_string(),
+                Style::default()
+                    .fg(theme::BG_DEEP())
+                    .bg(theme::TEXT_PRIMARY()),
+            ));
 
-        // Buffer content after cursor
-        spans.push(Span::styled(
-            after_cursor,
-            Style::default().fg(theme::TEXT_PRIMARY()),
-        ));
+            // Buffer content after cursor
+            spans.push(Span::styled(
+                after_cursor,
+                Style::default().fg(theme::TEXT_PRIMARY()),
+            ));
+        } else {
+            spans.push(Span::styled(
+                props.buffer,
+                Style::default().fg(theme::TEXT_PRIMARY()),
+            ));
+        }
 
         // Padding to push right info to the right
-        let content_len = 1 + props.buffer.len() + 1; // prefix + buffer + cursor
+        let content_len = prefix_len + props.buffer.len() + if props.is_active { 1 } else { 0 };
         let padding = total_width.saturating_sub(content_len + right_len + 1);
         spans.push(Span::raw(" ".repeat(padding)));
 
@@ -223,6 +231,7 @@ mod tests {
             } else {
                 None
             },
+            is_active: active,
             buffer: "",
             cursor: 0,
             search_result_count: None,
@@ -309,8 +318,9 @@ mod tests {
 
     #[test]
     fn test_mode_prefix() {
-        assert_eq!(CmdLine::mode_prefix(CmdLineMode::Search), '/');
-        assert_eq!(CmdLine::mode_prefix(CmdLineMode::Command), ':');
-        assert_eq!(CmdLine::mode_prefix(CmdLineMode::Goto), 'g');
+        assert_eq!(CmdLine::mode_prefix(CmdLineMode::Search), "/");
+        assert_eq!(CmdLine::mode_prefix(CmdLineMode::Command), ":");
+        assert_eq!(CmdLine::mode_prefix(CmdLineMode::Goto), "g ");
+        assert_eq!(CmdLine::mode_prefix(CmdLineMode::Raw), "> ");
     }
 }

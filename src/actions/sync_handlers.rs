@@ -4,7 +4,9 @@
 
 use crate::action::Action;
 use crate::app::AppState;
+use crate::backend::CommandStatus;
 use crate::config::Config;
+use crate::ui::components::command_suggestions::{command_suggestions, goto_suggestions};
 use crate::ui::{Panel, UiState};
 use crate::userdata;
 use tokio::sync::mpsc;
@@ -401,6 +403,17 @@ pub fn handle_cmdline(
             app_state.error_message = None;
             ui_state.key_list.select(None);
             ui_state.value_viewer.reset_scroll();
+            ui_state.active_panel = Panel::Value;
+            if *status == CommandStatus::Success {
+                app_state.cmdline_buffer.clear();
+                app_state.cmdline_cursor = 0;
+                if matches!(
+                    app_state.cmdline_mode,
+                    Some(CmdLineMode::Command | CmdLineMode::Goto)
+                ) {
+                    app_state.suggestions_index = Some(0);
+                }
+            }
             Some((true, false))
         }
         Action::CmdLineClearCommandResult => {
@@ -414,6 +427,13 @@ pub fn handle_cmdline(
                     char_to_byte_index(&app_state.cmdline_buffer, app_state.cmdline_cursor);
                 app_state.cmdline_buffer.insert(byte_idx, *c);
                 app_state.cmdline_cursor += 1;
+                // Reset suggestions index when buffer changes in command/goto mode
+                if matches!(
+                    app_state.cmdline_mode,
+                    Some(CmdLineMode::Command | CmdLineMode::Goto)
+                ) {
+                    app_state.suggestions_index = Some(0);
+                }
                 // Only trigger search in search mode
                 let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
                 Some((true, needs_search))
@@ -428,6 +448,13 @@ pub fn handle_cmdline(
                 let byte_idx =
                     char_to_byte_index(&app_state.cmdline_buffer, app_state.cmdline_cursor);
                 app_state.cmdline_buffer.remove(byte_idx);
+                // Reset suggestions index when buffer changes in command/goto mode
+                if matches!(
+                    app_state.cmdline_mode,
+                    Some(CmdLineMode::Command | CmdLineMode::Goto)
+                ) {
+                    app_state.suggestions_index = Some(0);
+                }
                 if app_state.cmdline_buffer.is_empty() {
                     if app_state.cmdline_mode == Some(CmdLineMode::Search) {
                         app_state.search_token = app_state.search_token.wrapping_add(1);
@@ -449,6 +476,13 @@ pub fn handle_cmdline(
                 let byte_idx =
                     char_to_byte_index(&app_state.cmdline_buffer, app_state.cmdline_cursor);
                 app_state.cmdline_buffer.remove(byte_idx);
+                // Reset suggestions index when buffer changes in command/goto mode
+                if matches!(
+                    app_state.cmdline_mode,
+                    Some(CmdLineMode::Command | CmdLineMode::Goto)
+                ) {
+                    app_state.suggestions_index = Some(0);
+                }
                 let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
                 Some((true, needs_search))
             } else {
@@ -504,6 +538,13 @@ pub fn handle_cmdline(
                     char_to_byte_index(&app_state.cmdline_buffer, app_state.cmdline_cursor);
                 app_state.cmdline_buffer.drain(start_byte..end_byte);
                 app_state.cmdline_cursor = new_cursor;
+                // Reset suggestions index when buffer changes in command/goto mode
+                if matches!(
+                    app_state.cmdline_mode,
+                    Some(CmdLineMode::Command | CmdLineMode::Goto)
+                ) {
+                    app_state.suggestions_index = Some(0);
+                }
                 let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
                 Some((true, needs_search))
             } else {
@@ -520,6 +561,13 @@ pub fn handle_cmdline(
                     char_to_byte_index(&app_state.cmdline_buffer, app_state.cmdline_cursor);
                 let end_byte = char_to_byte_index(&app_state.cmdline_buffer, end);
                 app_state.cmdline_buffer.drain(start_byte..end_byte);
+                // Reset suggestions index when buffer changes in command/goto mode
+                if matches!(
+                    app_state.cmdline_mode,
+                    Some(CmdLineMode::Command | CmdLineMode::Goto)
+                ) {
+                    app_state.suggestions_index = Some(0);
+                }
                 let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
                 Some((true, needs_search))
             } else {
@@ -530,8 +578,91 @@ pub fn handle_cmdline(
             if app_state.is_cmdline_active() {
                 app_state.cmdline_buffer = query.clone();
                 app_state.cmdline_cursor = query.chars().count();
+                if matches!(
+                    app_state.cmdline_mode,
+                    Some(CmdLineMode::Command | CmdLineMode::Goto)
+                ) {
+                    app_state.suggestions_index = Some(0);
+                }
                 let needs_search = app_state.cmdline_mode == Some(CmdLineMode::Search);
                 Some((true, needs_search))
+            } else {
+                None
+            }
+        }
+        Action::CmdLineSuggestionsNext => {
+            if matches!(
+                app_state.cmdline_mode,
+                Some(CmdLineMode::Command | CmdLineMode::Goto)
+            ) {
+                let filtered = match app_state.cmdline_mode {
+                    Some(CmdLineMode::Command) => command_suggestions(&app_state.cmdline_buffer),
+                    Some(CmdLineMode::Goto) => {
+                        goto_suggestions(&app_state.cmdline_buffer, &app_state.keys)
+                    }
+                    _ => Vec::new(),
+                };
+                if !filtered.is_empty() {
+                    let current = app_state.suggestions_index.unwrap_or(0);
+                    let next = if current >= filtered.len() - 1 {
+                        0
+                    } else {
+                        current + 1
+                    };
+                    app_state.suggestions_index = Some(next);
+                }
+                Some((true, false))
+            } else {
+                None
+            }
+        }
+        Action::CmdLineSuggestionsPrev => {
+            if matches!(
+                app_state.cmdline_mode,
+                Some(CmdLineMode::Command | CmdLineMode::Goto)
+            ) {
+                let filtered = match app_state.cmdline_mode {
+                    Some(CmdLineMode::Command) => command_suggestions(&app_state.cmdline_buffer),
+                    Some(CmdLineMode::Goto) => {
+                        goto_suggestions(&app_state.cmdline_buffer, &app_state.keys)
+                    }
+                    _ => Vec::new(),
+                };
+                if !filtered.is_empty() {
+                    let current = app_state.suggestions_index.unwrap_or(0);
+                    let prev = if current == 0 {
+                        filtered.len() - 1
+                    } else {
+                        current - 1
+                    };
+                    app_state.suggestions_index = Some(prev);
+                }
+                Some((true, false))
+            } else {
+                None
+            }
+        }
+        Action::CmdLineSuggestionsSelect => {
+            if matches!(
+                app_state.cmdline_mode,
+                Some(CmdLineMode::Command | CmdLineMode::Goto)
+            ) {
+                let filtered = match app_state.cmdline_mode {
+                    Some(CmdLineMode::Command) => command_suggestions(&app_state.cmdline_buffer),
+                    Some(CmdLineMode::Goto) => {
+                        goto_suggestions(&app_state.cmdline_buffer, &app_state.keys)
+                    }
+                    _ => Vec::new(),
+                };
+                if let Some(idx) = app_state.suggestions_index {
+                    if let Some(cmd) = filtered.get(idx) {
+                        app_state.cmdline_buffer = cmd.insert_text.clone();
+                        app_state.cmdline_cursor = cmd.insert_text.chars().count();
+                        // Reset selection to first match after updating buffer
+                        app_state.suggestions_index = Some(0);
+                    }
+                }
+                Some((true, false))
             } else {
                 None
             }

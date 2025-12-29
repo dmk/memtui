@@ -1,12 +1,13 @@
 use super::{
-    Backend, BackendCapabilities, BackendError, ConnectionInfo, RawCommandResult, ServerInfo,
+    Backend, BackendCapabilities, BackendError, CommandStatus, ConnectionInfo, RawCommandResult,
+    ServerInfo,
 };
 use crate::types::{BackendType, ConnectionConfig, KeyMetadata, KeyScanResult, Value, ValueType};
 use memcache::Client as MemcacheClient;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 #[derive(Debug, Clone)]
@@ -230,8 +231,8 @@ impl Backend for MemcachedBackend {
     fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities {
             supports_ttl: true,
-            supports_scan: true,          // Using stats cachedump
-            supports_raw_commands: false, // Limited command support
+            supports_scan: true,         // Using stats cachedump
+            supports_raw_commands: true, // Raw text protocol over TCP
             supports_batch_get: true,
             supports_efficient_pattern_search: false, // Memcached requires client-side filtering
             supports_type_display: false,             // Memcached is key-value only
@@ -800,8 +801,124 @@ impl Backend for MemcachedBackend {
     }
 
     async fn execute_raw(&self, _command: &str) -> Result<RawCommandResult, BackendError> {
-        // Memcached doesn't support arbitrary raw commands through this client
-        Err(BackendError::NotSupported)
+        if self.client.is_none() {
+            return Err(BackendError::ConnectionError("Not connected".to_string()));
+        }
+
+        let command = _command.trim();
+        if command.is_empty() {
+            return Err(BackendError::InvalidCommand("Empty command".to_string()));
+        }
+
+        let addr = format!("{}:{}", self.config.host, self.config.port);
+        let start = std::time::Instant::now();
+        let mut stream = tokio::time::timeout(self.config.timeout, TcpStream::connect(&addr))
+            .await
+            .map_err(|_| BackendError::Timeout)?
+            .map_err(|e| BackendError::ConnectionError(e.to_string()))?;
+
+        let mut command_line = command.to_string();
+        if !command_line.ends_with("\r\n") {
+            command_line.push_str("\r\n");
+        }
+
+        tokio::time::timeout(
+            self.config.timeout,
+            stream.write_all(command_line.as_bytes()),
+        )
+        .await
+        .map_err(|_| BackendError::Timeout)?
+        .map_err(|e| BackendError::Internal(e.to_string()))?;
+        tokio::time::timeout(self.config.timeout, stream.flush())
+            .await
+            .map_err(|_| BackendError::Timeout)?
+            .map_err(|e| BackendError::Internal(e.to_string()))?;
+
+        let mut reader = BufReader::new(stream);
+        let mut output = String::new();
+        let mut line = String::new();
+        let mut status = CommandStatus::Success;
+        let mut error_message = None;
+
+        loop {
+            line.clear();
+            let read = tokio::time::timeout(self.config.timeout, reader.read_line(&mut line))
+                .await
+                .map_err(|_| BackendError::Timeout)?
+                .map_err(|e| BackendError::Internal(e.to_string()))?;
+            if read == 0 {
+                break;
+            }
+
+            let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
+
+            if trimmed == "ERROR"
+                || trimmed.starts_with("CLIENT_ERROR")
+                || trimmed.starts_with("SERVER_ERROR")
+            {
+                status = CommandStatus::Error;
+                error_message = Some(trimmed.to_string());
+                break;
+            }
+
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(trimmed);
+
+            if trimmed == "END" {
+                break;
+            }
+
+            if trimmed.starts_with("VALUE ") {
+                let mut parts = trimmed.split_whitespace();
+                let _ = parts.next();
+                let _ = parts.next();
+                let _ = parts.next();
+                if let Some(bytes_str) = parts.next() {
+                    if let Ok(bytes_len) = bytes_str.parse::<usize>() {
+                        let mut data = vec![0u8; bytes_len];
+                        tokio::time::timeout(self.config.timeout, reader.read_exact(&mut data))
+                            .await
+                            .map_err(|_| BackendError::Timeout)?
+                            .map_err(|e| BackendError::Internal(e.to_string()))?;
+                        let mut crlf = [0u8; 2];
+                        tokio::time::timeout(self.config.timeout, reader.read_exact(&mut crlf))
+                            .await
+                            .map_err(|_| BackendError::Timeout)?
+                            .map_err(|e| BackendError::Internal(e.to_string()))?;
+                        let data_str = String::from_utf8_lossy(&data);
+                        output.push('\n');
+                        output.push_str(&data_str);
+                    }
+                }
+                continue;
+            }
+
+            if trimmed.starts_with("STAT ") || trimmed.starts_with("ITEM ") {
+                continue;
+            }
+
+            if trimmed.starts_with("VERSION ")
+                || trimmed == "OK"
+                || trimmed == "STORED"
+                || trimmed == "NOT_STORED"
+                || trimmed == "EXISTS"
+                || trimmed == "NOT_FOUND"
+                || trimmed == "DELETED"
+                || trimmed == "TOUCHED"
+                || trimmed == "RESET"
+            {
+                break;
+            }
+        }
+
+        Ok(RawCommandResult {
+            output,
+            status,
+            duration: start.elapsed(),
+            error_message,
+        })
     }
 }
 
@@ -852,7 +969,7 @@ mod tests {
         let caps = backend.capabilities();
         assert!(caps.supports_ttl);
         assert!(caps.supports_scan); // Using stats cachedump
-        assert!(!caps.supports_raw_commands);
+        assert!(caps.supports_raw_commands);
         assert!(caps.supports_batch_get);
         assert!(!caps.supports_efficient_pattern_search); // Client-side only
     }

@@ -30,6 +30,9 @@ use memtui::keybindings::{BindingContext, KeybindingsConfig};
 use memtui::terminal;
 use memtui::types::{ConnectionConfig, ValueType};
 use memtui::ui::components::cmdline::{CmdLine, CmdLineProps};
+use memtui::ui::components::command_suggestions::{
+    command_suggestions, goto_suggestions, CommandSuggestionsProps,
+};
 use memtui::ui::components::connection_list::ConnectionListProps;
 use memtui::ui::components::debug as debug_ui;
 use memtui::ui::components::help::HelpScreenProps;
@@ -461,9 +464,40 @@ impl App {
 
         // 6. CmdLine mode - special handling (only when actively typing in cmdline)
         if self.app_state.is_cmdline_active() {
+            // 6a. CmdLine suggestions (command/goto mode)
+            if matches!(
+                self.app_state.cmdline_mode,
+                Some(CmdLineMode::Command | CmdLineMode::Goto)
+            ) {
+                let (items, title) = match self.app_state.cmdline_mode {
+                    Some(CmdLineMode::Command) => (
+                        command_suggestions(&self.app_state.cmdline_buffer),
+                        " Commands ",
+                    ),
+                    Some(CmdLineMode::Goto) => (
+                        goto_suggestions(&self.app_state.cmdline_buffer, &self.app_state.keys),
+                        " Goto ",
+                    ),
+                    _ => (Vec::new(), ""),
+                };
+                if !items.is_empty() {
+                    let props = CommandSuggestionsProps {
+                        items: &items,
+                        title,
+                        selected_index: self.app_state.suggestions_index,
+                    };
+                    let actions = self.ui_state.command_suggestions.handle_event(event, props);
+                    if !actions.is_empty() {
+                        return actions;
+                    }
+                }
+            }
+
+            // 6b. CmdLine itself
             let props = CmdLineProps {
                 keybindings: &self.keybindings,
                 mode: self.app_state.cmdline_mode,
+                is_active: self.app_state.cmdline_active,
                 buffer: &self.app_state.cmdline_buffer,
                 cursor: self.app_state.cmdline_cursor,
                 search_result_count: None,
@@ -775,6 +809,13 @@ impl App {
                     && !self.app_state.keys.is_empty()
                 {
                     Some(Action::SetCmdLineMode(CmdLineMode::Goto))
+                } else {
+                    None
+                }
+            }
+            "cmdline.raw" => {
+                if self.app_state.connection_manager.get_active_id().is_some() {
+                    Some(Action::SetCmdLineMode(CmdLineMode::Raw))
                 } else {
                     None
                 }
@@ -1164,7 +1205,10 @@ impl App {
             | Action::CmdLineMoveEnd
             | Action::CmdLineUpdateQuery(_)
             | Action::CmdLineSetCommandResult { .. }
-            | Action::CmdLineClearCommandResult => {
+            | Action::CmdLineClearCommandResult
+            | Action::CmdLineSuggestionsNext
+            | Action::CmdLineSuggestionsPrev
+            | Action::CmdLineSuggestionsSelect => {
                 if let Some((render, needs_search)) =
                     handle_cmdline(&mut self.app_state, &mut self.ui_state, &action)
                 {
@@ -1210,6 +1254,15 @@ impl App {
                         if self.goto_key(&key_name) {
                             let _ = self.action_tx.send(Action::CmdLineHide);
                         } else {
+                            let _ = self.action_tx.send(Action::ExitCmdLineMode);
+                        }
+                    }
+                    Some(CmdLineMode::Raw) => {
+                        let cmd = self.app_state.cmdline_buffer.trim().to_string();
+                        if cmd.is_empty() {
+                            let _ = self.action_tx.send(Action::CmdLineHide);
+                        } else {
+                            self.execute_raw_command(format!("raw {}", cmd), cmd);
                             let _ = self.action_tx.send(Action::ExitCmdLineMode);
                         }
                     }

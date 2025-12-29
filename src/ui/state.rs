@@ -1,4 +1,5 @@
 use super::components::cmdline::CmdLine;
+use super::components::command_suggestions::CommandSuggestions;
 use super::components::connection_list::ConnectionList;
 use super::components::help::HelpScreen;
 use super::components::key_list::KeyList;
@@ -31,6 +32,7 @@ pub struct UiState {
     pub form_error: Option<String>,
 
     pub cmdline: CmdLine,
+    pub command_suggestions: CommandSuggestions,
     pub connection_list: ConnectionList,
     pub help_screen: HelpScreen,
     pub key_list: KeyList,
@@ -70,6 +72,7 @@ impl UiState {
             form_error: None,
 
             cmdline: CmdLine::new(),
+            command_suggestions: CommandSuggestions::new(),
             connection_list: ConnectionList::new(),
             help_screen: HelpScreen::new(),
             key_list: KeyList::new(),

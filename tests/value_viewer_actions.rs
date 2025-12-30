@@ -1,7 +1,11 @@
 mod support;
 
 use memtui::action::Action;
+use memtui::actions::{async_handlers, sync_handlers};
+use memtui::events::{ComponentId, Event, EventContext, EventKind};
 use memtui::types::{Value, ValueType};
+use memtui::ui::components::value_viewer::ValueViewerProps;
+use memtui::ui::components::Component;
 use rstest::rstest;
 
 use support::{fixtures, harness::AppHarness};
@@ -29,6 +33,58 @@ fn selecting_key_clears_previous_value() {
 }
 
 #[rstest]
+fn load_value_cancel_stale_token() {
+    let mut app = AppHarness::new()
+        .with_connection("local")
+        .with_keys(fixtures::sample_keys());
+
+    app.app_state.value_request_token = 2;
+
+    let applied = async_handlers::handle_did_load_value(
+        &mut app.app_state,
+        memtui::types::Value {
+            data: b"stale".to_vec(),
+            value_type: ValueType::String,
+            encoding: None,
+        },
+        1,
+    );
+
+    assert!(!applied);
+    assert!(app.app_state.selected_value.is_none());
+}
+
+#[rstest]
+fn load_value_not_found_sets_error() {
+    let mut app = AppHarness::new()
+        .with_connection("local")
+        .with_keys(fixtures::sample_keys());
+
+    sync_handlers::handle_did_fail_load_value(&mut app.app_state, "Key not found".to_string());
+
+    assert_eq!(
+        app.app_state.error_message.as_deref(),
+        Some("Error loading value: Key not found")
+    );
+    assert!(app.app_state.selected_value.is_none());
+}
+
+#[rstest]
+fn load_value_error_sets_error() {
+    let mut app = AppHarness::new()
+        .with_connection("local")
+        .with_keys(fixtures::sample_keys());
+
+    sync_handlers::handle_did_fail_load_value(&mut app.app_state, "Backend error".to_string());
+
+    assert_eq!(
+        app.app_state.error_message.as_deref(),
+        Some("Error loading value: Backend error")
+    );
+    assert!(app.app_state.selected_value.is_none());
+}
+
+#[rstest]
 fn selecting_key_resets_scroll_position() {
     let mut app = AppHarness::new()
         .with_connection("local")
@@ -42,6 +98,42 @@ fn selecting_key_resets_scroll_position() {
 
     // Scroll should reset
     assert_eq!(app.ui_state.value_viewer.scroll_offset, 0);
+}
+
+#[rstest]
+fn scroll_mouse_emits_scroll_action() {
+    let mut app = AppHarness::new();
+    let props = ValueViewerProps {
+        selected_value: None,
+        selected_key_type: None,
+        selected_key_name: None,
+        selected_key: None,
+        error_message: None,
+        json_formatter: &app.app_state.json_formatter,
+        text_formatter: &app.app_state.text_formatter,
+        is_active: true,
+        capabilities: None,
+        animation: &app.ui_state.animation,
+        now: std::time::SystemTime::now(),
+        keybindings: &app.keybindings,
+    };
+
+    let area = ratatui::layout::Rect::new(0, 0, 10, 6);
+    let mut context = EventContext::default();
+    context.set_focus(Some(ComponentId::ValueViewer));
+    context.set_component_area(ComponentId::ValueViewer, area);
+    let event = Event::new(
+        EventKind::Scroll {
+            column: 1,
+            row: 1,
+            delta: 1,
+        },
+        context,
+    );
+
+    let actions = app.ui_state.value_viewer.handle_event(&event, props);
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(actions[0], Action::ValueViewerScrollBy(1)));
 }
 
 #[rstest]

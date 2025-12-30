@@ -56,3 +56,46 @@ fn selecting_new_key_clears_error() {
     assert_eq!(app.app_state.selected_key_index, Some(1));
     assert!(app.app_state.selected_value.is_none());
 }
+
+#[rstest]
+fn page_navigation_moves_by_viewport() {
+    let mut app = AppHarness::new()
+        .with_connection("local")
+        .with_keys(fixtures::sample_keys());
+
+    app.app_state.viewport_height = 2;
+    app.ui_state.key_list.state.select(Some(0));
+
+    assert!(app.dispatch_action(Action::PageDown));
+    assert_eq!(app.ui_state.key_list.state.selected(), Some(2));
+
+    let actions = app.drain_actions();
+    actions.assert_any_matches(|a| matches!(a, Action::SelectKey(2)));
+
+    assert!(app.dispatch_action(Action::PageUp));
+    assert_eq!(app.ui_state.key_list.state.selected(), Some(0));
+
+    let actions = app.drain_actions();
+    actions.assert_any_matches(|a| matches!(a, Action::SelectKey(0)));
+}
+
+#[rstest]
+fn home_end_navigation_jumps_to_bounds() {
+    let mut app = AppHarness::new()
+        .with_connection("local")
+        .with_keys(fixtures::sample_keys());
+
+    app.ui_state.key_list.state.select(Some(1));
+
+    assert!(app.dispatch_action(Action::Home));
+    assert_eq!(app.ui_state.key_list.state.selected(), Some(0));
+
+    let actions = app.drain_actions();
+    actions.assert_any_matches(|a| matches!(a, Action::SelectKey(0)));
+
+    assert!(app.dispatch_action(Action::End));
+    assert_eq!(app.ui_state.key_list.state.selected(), Some(2));
+
+    let actions = app.drain_actions();
+    actions.assert_any_matches(|a| matches!(a, Action::SelectKey(2)));
+}

@@ -171,6 +171,16 @@ impl ActionDispatcher for AppHarness {
         false
     }
 
+    fn dispatch_page(&mut self, action: &Action) -> bool {
+        // PageDown/PageUp are categorized as "page" by tui_dispatch
+        sync_handlers::handle_navigation(
+            &mut self.ui_state,
+            &mut self.app_state,
+            &self.action_tx,
+            action,
+        )
+    }
+
     fn dispatch_uncategorized(&mut self, action: &Action) -> bool {
         // Handle remaining uncategorized actions
         match action {
@@ -195,14 +205,19 @@ impl ActionDispatcher for AppHarness {
             }
 
             // Navigation
-            Action::NextItem | Action::PrevItem | Action::NextPanel | Action::PrevPanel => {
-                sync_handlers::handle_navigation(
-                    &mut self.ui_state,
-                    &mut self.app_state,
-                    &self.action_tx,
-                    action,
-                )
-            }
+            Action::NextItem
+            | Action::PrevItem
+            | Action::NextPanel
+            | Action::PrevPanel
+            | Action::PageDown
+            | Action::PageUp
+            | Action::Home
+            | Action::End => sync_handlers::handle_navigation(
+                &mut self.ui_state,
+                &mut self.app_state,
+                &self.action_tx,
+                action,
+            ),
 
             // Key selection
             Action::SelectKey(idx) => {
@@ -236,6 +251,26 @@ impl ActionDispatcher for AppHarness {
             | Action::OpenConnectionPalette
             | Action::CloseConnectionPalette => {
                 sync_handlers::handle_ui_toggle(&mut self.ui_state, &self.app_state, action)
+            }
+
+            Action::Enter => {
+                if self.ui_state.show_connection_form {
+                    sync_handlers::handle_connection_form(
+                        &mut self.ui_state,
+                        &mut self.app_state,
+                        &self.action_tx,
+                        &Config::default(),
+                        action,
+                    )
+                } else if self.ui_state.show_connection_palette {
+                    sync_handlers::handle_enter_connection_palette(
+                        &mut self.ui_state,
+                        &self.app_state,
+                        &self.action_tx,
+                    )
+                } else {
+                    false
+                }
             }
 
             // Connection management

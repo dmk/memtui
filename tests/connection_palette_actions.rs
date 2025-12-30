@@ -1,8 +1,13 @@
 mod support;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use memtui::action::Action;
+use memtui::events::{ComponentId, Event, EventContext, EventKind};
 use memtui::types::ConnectionConfig;
+use memtui::ui::components::connection_list::ConnectionListProps;
+use memtui::ui::components::Component;
 use rstest::rstest;
+use tui_dispatch::ActionAssertions;
 
 use support::{fixtures, harness::AppHarness};
 
@@ -110,4 +115,73 @@ fn connection_list_scroll_navigates() {
     // Scroll up wraps to end
     assert!(app.dispatch_action(Action::ConnectionListPrev));
     assert_eq!(app.ui_state.connection_list.state.selected(), Some(1));
+}
+
+#[rstest]
+fn palette_navigation_uses_next_prev_item() {
+    let (alpha, beta) = alpha_and_beta();
+
+    let mut app = AppHarness::new()
+        .with_connection_config(alpha)
+        .with_connection_config(beta);
+
+    app.dispatch_action(Action::OpenConnectionPalette);
+    app.ui_state.connection_list.state.select(Some(0));
+
+    assert!(app.dispatch_action(Action::NextItem));
+    assert_eq!(app.ui_state.connection_list.state.selected(), Some(1));
+
+    assert!(app.dispatch_action(Action::PrevItem));
+    assert_eq!(app.ui_state.connection_list.state.selected(), Some(0));
+
+    assert!(app.dispatch_action(Action::PrevItem));
+    assert_eq!(app.ui_state.connection_list.state.selected(), Some(1));
+}
+
+#[rstest]
+fn palette_enter_focuses_selected_connection() {
+    let (alpha, beta) = alpha_and_beta();
+
+    let mut app = AppHarness::new()
+        .with_connection_config(alpha.clone())
+        .with_connection_config(beta);
+
+    app.dispatch_action(Action::OpenConnectionPalette);
+    app.ui_state.connection_list.state.select(Some(0));
+
+    assert!(app.dispatch_action(Action::Enter));
+    assert!(!app.ui_state.show_connection_palette);
+
+    let actions = app.drain_actions();
+    actions.assert_any_matches(|a| matches!(a, Action::FocusConnection(id) if id == &alpha.id));
+}
+
+#[rstest]
+fn palette_delete_connection_via_keybinding() {
+    let (alpha, beta) = alpha_and_beta();
+
+    let mut app = AppHarness::new()
+        .with_connection_config(alpha.clone())
+        .with_connection_config(beta);
+
+    let props = ConnectionListProps {
+        configs: app.app_state.connection_manager.get_configs(),
+        active_id: app.app_state.connection_manager.get_active_id(),
+        statuses: app.app_state.connection_manager.get_statuses(),
+        is_active: true,
+        animation: &app.ui_state.animation,
+        keybindings: &app.keybindings,
+    };
+
+    let mut context = EventContext::default();
+    context.set_focus(Some(ComponentId::ConnectionPalette));
+    let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE);
+    let event = Event::new(EventKind::Key(key), context);
+
+    let actions = app.ui_state.connection_list.handle_event(&event, props);
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        &actions[0],
+        Action::DeleteConnection(id) if id == &alpha.id
+    ));
 }

@@ -37,3 +37,4 @@ base64 = "0.22"
 [dev-dependencies]
 rstest = "0.22"
 insta = { version = "1.39", features = ["glob"] }
+tokio = { version = "1", features = ["test-util"] }

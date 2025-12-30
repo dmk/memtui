@@ -1,6 +1,8 @@
 mod support;
 
 use memtui::action::Action;
+use memtui::config::Config;
+use memtui::types::{Auth, BackendType};
 use memtui::ui::components::connection_form::FormField;
 use rstest::rstest;
 
@@ -167,4 +169,193 @@ fn form_port_field_has_default() {
 
     // Port should have default value "6379"
     assert_eq!(app.ui_state.connection_form.port.value(), "6379");
+}
+
+#[rstest]
+fn form_backend_type_selection_updates_defaults() {
+    let mut app = AppHarness::new();
+    app.dispatch_action(Action::OpenConnectionForm);
+
+    assert_eq!(
+        app.ui_state.connection_form.backend_type,
+        BackendType::Redis
+    );
+    assert_eq!(app.ui_state.connection_form.port.value(), "6379");
+
+    assert!(app.dispatch_action(Action::ConnectionFormNextBackendType));
+    assert_eq!(
+        app.ui_state.connection_form.backend_type,
+        BackendType::Memcached
+    );
+    assert_eq!(app.ui_state.connection_form.port.value(), "11211");
+
+    assert!(app.dispatch_action(Action::ConnectionFormNextBackendType));
+    assert_eq!(app.ui_state.connection_form.backend_type, BackendType::Etcd);
+    assert_eq!(app.ui_state.connection_form.port.value(), "2379");
+
+    assert!(app.dispatch_action(Action::ConnectionFormNextBackendType));
+    assert_eq!(
+        app.ui_state.connection_form.backend_type,
+        BackendType::Redis
+    );
+    assert_eq!(app.ui_state.connection_form.port.value(), "6379");
+
+    assert!(app.dispatch_action(Action::ConnectionFormPrevBackendType));
+    assert_eq!(app.ui_state.connection_form.backend_type, BackendType::Etcd);
+    assert_eq!(app.ui_state.connection_form.port.value(), "2379");
+}
+
+#[rstest]
+fn form_validation_required_fields() {
+    let mut app = AppHarness::new();
+    app.dispatch_action(Action::OpenConnectionForm);
+
+    assert_eq!(app.ui_state.connection_form.name.value(), "");
+    assert!(app.ui_state.form_error.is_none());
+
+    assert!(app.dispatch_action(Action::Enter));
+    assert_eq!(app.ui_state.form_error.as_deref(), Some("Name is required"));
+    assert!(app.ui_state.show_connection_form);
+
+    app.ui_state.connection_form.name.set_value("demo");
+    app.ui_state.connection_form.host.set_value("");
+    assert!(app.dispatch_action(Action::Enter));
+    assert_eq!(app.ui_state.form_error.as_deref(), Some("Host is required"));
+
+    app.ui_state.connection_form.host.set_value("localhost");
+    app.ui_state.connection_form.port.set_value("nope");
+    assert!(app.dispatch_action(Action::Enter));
+    assert_eq!(
+        app.ui_state.form_error.as_deref(),
+        Some("Port must be a number between 1 and 65535")
+    );
+
+    assert_eq!(app.app_state.connection_manager.get_configs().len(), 0);
+    assert!(app.drain_actions().is_empty());
+}
+
+#[rstest]
+fn create_redis_connection() {
+    let mut app = AppHarness::new();
+    app.dispatch_action(Action::OpenConnectionForm);
+
+    app.ui_state.connection_form.name.set_value("redis-main");
+    app.ui_state.connection_form.host.set_value("127.0.0.1");
+    app.ui_state.connection_form.port.set_value("6380");
+
+    let config = app
+        .ui_state
+        .connection_form
+        .to_config(Config::default().connection.default_timeout)
+        .expect("valid config");
+
+    assert_eq!(config.backend_type, BackendType::Redis);
+    assert_eq!(config.name, "redis-main");
+    assert_eq!(config.host, "127.0.0.1");
+    assert_eq!(config.port, 6380);
+    assert_eq!(config.auth, None);
+    assert_eq!(config.database, Some("0".to_string()));
+}
+
+#[rstest]
+fn create_redis_with_auth() {
+    let mut app = AppHarness::new();
+    app.dispatch_action(Action::OpenConnectionForm);
+
+    app.ui_state.connection_form.name.set_value("redis-auth");
+    app.ui_state.connection_form.password.set_value("secret");
+
+    let config = app
+        .ui_state
+        .connection_form
+        .to_config(Config::default().connection.default_timeout)
+        .expect("valid config");
+
+    assert_eq!(config.backend_type, BackendType::Redis);
+    assert_eq!(config.auth, Some(Auth::Token("secret".to_string())));
+}
+
+#[rstest]
+fn create_redis_with_database() {
+    let mut app = AppHarness::new();
+    app.dispatch_action(Action::OpenConnectionForm);
+
+    app.ui_state.connection_form.name.set_value("redis-db");
+    app.ui_state.connection_form.database.set_value("5");
+
+    let config = app
+        .ui_state
+        .connection_form
+        .to_config(Config::default().connection.default_timeout)
+        .expect("valid config");
+
+    assert_eq!(config.backend_type, BackendType::Redis);
+    assert_eq!(config.database, Some("5".to_string()));
+}
+
+#[rstest]
+fn create_memcached_connection() {
+    let mut app = AppHarness::new();
+    app.dispatch_action(Action::OpenConnectionForm);
+    app.ui_state
+        .connection_form
+        .select_backend_type(BackendType::Memcached);
+    app.ui_state.connection_form.name.set_value("cache");
+    app.ui_state.connection_form.host.set_value("cache.local");
+
+    let config = app
+        .ui_state
+        .connection_form
+        .to_config(Config::default().connection.default_timeout)
+        .expect("valid config");
+
+    assert_eq!(config.backend_type, BackendType::Memcached);
+    assert_eq!(config.host, "cache.local");
+    assert_eq!(config.port, 11211);
+    assert_eq!(config.database, None);
+}
+
+#[rstest]
+fn create_etcd_connection() {
+    let mut app = AppHarness::new();
+    app.dispatch_action(Action::OpenConnectionForm);
+    app.ui_state
+        .connection_form
+        .select_backend_type(BackendType::Etcd);
+    app.ui_state.connection_form.name.set_value("etcd");
+    app.ui_state.connection_form.host.set_value("etcd.local");
+
+    let config = app
+        .ui_state
+        .connection_form
+        .to_config(Config::default().connection.default_timeout)
+        .expect("valid config");
+
+    assert_eq!(config.backend_type, BackendType::Etcd);
+    assert_eq!(config.host, "etcd.local");
+    assert_eq!(config.port, 2379);
+    assert_eq!(config.database, None);
+}
+
+#[rstest]
+fn form_submit_enter_emits_submit_action() {
+    let mut app = AppHarness::new();
+    app.dispatch_action(Action::OpenConnectionForm);
+
+    app.ui_state.connection_form.name.set_value("submit");
+    app.ui_state.connection_form.host.set_value("localhost");
+    app.ui_state.connection_form.port.set_value("6379");
+
+    assert!(app.dispatch_action(Action::Enter));
+
+    let actions = app.drain_actions();
+    assert_eq!(actions.len(), 1);
+    match &actions[0] {
+        Action::SubmitConnectionForm(config) => {
+            assert_eq!(config.name, "submit");
+            assert_eq!(config.host, "localhost");
+            assert_eq!(config.port, 6379);
+        }
+        action => panic!("unexpected action: {:?}", action),
+    }
 }

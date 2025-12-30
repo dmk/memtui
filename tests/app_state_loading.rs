@@ -2,6 +2,7 @@ mod support;
 
 use memtui::action::Action;
 use memtui::actions::async_handlers;
+use memtui::actions::sync_handlers;
 use rstest::rstest;
 use tui_dispatch::assert_emitted;
 
@@ -42,4 +43,15 @@ fn initial_scan_emits_select_action() {
 
     let emitted = app.drain_actions();
     assert_emitted!(emitted, Action::SelectKey(0));
+}
+
+#[rstest]
+fn load_keys_error_sets_status_message() {
+    let mut app = AppHarness::new().with_connection("local");
+    app.app_state.is_loading_keys = true;
+
+    sync_handlers::handle_did_fail_scan_keys(&mut app.app_state, "Scan failed".to_string());
+
+    assert_eq!(app.app_state.error_message.as_deref(), Some("Scan failed"));
+    assert!(!app.app_state.is_loading_keys);
 }

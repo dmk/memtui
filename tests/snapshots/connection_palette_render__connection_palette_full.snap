@@ -4,7 +4,7 @@ expression: full
 ---
   Alpha   Beta
  Keys                        0 │ Value
-  ⣾ loading...                 │Select a key to view its value
+  No keys found                │Select a key to view its value
                 ╭ Connections ─────────────────────────────────╮
                 │▸ ● Alpha (127.0.0.1:6379)                    │
                 │  ● Beta (127.0.0.1:6379)                     │

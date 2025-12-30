@@ -152,6 +152,153 @@ pub fn handle_navigation(
             }
             true
         }
+        Action::PageDown => {
+            if ui_state.show_connection_palette {
+                let connections_len = app_state.connection_manager.get_configs().len();
+                if connections_len > 0 {
+                    ui_state.connection_list.next(connections_len);
+                }
+                return true;
+            }
+
+            let step = app_state.viewport_height.max(1);
+            if app_state.is_search_active() && ui_state.active_panel == Panel::Keys {
+                let total_count = app_state.search_results_local.len();
+                if total_count > 0 {
+                    let current_idx = app_state.search_selection_index.unwrap_or(0);
+                    let new_idx = (current_idx + step).min(total_count.saturating_sub(1));
+                    let _ = action_tx.send(Action::SetCmdLineSelectionIndex(Some(new_idx)));
+                    if let Some(&key_idx) = app_state.search_results_local.get(new_idx) {
+                        let _ = action_tx.send(Action::SelectKey(key_idx));
+                    }
+                }
+                return true;
+            }
+
+            let keys_len = app_state
+                .total_key_count
+                .map(|t| t as usize)
+                .unwrap_or(app_state.keys.len());
+            if keys_len == 0 {
+                return true;
+            }
+            let current = ui_state.key_list.state.selected().unwrap_or(0);
+            let new_index = (current + step).min(keys_len.saturating_sub(1));
+            if new_index != current {
+                ui_state.key_list.select(Some(new_index));
+                if ui_state.active_panel == Panel::Keys {
+                    let _ = action_tx.send(Action::SelectKey(new_index));
+                }
+            }
+            true
+        }
+        Action::PageUp => {
+            if ui_state.show_connection_palette {
+                let connections_len = app_state.connection_manager.get_configs().len();
+                if connections_len > 0 {
+                    ui_state.connection_list.prev(connections_len);
+                }
+                return true;
+            }
+
+            let step = app_state.viewport_height.max(1);
+            if app_state.is_search_active() && ui_state.active_panel == Panel::Keys {
+                let total_count = app_state.search_results_local.len();
+                if total_count > 0 {
+                    let current_idx = app_state.search_selection_index.unwrap_or(0);
+                    let new_idx = current_idx.saturating_sub(step);
+                    let _ = action_tx.send(Action::SetCmdLineSelectionIndex(Some(new_idx)));
+                    if let Some(&key_idx) = app_state.search_results_local.get(new_idx) {
+                        let _ = action_tx.send(Action::SelectKey(key_idx));
+                    }
+                }
+                return true;
+            }
+
+            let keys_len = app_state
+                .total_key_count
+                .map(|t| t as usize)
+                .unwrap_or(app_state.keys.len());
+            if keys_len == 0 {
+                return true;
+            }
+            let current = ui_state.key_list.state.selected().unwrap_or(0);
+            let new_index = current.saturating_sub(step);
+            if new_index != current {
+                ui_state.key_list.select(Some(new_index));
+                if ui_state.active_panel == Panel::Keys {
+                    let _ = action_tx.send(Action::SelectKey(new_index));
+                }
+            }
+            true
+        }
+        Action::Home => {
+            if ui_state.show_connection_palette {
+                ui_state.connection_list.state.select(Some(0));
+                return true;
+            }
+
+            if app_state.is_search_active() && ui_state.active_panel == Panel::Keys {
+                if !app_state.search_results_local.is_empty() {
+                    let _ = action_tx.send(Action::SetCmdLineSelectionIndex(Some(0)));
+                    if let Some(&key_idx) = app_state.search_results_local.first() {
+                        let _ = action_tx.send(Action::SelectKey(key_idx));
+                    }
+                }
+                return true;
+            }
+
+            let keys_len = app_state
+                .total_key_count
+                .map(|t| t as usize)
+                .unwrap_or(app_state.keys.len());
+            if keys_len == 0 {
+                return true;
+            }
+            ui_state.key_list.select(Some(0));
+            if ui_state.active_panel == Panel::Keys {
+                let _ = action_tx.send(Action::SelectKey(0));
+            }
+            true
+        }
+        Action::End => {
+            if ui_state.show_connection_palette {
+                let connections_len = app_state.connection_manager.get_configs().len();
+                if connections_len > 0 {
+                    ui_state
+                        .connection_list
+                        .state
+                        .select(Some(connections_len.saturating_sub(1)));
+                }
+                return true;
+            }
+
+            if app_state.is_search_active() && ui_state.active_panel == Panel::Keys {
+                let total_count = app_state.search_results_local.len();
+                if total_count > 0 {
+                    let last = total_count.saturating_sub(1);
+                    let _ = action_tx.send(Action::SetCmdLineSelectionIndex(Some(last)));
+                    if let Some(&key_idx) = app_state.search_results_local.get(last) {
+                        let _ = action_tx.send(Action::SelectKey(key_idx));
+                    }
+                }
+                return true;
+            }
+
+            let keys_len = app_state
+                .total_key_count
+                .map(|t| t as usize)
+                .unwrap_or(app_state.keys.len());
+            if keys_len == 0 {
+                return true;
+            }
+            let last = keys_len.saturating_sub(1);
+            ui_state.key_list.select(Some(last));
+            if ui_state.active_panel == Panel::Keys {
+                let _ = action_tx.send(Action::SelectKey(last));
+            }
+            true
+        }
         _ => false,
     }
 }

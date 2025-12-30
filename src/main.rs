@@ -86,6 +86,7 @@ impl App {
 
         let mut app_state = AppState::new_with_config(&config);
         let mut ui_state = UiState::new();
+        ui_state.pane_split = memtui::ui::theme::PaneSplit::new(config.ui.pane_ratio);
 
         // Load saved connections
         if let Ok(connections) = userdata::load_connections() {
@@ -832,8 +833,16 @@ impl App {
             "navigation.prev_panel" => Some(Action::PrevPanel),
             "navigation.next_item" => Some(Action::NextItem),
             "navigation.prev_item" => Some(Action::PrevItem),
+            "navigation.page_down" => Some(Action::PageDown),
+            "navigation.page_up" => Some(Action::PageUp),
+            "navigation.home" => Some(Action::Home),
+            "navigation.end" => Some(Action::End),
             "navigation.enter" => Some(Action::Enter),
             "value.view_mode.cycle" => Some(Action::CycleValueViewMode),
+            "pane.resize.left" => Some(Action::SetPaneRatio(self.ui_state.pane_split.ratio - 0.05)),
+            "pane.resize.right" => {
+                Some(Action::SetPaneRatio(self.ui_state.pane_split.ratio + 0.05))
+            }
 
             // Connection commands
             "connection.palette.toggle" => {
@@ -961,18 +970,30 @@ impl App {
             }
 
             // Navigation - delegated to sync_handlers
-            Action::NextPanel | Action::PrevPanel | Action::NextItem | Action::PrevItem => {
-                handle_navigation(
-                    &mut self.ui_state,
-                    &mut self.app_state,
-                    &self.action_tx,
-                    &action,
-                )
-            }
+            Action::NextPanel
+            | Action::PrevPanel
+            | Action::NextItem
+            | Action::PrevItem
+            | Action::PageDown
+            | Action::PageUp
+            | Action::Home
+            | Action::End => handle_navigation(
+                &mut self.ui_state,
+                &mut self.app_state,
+                &self.action_tx,
+                &action,
+            ),
 
             // UI state changes (panel focus, pane resize, list selection, cmdline selection)
+            Action::SetPaneRatio(_ratio) => {
+                let handled = handle_ui_state(&mut self.ui_state, &mut self.app_state, &action);
+                if handled {
+                    self.config.ui.pane_ratio = self.ui_state.pane_split.ratio;
+                    let _ = userdata::save_config(&self.config);
+                }
+                handled
+            }
             Action::FocusPanel(_)
-            | Action::SetPaneRatio(_)
             | Action::SelectConnectionIndex(_)
             | Action::SelectWelcomeIndex(_)
             | Action::SetCmdLineSelectionIndex(_)

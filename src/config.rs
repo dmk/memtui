@@ -36,6 +36,10 @@ pub struct UiConfig {
     /// Maximum number of recent connections to remember
     #[serde(default = "default_max_recent_connections")]
     pub max_recent_connections: usize,
+
+    /// Split ratio between key list and value viewer panes
+    #[serde(default = "default_pane_ratio")]
+    pub pane_ratio: f32,
 }
 
 /// Performance and timing configuration
@@ -147,6 +151,10 @@ fn default_max_recent_connections() -> usize {
     8
 }
 
+fn default_pane_ratio() -> f32 {
+    0.4
+}
+
 fn default_tick_interval_ms() -> Duration {
     Duration::from_millis(16) // ~60 FPS for smooth scrolling
 }
@@ -247,6 +255,7 @@ impl Default for UiConfig {
         Self {
             viewport_height: default_viewport_height(),
             max_recent_connections: default_max_recent_connections(),
+            pane_ratio: default_pane_ratio(),
         }
     }
 }

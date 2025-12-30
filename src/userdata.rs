@@ -179,6 +179,10 @@ viewport_height = 20
 # Maximum number of recent connections to remember
 max_recent_connections = 8
 
+# Split ratio between key list and value viewer panes
+# 0.2 = narrow key list, 0.8 = wide key list
+pane_ratio = 0.4
+
 # Performance and timing settings
 [performance]
 # Tick interval in milliseconds (debounce interval for scroll events)

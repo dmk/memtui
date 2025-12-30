@@ -468,10 +468,7 @@ mod tests {
             state: crossterm::event::KeyEventState::empty(),
         };
         let command = bindings.get_command(key_delete, BindingContext::ConnectionPalette);
-        assert_eq!(
-            command,
-            Some("connection.palette.delete".to_string())
-        );
+        assert_eq!(command, Some("connection.palette.delete".to_string()));
 
         let key_esc = KeyEvent {
             code: KeyCode::Esc,
@@ -480,10 +477,7 @@ mod tests {
             state: crossterm::event::KeyEventState::empty(),
         };
         let command = bindings.get_command(key_esc, BindingContext::ConnectionPalette);
-        assert_eq!(
-            command,
-            Some("connection.palette.close".to_string())
-        );
+        assert_eq!(command, Some("connection.palette.close".to_string()));
     }
 
     #[test]

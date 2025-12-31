@@ -116,6 +116,7 @@ fn scroll_mouse_emits_scroll_action() {
         animation: &app.ui_state.animation,
         now: std::time::SystemTime::now(),
         keybindings: &app.keybindings,
+        command_backend_type: None,
     };
 
     let area = ratatui::layout::Rect::new(0, 0, 10, 6);

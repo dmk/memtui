@@ -3,7 +3,12 @@ use super::{
     ServerInfo,
 };
 use crate::types::{BackendType, ConnectionConfig, KeyMetadata, KeyScanResult, Value, ValueType};
+use crate::ui::theme::{NEON_AMBER, NEON_CYAN, NEON_GREEN, NEON_RED, TEXT_DIM, TEXT_PRIMARY};
 use memcache::Client as MemcacheClient;
+use ratatui::{
+    style::Style,
+    text::{Line, Span},
+};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -919,6 +924,154 @@ impl Backend for MemcachedBackend {
             duration: start.elapsed(),
             error_message,
         })
+    }
+
+    fn format_output(&self, text: &str) -> Vec<Line<'static>> {
+        text.lines().map(Self::colorize_memcached_line).collect()
+    }
+}
+
+use super::FormattedOutput;
+
+/// Format Memcached protocol output with syntax highlighting.
+/// Public function for use without a backend instance.
+pub fn format_memcached_output(text: &str) -> FormattedOutput {
+    let lines: Vec<_> = text
+        .lines()
+        .map(MemcachedBackend::colorize_memcached_line)
+        .collect();
+    FormattedOutput::Text(lines)
+}
+
+impl MemcachedBackend {
+    /// Colorize a single line of Memcached protocol output.
+    /// Handles: STAT, VALUE, END, OK, STORED, NOT_FOUND, ERROR, etc.
+    fn colorize_memcached_line(line: &str) -> Line<'static> {
+        let trimmed = line.trim();
+
+        // Empty line
+        if trimmed.is_empty() {
+            return Line::raw(line.to_string());
+        }
+
+        // STAT key value
+        if let Some(rest) = trimmed.strip_prefix("STAT ") {
+            let mut spans = vec![Span::styled("STAT ", Style::default().fg(NEON_CYAN()))];
+
+            if let Some((key, value)) = rest.split_once(' ') {
+                spans.push(Span::styled(
+                    key.to_string(),
+                    Style::default().fg(NEON_AMBER()),
+                ));
+                spans.push(Span::styled(" ", Style::default()));
+                spans.push(Span::styled(
+                    value.to_string(),
+                    Style::default().fg(TEXT_PRIMARY()),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    rest.to_string(),
+                    Style::default().fg(NEON_AMBER()),
+                ));
+            }
+
+            return Line::from(spans);
+        }
+
+        // ITEM key [size b; expire s]
+        if let Some(rest) = trimmed.strip_prefix("ITEM ") {
+            let mut spans = vec![Span::styled("ITEM ", Style::default().fg(NEON_CYAN()))];
+
+            if let Some((key, metadata)) = rest.split_once(' ') {
+                spans.push(Span::styled(
+                    key.to_string(),
+                    Style::default().fg(NEON_AMBER()),
+                ));
+                spans.push(Span::styled(" ", Style::default()));
+                spans.push(Span::styled(
+                    metadata.to_string(),
+                    Style::default().fg(TEXT_DIM()),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    rest.to_string(),
+                    Style::default().fg(NEON_AMBER()),
+                ));
+            }
+
+            return Line::from(spans);
+        }
+
+        // VALUE key flags bytes
+        if let Some(rest) = trimmed.strip_prefix("VALUE ") {
+            let mut spans = vec![Span::styled("VALUE ", Style::default().fg(NEON_CYAN()))];
+
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if !parts.is_empty() {
+                spans.push(Span::styled(
+                    parts[0].to_string(),
+                    Style::default().fg(NEON_AMBER()),
+                ));
+                for part in parts.iter().skip(1) {
+                    spans.push(Span::styled(" ", Style::default()));
+                    spans.push(Span::styled(
+                        part.to_string(),
+                        Style::default().fg(TEXT_DIM()),
+                    ));
+                }
+            }
+
+            return Line::from(spans);
+        }
+
+        // VERSION x.y.z
+        if let Some(rest) = trimmed.strip_prefix("VERSION ") {
+            return Line::from(vec![
+                Span::styled("VERSION ", Style::default().fg(NEON_CYAN())),
+                Span::styled(rest.to_string(), Style::default().fg(TEXT_PRIMARY())),
+            ]);
+        }
+
+        // Success responses
+        if matches!(trimmed, "OK" | "STORED" | "DELETED" | "TOUCHED" | "RESET") {
+            return Line::from(Span::styled(
+                trimmed.to_string(),
+                Style::default().fg(NEON_GREEN()),
+            ));
+        }
+
+        // Warning responses (not errors, but indicate something didn't happen)
+        if matches!(trimmed, "NOT_STORED" | "EXISTS" | "NOT_FOUND") {
+            return Line::from(Span::styled(
+                trimmed.to_string(),
+                Style::default().fg(NEON_AMBER()),
+            ));
+        }
+
+        // Error responses
+        if trimmed == "ERROR"
+            || trimmed.starts_with("CLIENT_ERROR")
+            || trimmed.starts_with("SERVER_ERROR")
+        {
+            return Line::from(Span::styled(
+                trimmed.to_string(),
+                Style::default().fg(NEON_RED()),
+            ));
+        }
+
+        // END marker
+        if trimmed == "END" {
+            return Line::from(Span::styled(
+                trimmed.to_string(),
+                Style::default().fg(TEXT_DIM()),
+            ));
+        }
+
+        // Default: plain text (likely value data)
+        Line::from(Span::styled(
+            line.to_string(),
+            Style::default().fg(TEXT_PRIMARY()),
+        ))
     }
 }
 

@@ -10,7 +10,7 @@ use crate::action::CmdLineMode;
 use crate::backend::CommandStatus;
 use crate::config::Config;
 use crate::formatter::{JsonColorConfig, JsonFormatter, TextFormatter};
-use crate::types::{KeyMetadata, Value, ValueType};
+use crate::types::{BackendType, KeyMetadata, Value, ValueType};
 use std::collections::HashMap;
 
 /// Main application state (backend connection + data)
@@ -54,10 +54,16 @@ pub struct CommandResult {
     pub title: String,
     pub value: Value,
     pub status: CommandStatus,
+    pub backend_type: Option<BackendType>,
 }
 
 impl CommandResult {
-    pub fn new(command: String, output: String, status: CommandStatus) -> Self {
+    pub fn new(
+        command: String,
+        output: String,
+        status: CommandStatus,
+        backend_type: Option<BackendType>,
+    ) -> Self {
         let title = format!("command results: {}", command);
         let value = Value {
             data: output.into_bytes(),
@@ -69,6 +75,7 @@ impl CommandResult {
             title,
             value,
             status,
+            backend_type,
         }
     }
 }

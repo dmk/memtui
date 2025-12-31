@@ -364,13 +364,14 @@ fn render_value(
     keybindings: &KeybindingsConfig,
 ) {
     let command_result = app_state.command_result.as_ref();
-    let (selected_value, selected_key_type, selected_key_name, selected_key) =
+    let (selected_value, selected_key_type, selected_key_name, selected_key, command_backend_type) =
         if let Some(result) = command_result {
             (
                 Some(&result.value),
                 Some(ValueType::String),
                 Some(result.title.as_str()),
                 None,
+                result.backend_type,
             )
         } else {
             let selected_key = app_state
@@ -383,6 +384,7 @@ fn render_value(
                 selected_key.map(|k| k.value_type),
                 selected_key.map(|k| k.name.as_str()),
                 selected_key,
+                None,
             )
         };
 
@@ -402,6 +404,7 @@ fn render_value(
         animation: &ui_state.animation,
         now,
         keybindings,
+        command_backend_type,
     };
 
     ui_state.value_viewer.render(f, area, props);

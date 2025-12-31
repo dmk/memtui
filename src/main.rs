@@ -28,7 +28,7 @@ use memtui::debug::{self, ActionLogger, ActionLoggerConfig, DebugFreeze, DebugOv
 use memtui::events::{Event, EventKind};
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
 use memtui::terminal;
-use memtui::types::{ConnectionConfig, ValueType};
+use memtui::types::{BackendType, ConnectionConfig, ValueType};
 use memtui::ui::components::cmdline::{CmdLine, CmdLineProps};
 use memtui::ui::components::command_suggestions::{
     command_suggestions, goto_suggestions, CommandSuggestionsProps,
@@ -554,8 +554,13 @@ impl App {
                 let active_id = self.app_state.connection_manager.get_active_id();
                 let capabilities =
                     active_id.and_then(|id| self.app_state.connection_manager.get_capabilities(id));
-                let (selected_value, selected_key_type, selected_key_name, selected_key) =
-                    Self::value_viewer_context(&self.app_state);
+                let (
+                    selected_value,
+                    selected_key_type,
+                    selected_key_name,
+                    selected_key,
+                    command_backend_type,
+                ) = Self::value_viewer_context(&self.app_state);
                 let props = ValueViewerProps {
                     selected_value,
                     selected_key_type,
@@ -569,6 +574,7 @@ impl App {
                     animation: &self.ui_state.animation,
                     now: std::time::SystemTime::now(),
                     keybindings: &self.keybindings,
+                    command_backend_type,
                 };
                 let actions = self.ui_state.value_viewer.handle_event(event, props);
                 if !actions.is_empty() {
@@ -732,8 +738,13 @@ impl App {
         let active_id = self.app_state.connection_manager.get_active_id();
         let capabilities =
             active_id.and_then(|id| self.app_state.connection_manager.get_capabilities(id));
-        let (selected_value, selected_key_type, selected_key_name, selected_key) =
-            Self::value_viewer_context(&self.app_state);
+        let (
+            selected_value,
+            selected_key_type,
+            selected_key_name,
+            selected_key,
+            command_backend_type,
+        ) = Self::value_viewer_context(&self.app_state);
         let value_viewer_props = ValueViewerProps {
             selected_value,
             selected_key_type,
@@ -747,6 +758,7 @@ impl App {
             animation: &self.ui_state.animation,
             now: std::time::SystemTime::now(),
             keybindings: &self.keybindings,
+            command_backend_type,
         };
 
         let actions = self
@@ -1448,6 +1460,7 @@ impl App {
         });
     }
 
+    #[allow(clippy::type_complexity)]
     fn value_viewer_context(
         app_state: &AppState,
     ) -> (
@@ -1455,6 +1468,7 @@ impl App {
         Option<ValueType>,
         Option<&str>,
         Option<&memtui::types::KeyMetadata>,
+        Option<BackendType>,
     ) {
         if let Some(result) = app_state.command_result.as_ref() {
             return (
@@ -1462,6 +1476,7 @@ impl App {
                 Some(ValueType::String),
                 Some(result.title.as_str()),
                 None,
+                result.backend_type,
             );
         }
 
@@ -1476,6 +1491,7 @@ impl App {
             selected_key_type,
             selected_key_name,
             selected_key,
+            None,
         )
     }
 
@@ -1637,6 +1653,7 @@ impl App {
             let tx = self.action_tx.clone();
             tokio::spawn(async move {
                 let backend = backend.read().await;
+                let backend_type = Some(backend.backend_type());
                 match backend.execute_raw(&cmd).await {
                     Ok(result) => {
                         let command = display_command.clone();
@@ -1653,6 +1670,7 @@ impl App {
                             command,
                             output,
                             status: result.status,
+                            backend_type,
                         });
                     }
                     Err(e) => {
@@ -1660,6 +1678,7 @@ impl App {
                             command: display_command,
                             output: format!("Command failed: {}", e),
                             status: CommandStatus::Error,
+                            backend_type,
                         });
                     }
                 }

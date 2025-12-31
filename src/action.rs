@@ -1,5 +1,5 @@
 use crate::backend::{Backend, BackendCapabilities, CommandStatus};
-use crate::types::{ConnectionConfig, KeyMetadata, KeyScanResult, Value};
+use crate::types::{BackendType, ConnectionConfig, KeyMetadata, KeyScanResult, Value};
 use crate::ui::Panel;
 use std::collections::HashMap;
 use std::fmt;
@@ -142,6 +142,7 @@ pub enum Action {
         command: String,
         output: String,
         status: CommandStatus,
+        backend_type: Option<BackendType>,
     },
     CmdLineClearCommandResult,
 
@@ -308,11 +309,13 @@ impl fmt::Debug for Action {
                 command,
                 output,
                 status,
+                backend_type,
             } => f
                 .debug_struct("CmdLineSetCommandResult")
                 .field("command", command)
                 .field("output", output)
                 .field("status", status)
+                .field("backend_type", backend_type)
                 .finish(),
             Action::CmdLineClearCommandResult => write!(f, "CmdLineClearCommandResult"),
             // Async results - summarize large data

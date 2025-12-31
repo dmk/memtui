@@ -539,11 +539,13 @@ pub fn handle_cmdline(
             command,
             output,
             status,
+            backend_type,
         } => {
             app_state.command_result = Some(crate::app::CommandResult::new(
                 command.clone(),
                 output.clone(),
                 *status,
+                *backend_type,
             ));
             app_state.selected_key_index = None;
             app_state.selected_value = None;

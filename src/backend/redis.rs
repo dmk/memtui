@@ -5,6 +5,13 @@ use super::{
 use crate::types::{
     Auth, BackendType, ConnectionConfig, KeyMetadata, KeyScanResult, Value, ValueType,
 };
+use crate::ui::theme::{
+    NEON_AMBER, NEON_CYAN, NEON_GREEN, NEON_PURPLE, NEON_RED, TEXT_DIM, TEXT_PRIMARY,
+};
+use ratatui::{
+    style::Style,
+    text::{Line, Span},
+};
 use redis::{aio::ConnectionManager, AsyncCommands, RedisError};
 use std::time::{Duration, SystemTime};
 
@@ -624,6 +631,465 @@ impl Backend for RedisBackend {
             }),
         }
     }
+
+    fn format_output(&self, text: &str) -> Vec<Line<'static>> {
+        text.lines().map(Self::colorize_redis_line).collect()
+    }
+}
+
+use super::FormattedOutput;
+
+/// Format Redis debug output with syntax highlighting.
+/// Returns structured output: Table for array results, Text for plain output.
+pub fn format_redis_output(text: &str) -> FormattedOutput {
+    let text = text.trim();
+
+    // Check if this is a bulk string with escaped newlines (common for INFO, etc.)
+    if let Some(content) = extract_bulk_string_content(text) {
+        if content.contains("\\r\\n") || content.contains("\\n") {
+            let unescaped = content.replace("\\r\\n", "\n").replace("\\n", "\n");
+            let lines: Vec<Line<'static>> = unescaped
+                .lines()
+                .map(|line| {
+                    if let Some((key, value)) = line.split_once(':') {
+                        Line::from(vec![
+                            Span::styled(key.to_string(), Style::default().fg(NEON_CYAN())),
+                            Span::styled(":", Style::default().fg(TEXT_DIM())),
+                            Span::styled(value.to_string(), Style::default().fg(TEXT_PRIMARY())),
+                        ])
+                    } else if line.starts_with('#') {
+                        Line::from(Span::styled(
+                            line.to_string(),
+                            Style::default().fg(NEON_AMBER()),
+                        ))
+                    } else {
+                        Line::from(Span::styled(
+                            line.to_string(),
+                            Style::default().fg(TEXT_PRIMARY()),
+                        ))
+                    }
+                })
+                .collect();
+            return FormattedOutput::Text(lines);
+        }
+    }
+
+    // Check if this is a top-level array
+    let is_array =
+        (text.starts_with("Array([") || text.starts_with("array([")) && text.ends_with("])");
+
+    if is_array {
+        let elements = parse_array_elements(text);
+        if !elements.is_empty() {
+            // Check if elements are nested arrays with key-value pairs (MODULE LIST, etc.)
+            let first_is_nested = !is_simple_value(&elements[0]);
+            if first_is_nested {
+                // Each element is a nested array - format as styled multi-line rows
+                let rows: Vec<Vec<Line<'static>>> = elements
+                    .iter()
+                    .map(|elem| format_nested_array_as_lines(elem))
+                    .collect();
+                return FormattedOutput::Table { rows };
+            } else {
+                // Simple array of values - single line per row
+                let rows: Vec<Vec<Line<'static>>> = elements
+                    .iter()
+                    .map(|elem| {
+                        vec![Line::from(Span::styled(
+                            format_simple_value(elem),
+                            Style::default().fg(NEON_GREEN()),
+                        ))]
+                    })
+                    .collect();
+                return FormattedOutput::Table { rows };
+            }
+        }
+    }
+
+    // Simple value or fallback
+    if let Some(formatted) = try_format_simple_value(text) {
+        return FormattedOutput::Text(vec![Line::from(Span::styled(
+            formatted,
+            Style::default().fg(NEON_GREEN()),
+        ))]);
+    }
+
+    // Fallback: show as plain text
+    FormattedOutput::Text(vec![Line::from(Span::styled(
+        text.to_string(),
+        Style::default().fg(TEXT_PRIMARY()),
+    ))])
+}
+
+/// Format a nested array (like MODULE LIST element) as styled lines
+/// Returns multiple lines - one per key-value pair
+fn format_nested_array_as_lines(text: &str) -> Vec<Line<'static>> {
+    let text = text.trim();
+
+    let is_array =
+        (text.starts_with("Array([") || text.starts_with("array([")) && text.ends_with("])");
+
+    if !is_array {
+        return vec![Line::from(Span::styled(
+            format_simple_value(text),
+            Style::default().fg(NEON_GREEN()),
+        ))];
+    }
+
+    let elements = parse_array_elements(text);
+    if elements.is_empty() {
+        return vec![Line::from(Span::styled(
+            "(empty)".to_string(),
+            Style::default().fg(TEXT_DIM()),
+        ))];
+    }
+
+    // Check if this looks like key-value pairs
+    let is_kv_pairs = elements.len() >= 2
+        && elements.len().is_multiple_of(2)
+        && elements.iter().step_by(2).all(|e| is_simple_value(e));
+
+    if is_kv_pairs {
+        // Each key-value pair becomes a styled line
+        elements
+            .chunks(2)
+            .filter_map(|chunk| {
+                if chunk.len() == 2 {
+                    let key = format_simple_value(&chunk[0]);
+                    let value = format_simple_value(&chunk[1]);
+                    Some(Line::from(vec![
+                        Span::styled(key, Style::default().fg(NEON_CYAN())),
+                        Span::styled(": ", Style::default().fg(TEXT_DIM())),
+                        Span::styled(value, Style::default().fg(NEON_GREEN())),
+                    ]))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        // Each element becomes a styled line
+        elements
+            .iter()
+            .map(|e| {
+                Line::from(Span::styled(
+                    format_simple_value(e),
+                    Style::default().fg(NEON_GREEN()),
+                ))
+            })
+            .collect()
+    }
+}
+
+/// Check if a value is "simple" (not a nested array)
+fn is_simple_value(text: &str) -> bool {
+    let text = text.trim();
+    // Handle both "Array([...])" and "array([...])" formats
+    !text.starts_with("array(") && !text.starts_with("Array(")
+}
+
+/// Format a simple value, extracting content from wrappers
+fn format_simple_value(text: &str) -> String {
+    try_format_simple_value(text).unwrap_or_else(|| text.to_string())
+}
+
+/// Try to format a simple value, returning None if it's complex
+fn try_format_simple_value(text: &str) -> Option<String> {
+    let text = text.trim();
+
+    // Empty array - Array([]) or array([])
+    if text == "Array([])" || text == "array([])" {
+        return Some("[]".to_string());
+    }
+
+    // bulk-string or Bulk (handles both lowercase and capitalized)
+    if let Some(content) = extract_bulk_string_content(text) {
+        // Empty string shows as ""
+        if content.is_empty() {
+            return Some("\"\"".to_string());
+        }
+        return Some(content);
+    }
+
+    // simple-string("value") or SimpleString("value")
+    for prefix in ["simple-string(\"", "simple-string('", "SimpleString(\""] {
+        if text.starts_with(prefix) {
+            let end_char = if prefix.ends_with('"') { "\")" } else { "')" };
+            if text.ends_with(end_char) {
+                let content = &text[prefix.len()..text.len() - 2];
+                if content.is_empty() {
+                    return Some("\"\"".to_string());
+                }
+                return Some(content.to_string());
+            }
+        }
+    }
+
+    // Status("OK") - redis status response
+    if text.starts_with("Status(\"") && text.ends_with("\")") {
+        return Some(text[8..text.len() - 2].to_string());
+    }
+
+    // int(123), integer(123), Int(123)
+    for prefix in ["int(", "integer(", "Int("] {
+        if text.starts_with(prefix) && text.ends_with(')') {
+            return Some(text[prefix.len()..text.len() - 1].to_string());
+        }
+    }
+
+    // nil, null, Nil (redis::Value::Nil)
+    if text == "nil" || text == "null" || text == "Nil" {
+        return Some("(nil)".to_string());
+    }
+
+    // true, false, Okay
+    if text == "true" || text == "false" || text == "Okay" {
+        return Some(text.to_string());
+    }
+
+    None
+}
+
+/// Parse array elements from Array([...]) or array([...]) format
+fn parse_array_elements(text: &str) -> Vec<String> {
+    let text = text.trim();
+
+    // Handle both "Array([...])" and "array([...])"
+    let is_array =
+        (text.starts_with("Array([") || text.starts_with("array([")) && text.ends_with("])");
+    if !is_array {
+        return vec![];
+    }
+    let inner = &text[7..text.len() - 2];
+
+    let mut elements = Vec::new();
+    let mut current = String::new();
+    let mut depth: usize = 0;
+    let mut in_quotes = false;
+    let mut escape_next = false;
+
+    for ch in inner.chars() {
+        if escape_next {
+            current.push(ch);
+            escape_next = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                current.push(ch);
+                escape_next = true;
+            }
+            '"' | '\'' if depth > 0 || !in_quotes => {
+                current.push(ch);
+                if !in_quotes
+                    || (ch == '"' && current.ends_with("\""))
+                    || (ch == '\'' && current.ends_with("'"))
+                {
+                    in_quotes = !in_quotes;
+                }
+            }
+            '(' | '[' if !in_quotes => {
+                current.push(ch);
+                depth += 1;
+            }
+            ')' | ']' if !in_quotes => {
+                current.push(ch);
+                depth = depth.saturating_sub(1);
+            }
+            ',' if !in_quotes && depth == 0 => {
+                let elem = current.trim().to_string();
+                if !elem.is_empty() {
+                    elements.push(elem);
+                }
+                current.clear();
+            }
+            _ => {
+                current.push(ch);
+            }
+        }
+    }
+
+    let elem = current.trim().to_string();
+    if !elem.is_empty() {
+        elements.push(elem);
+    }
+
+    elements
+}
+
+/// Extract the content from a bulk string pattern like:
+/// - `bulk-string('"content"')` (with nested quotes)
+/// - `bulk-string("content")`
+/// - `Bulk("content")`
+fn extract_bulk_string_content(text: &str) -> Option<String> {
+    let text = text.trim();
+
+    // Try patterns with nested quotes first: bulk-string('"..."')
+    let nested_prefixes = [("bulk-string('\"", "\"')"), ("simple-string('\"", "\"')")];
+
+    for (prefix, suffix) in nested_prefixes {
+        if text.starts_with(prefix) && text.ends_with(suffix) {
+            let start = prefix.len();
+            let end = text.len() - suffix.len();
+            if start <= end {
+                return Some(text[start..end].to_string());
+            }
+        }
+    }
+
+    // Try simple patterns: bulk-string("..."), Bulk("...")
+    let simple_prefixes = [
+        "bulk-string(\"",
+        "Bulk(\"",
+        "simple-string(\"",
+        "SimpleString(\"",
+    ];
+
+    for prefix in simple_prefixes {
+        if text.starts_with(prefix) && text.ends_with("\")") {
+            let start = prefix.len();
+            let end = text.len() - 2; // Remove closing ")
+            if start <= end {
+                return Some(text[start..end].to_string());
+            }
+        }
+    }
+
+    None
+}
+
+impl RedisBackend {
+    /// Colorize a single line of Redis debug output.
+    /// Handles patterns like: Bulk("..."), Int(123), Array([...]), Nil, Status("OK")
+    fn colorize_redis_line(line: &str) -> Line<'static> {
+        let mut spans = Vec::new();
+        let mut chars = line.chars().peekable();
+        let mut current = String::new();
+
+        while let Some(ch) = chars.next() {
+            match ch {
+                // Start of a keyword - check for known Redis types
+                c if c.is_ascii_alphabetic() => {
+                    // Flush any accumulated text
+                    if !current.is_empty() {
+                        spans.push(Span::styled(
+                            current.clone(),
+                            Style::default().fg(TEXT_DIM()),
+                        ));
+                        current.clear();
+                    }
+
+                    // Collect the keyword
+                    let mut keyword = String::from(c);
+                    while chars
+                        .peek()
+                        .map(|c| c.is_ascii_alphanumeric())
+                        .unwrap_or(false)
+                    {
+                        keyword.push(chars.next().unwrap());
+                    }
+
+                    // Color based on keyword type
+                    let style = match keyword.as_str() {
+                        "Bulk" | "BulkString" | "SimpleString" | "VerbatimString" => {
+                            Style::default().fg(NEON_CYAN())
+                        }
+                        "Int" | "Integer" | "BigNumber" => Style::default().fg(NEON_CYAN()),
+                        "Array" | "Set" | "Map" | "Push" => Style::default().fg(NEON_CYAN()),
+                        "Nil" | "Null" => Style::default().fg(TEXT_DIM()),
+                        "Status" | "Ok" | "Boolean" => Style::default().fg(NEON_CYAN()),
+                        "Err" | "Error" => Style::default().fg(NEON_RED()),
+                        "true" => Style::default().fg(NEON_GREEN()),
+                        "false" => Style::default().fg(NEON_RED()),
+                        _ => Style::default().fg(TEXT_PRIMARY()),
+                    };
+                    spans.push(Span::styled(keyword, style));
+                }
+
+                // String content inside quotes
+                '"' => {
+                    if !current.is_empty() {
+                        spans.push(Span::styled(
+                            current.clone(),
+                            Style::default().fg(TEXT_DIM()),
+                        ));
+                        current.clear();
+                    }
+
+                    let mut string_content = String::from('"');
+                    let mut escape_next = false;
+
+                    for c in chars.by_ref() {
+                        string_content.push(c);
+                        if escape_next {
+                            escape_next = false;
+                        } else if c == '\\' {
+                            escape_next = true;
+                        } else if c == '"' {
+                            break;
+                        }
+                    }
+
+                    spans.push(Span::styled(
+                        string_content,
+                        Style::default().fg(NEON_GREEN()),
+                    ));
+                }
+
+                // Numbers
+                c if c.is_ascii_digit()
+                    || (c == '-' && chars.peek().map(|n| n.is_ascii_digit()).unwrap_or(false)) =>
+                {
+                    if !current.is_empty() {
+                        spans.push(Span::styled(
+                            current.clone(),
+                            Style::default().fg(TEXT_DIM()),
+                        ));
+                        current.clear();
+                    }
+
+                    let mut number = String::from(c);
+                    while chars
+                        .peek()
+                        .map(|c| c.is_ascii_digit() || *c == '.')
+                        .unwrap_or(false)
+                    {
+                        number.push(chars.next().unwrap());
+                    }
+
+                    spans.push(Span::styled(number, Style::default().fg(NEON_PURPLE())));
+                }
+
+                // Structural characters
+                '(' | ')' | '[' | ']' | '{' | '}' | ',' => {
+                    if !current.is_empty() {
+                        spans.push(Span::styled(
+                            current.clone(),
+                            Style::default().fg(TEXT_DIM()),
+                        ));
+                        current.clear();
+                    }
+                    spans.push(Span::styled(
+                        ch.to_string(),
+                        Style::default().fg(TEXT_DIM()),
+                    ));
+                }
+
+                // Whitespace and other characters
+                _ => {
+                    current.push(ch);
+                }
+            }
+        }
+
+        // Flush remaining text
+        if !current.is_empty() {
+            spans.push(Span::styled(current, Style::default().fg(TEXT_DIM())));
+        }
+
+        Line::from(spans)
+    }
 }
 
 #[cfg(test)]
@@ -830,5 +1296,40 @@ uptime_in_seconds:12345
         let backend = RedisBackend::new(create_test_config());
         let result = backend.get_connection();
         assert!(matches!(result, Err(BackendError::ConnectionError(_))));
+    }
+
+    #[test]
+    fn test_extract_bulk_string_empty() {
+        // Empty bulk string with nested quotes
+        assert_eq!(
+            extract_bulk_string_content("bulk-string('\"\"')"),
+            Some("".to_string())
+        );
+        // Empty bulk string with simple quotes
+        assert_eq!(
+            extract_bulk_string_content("bulk-string(\"\")"),
+            Some("".to_string())
+        );
+        assert_eq!(
+            extract_bulk_string_content("Bulk(\"\")"),
+            Some("".to_string())
+        );
+    }
+
+    #[test]
+    fn test_try_format_simple_value_empty_bulk_string() {
+        // Empty bulk strings should format as ""
+        assert_eq!(
+            try_format_simple_value("bulk-string('\"\"')"),
+            Some("\"\"".to_string())
+        );
+        assert_eq!(
+            try_format_simple_value("bulk-string(\"\")"),
+            Some("\"\"".to_string())
+        );
+        assert_eq!(
+            try_format_simple_value("Bulk(\"\")"),
+            Some("\"\"".to_string())
+        );
     }
 }

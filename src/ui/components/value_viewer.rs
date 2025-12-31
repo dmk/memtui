@@ -1,10 +1,10 @@
 use super::Component;
 use crate::action::Action;
-use crate::backend::BackendCapabilities;
+use crate::backend::{format_backend_output, BackendCapabilities, FormattedOutput};
 use crate::events::{ComponentId, Event, EventKind, EventType};
 use crate::formatter::{Formatter, JsonFormatter, TextFormatter};
 use crate::keybindings::{BindingContext, KeybindingsConfig};
-use crate::types::{KeyMetadata, Value, ValueType};
+use crate::types::{BackendType, KeyMetadata, Value, ValueType};
 use crate::ui::theme::{self, AnimationState};
 use ratatui::{
     layout::{Alignment, Constraint, Rect},
@@ -91,6 +91,8 @@ pub struct ValueViewerProps<'a> {
     pub animation: &'a AnimationState,
     pub now: SystemTime,
     pub keybindings: &'a KeybindingsConfig,
+    /// Backend type for raw command result formatting
+    pub command_backend_type: Option<BackendType>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -958,6 +960,90 @@ impl ValueViewer {
         }
     }
 
+    /// Render command output as a table with pre-styled multi-line rows
+    #[allow(clippy::too_many_arguments)]
+    fn render_command_table(
+        &mut self,
+        f: &mut Frame,
+        area: Rect,
+        is_active: bool,
+        base_title: &str,
+        rows: Vec<Vec<Line<'static>>>,
+        _animation: &AnimationState,
+    ) {
+        let entry_count = rows.len();
+        let entry_info = if entry_count == 1 {
+            "1 item".to_string()
+        } else {
+            format!("{} items", Self::format_number(entry_count))
+        };
+
+        // Render header and get content area
+        let content_area = Self::render_header_split(f, area, base_title, &entry_info, is_active);
+
+        // Update total rows and viewport for scroll handling
+        self.total_rows = rows.len();
+        self.viewport_height = content_area.height.saturating_sub(1);
+
+        // Convert pre-styled lines to table Rows
+        let table_rows: Vec<Row> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(idx, lines)| {
+                let height = lines.len().max(1) as u16;
+
+                // Alternate row colors
+                let row_style = if idx % 2 == 0 {
+                    Style::default().bg(theme::BG_PANEL())
+                } else {
+                    Style::default().bg(theme::BG_SURFACE())
+                };
+
+                // Single cell containing all the styled lines
+                let cell = Cell::from(lines);
+                Row::new(vec![cell]).style(row_style).height(height)
+            })
+            .collect();
+
+        // Ensure we have a selection if we have data
+        if !table_rows.is_empty() && self.table_state.selected().is_none() {
+            self.table_state.select(Some(0));
+        }
+        // Ensure selection is valid
+        if let Some(selected) = self.table_state.selected() {
+            if selected >= table_rows.len() {
+                self.table_state
+                    .select(Some(table_rows.len().saturating_sub(1)));
+            }
+        }
+
+        let highlight_style = if is_active {
+            theme::list_selected().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+
+        let table = Table::new(table_rows, [Constraint::Percentage(100)])
+            .row_highlight_style(highlight_style);
+
+        f.render_stateful_widget(table, content_area, &mut self.table_state);
+
+        if self.total_rows > self.viewport_height as usize {
+            let position = self.table_state.selected().unwrap_or(0);
+            self.scrollbar_state = self
+                .scrollbar_state
+                .content_length(self.total_rows)
+                .viewport_content_length(self.viewport_height as usize)
+                .position(position);
+
+            f.render_stateful_widget(
+                theme::scrollbar(is_active),
+                theme::scrollbar_area(content_area),
+                &mut self.scrollbar_state,
+            );
+        }
+    }
+
     fn format_plain_text(value: &Value, props: &ValueViewerProps<'_>) -> (String, Style) {
         match props.text_formatter.format(value) {
             // Use theme color so it participates in dimming
@@ -1698,6 +1784,50 @@ impl Component for ValueViewer {
                     }
                 }
                 _ => {
+                    // Check first if this is a command result that renders as a table
+                    // (we need to preserve table_state for navigation in that case)
+                    if let Some(backend_type) = props.command_backend_type {
+                        let text = String::from_utf8_lossy(&value.data);
+                        match format_backend_output(backend_type, &text) {
+                            FormattedOutput::Table { rows } => {
+                                self.clear_text_cache();
+                                self.render_command_table(
+                                    f,
+                                    area,
+                                    props.is_active,
+                                    &base_title,
+                                    rows,
+                                    animation,
+                                );
+                                return;
+                            }
+                            FormattedOutput::Text(lines) => {
+                                // Reset table state for text output
+                                self.table_state.select(None);
+                                let view_info = self.value_view_info(value, &props, false);
+                                let title_right = ValueViewer::compose_title_right(
+                                    ttl_label.as_deref(),
+                                    None,
+                                    None,
+                                    Some(view_info.as_str()),
+                                );
+                                self.render_text_value(
+                                    f,
+                                    area,
+                                    props.is_active,
+                                    &base_title,
+                                    title_right.as_deref(),
+                                    value,
+                                    TextContentKind::Text,
+                                    Style::default(),
+                                    props.animation,
+                                    move |_| lines,
+                                );
+                                return;
+                            }
+                        }
+                    }
+
                     // Reset table state when viewing non-table data
                     self.table_state.select(None);
 

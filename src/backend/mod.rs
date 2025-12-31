@@ -5,6 +5,7 @@ mod redis;
 pub mod utils;
 
 use crate::types::{BackendType, KeyMetadata, KeyScanResult, Value};
+use ratatui::text::Line;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -12,6 +13,25 @@ pub use etcd::EtcdBackend;
 pub use memcached::MemcachedBackend;
 pub use mock::MockBackend;
 pub use redis::RedisBackend;
+
+/// Formatted output from a backend command
+#[derive(Debug, Clone)]
+pub enum FormattedOutput {
+    /// Plain text lines (for INFO, simple strings, etc.)
+    Text(Vec<Line<'static>>),
+    /// Table with pre-styled rows - each row is multiple styled lines
+    Table { rows: Vec<Vec<Line<'static>>> },
+}
+
+/// Format backend output with syntax highlighting based on backend type.
+/// This is a convenience function that dispatches to the correct backend formatter.
+pub fn format_backend_output(backend_type: BackendType, text: &str) -> FormattedOutput {
+    match backend_type {
+        BackendType::Redis => redis::format_redis_output(text),
+        BackendType::Memcached => memcached::format_memcached_output(text),
+        _ => FormattedOutput::Text(text.lines().map(|l| Line::raw(l.to_string())).collect()),
+    }
+}
 
 /// Main abstraction for all backend stores
 #[async_trait::async_trait]
@@ -75,6 +95,15 @@ pub trait Backend: Send + Sync {
 
     /// Execute a raw command (if supported)
     async fn execute_raw(&self, command: &str) -> Result<RawCommandResult, BackendError>;
+
+    // ===== Output Formatting =====
+
+    /// Format raw command output with syntax highlighting.
+    /// Each backend can override this to colorize its protocol-specific output.
+    /// Default implementation returns plain text lines.
+    fn format_output(&self, text: &str) -> Vec<Line<'static>> {
+        text.lines().map(|l| Line::raw(l.to_string())).collect()
+    }
 }
 
 /// Backend capabilities (feature flags)

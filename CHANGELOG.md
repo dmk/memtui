@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.1] - 2025-01-02
+
+### Added
+- Vim-like command line with `/` search (always available)
+- Advanced cmdline modes behind `--with=advanced-cmd` flag:
+  - `:` command mode (`:q`, `:quit`, `:ratio`)
+  - `g` goto mode (jump to page)
+  - `>` raw mode (execute backend commands directly)
+- Page navigation with `gg` (first), `G` (last), and goto commands
+- Configurable pane ratio via `:ratio` command and config file
+- Colorized output for raw backend command results
+
+### Changed
+- Update to tui-dispatch v0.2.2
+- Replace SearchInput component with unified CmdLine component
+
+### Tests
+- Add integration tests for navigation, forms, search, and value viewer
+
 ## [0.4.0] - 2024-12-28
 
 ### Changed

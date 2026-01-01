@@ -46,6 +46,24 @@ pub struct Cli {
     /// Default: "Tick,Render" (high-frequency noise)
     #[arg(long, value_name = "PATTERNS", env = "MEMTUI_DEBUG_EXCLUDE")]
     pub debug_exclude: Option<String>,
+
+    /// Enable optional features (comma-separated or multiple --with flags)
+    /// Available: advanced-cmd (enables :command, g goto, >raw modes)
+    #[arg(long = "with", value_name = "FEATURE", value_delimiter = ',')]
+    pub features: Vec<Feature>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Feature {
+    /// Enable advanced cmdline modes (:command, g goto, >raw)
+    #[value(name = "advanced-cmd")]
+    AdvancedCmd,
+}
+
+impl Cli {
+    pub fn has_feature(&self, feature: Feature) -> bool {
+        self.features.contains(&feature)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]

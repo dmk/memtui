@@ -21,7 +21,7 @@ use memtui::action::{Action, CmdLineMode};
 use memtui::actions::{async_handlers, sync_handlers};
 use memtui::app::{sync_event_context, AppState, EventRunner};
 use memtui::backend::CommandStatus;
-use memtui::cli::{parse_connection_string, Cli, LogLevel};
+use memtui::cli::{parse_connection_string, Cli, Feature, LogLevel};
 use memtui::clipboard;
 use memtui::config::Config;
 use memtui::debug::{self, ActionLoggerConfig, DebugFreeze, DebugOverlay};
@@ -63,6 +63,8 @@ pub struct App {
     /// Action logger middleware for tracing + in-memory ActionLog
     action_logger: ActionLoggerMiddleware,
     pub event_runner: EventRunner,
+    /// Advanced cmdline modes enabled via --with=advanced-cmd
+    advanced_cmd_enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,6 +172,7 @@ impl App {
             debug_freeze: DebugFreeze::default(),
             action_logger,
             event_runner,
+            advanced_cmd_enabled: cli.has_feature(Feature::AdvancedCmd),
         }
     }
 
@@ -853,14 +856,17 @@ impl App {
                 }
             }
             "cmdline.command" => {
-                if self.app_state.connection_manager.get_active_id().is_some() {
+                if self.advanced_cmd_enabled
+                    && self.app_state.connection_manager.get_active_id().is_some()
+                {
                     Some(Action::SetCmdLineMode(CmdLineMode::Command))
                 } else {
                     None
                 }
             }
             "cmdline.goto" => {
-                if self.app_state.connection_manager.get_active_id().is_some()
+                if self.advanced_cmd_enabled
+                    && self.app_state.connection_manager.get_active_id().is_some()
                     && !self.app_state.keys.is_empty()
                 {
                     Some(Action::SetCmdLineMode(CmdLineMode::Goto))
@@ -869,7 +875,9 @@ impl App {
                 }
             }
             "cmdline.raw" => {
-                if self.app_state.connection_manager.get_active_id().is_some() {
+                if self.advanced_cmd_enabled
+                    && self.app_state.connection_manager.get_active_id().is_some()
+                {
                     Some(Action::SetCmdLineMode(CmdLineMode::Raw))
                 } else {
                     None

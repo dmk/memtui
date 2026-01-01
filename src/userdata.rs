@@ -557,7 +557,8 @@ fn generate_default_keybindings_json() -> String {
     "debug.toggle": ["esc", "f12", "ctrl+d"],
     "debug.copy_frame": ["y", "c"],
     "debug.state.toggle": ["s"],
-    "debug.mouse.toggle": ["i"]
+    "debug.mouse.toggle": ["i"],
+    "debug.actions.toggle": ["a"]
   },
 
   // Text input - active when editing text fields (connection form, etc.)

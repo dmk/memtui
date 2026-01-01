@@ -258,3 +258,34 @@ impl Default for UiState {
         Self::new()
     }
 }
+
+use tui_dispatch::debug::{DebugSection, DebugState};
+
+impl DebugState for UiState {
+    fn debug_sections(&self) -> Vec<DebugSection> {
+        vec![
+            DebugSection::new("UI Flags")
+                .entry("active_panel", format!("{:?}", self.active_panel))
+                .entry("show_help", self.show_help.to_string())
+                .entry(
+                    "show_connection_form",
+                    self.show_connection_form.to_string(),
+                )
+                .entry(
+                    "show_connection_palette",
+                    self.show_connection_palette.to_string(),
+                )
+                .entry(
+                    "show_quit_confirmation",
+                    self.show_quit_confirmation.to_string(),
+                ),
+            DebugSection::new("UI Layout")
+                .entry("pane_split.ratio", format!("{:.3}", self.pane_split.ratio))
+                .entry("is_resizing", self.is_resizing.to_string())
+                .entry("last_body_area", format!("{:?}", self.last_body_area))
+                .entry("last_key_area", format!("{:?}", self.last_key_area))
+                .entry("last_value_area", format!("{:?}", self.last_value_area))
+                .entry("tab_bar_area", format!("{:?}", self.tab_bar_area)),
+        ]
+    }
+}

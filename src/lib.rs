@@ -10,6 +10,7 @@ pub mod events;
 pub mod formatter;
 pub mod keybindings;
 pub mod search;
+pub mod store;
 pub mod terminal;
 pub mod types;
 pub mod ui;

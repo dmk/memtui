@@ -1,14 +1,17 @@
 use ratatui::{
-    buffer::Buffer,
     layout::{Constraint, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Cell, Clear, Paragraph, Row, Table},
     Frame,
 };
+use tui_dispatch::debug::{
+    buffer_to_text, format_color_compact, paint_snapshot, ActionLogOverlay, CellPreview,
+};
 
 use crate::{
-    debug::{CellPreview, DebugFreeze, DebugTableOverlay, DebugTableRow},
+    action::Action,
+    debug::{DebugFreeze, DebugTableOverlay, DebugTableRow},
     keybindings::{format_key_for_display, BindingContext, KeybindingsConfig},
     ui::{
         self,
@@ -22,7 +25,7 @@ pub fn render_debug_freeze(
     app_state: &mut crate::app::AppState,
     ui_state: &mut crate::ui::UiState,
     keybindings: &KeybindingsConfig,
-    debug: &mut DebugFreeze,
+    debug: &mut DebugFreeze<Action>,
 ) {
     if debug.pending_capture || debug.snapshot.is_none() {
         ui::render(f, app_state, ui_state, keybindings);
@@ -32,63 +35,43 @@ pub fn render_debug_freeze(
         debug.snapshot = Some(snapshot);
         debug.pending_capture = false;
     } else if let Some(snapshot) = &debug.snapshot {
+        f.render_widget(Clear, f.area());
         paint_snapshot(f, snapshot);
     }
 
     render_debug_overlay(f, keybindings, debug);
 }
 
-fn paint_snapshot(f: &mut Frame, snapshot: &Buffer) {
-    let screen = f.area();
-    f.render_widget(Clear, screen);
+fn render_debug_overlay(
+    f: &mut Frame,
+    keybindings: &KeybindingsConfig,
+    debug: &DebugFreeze<Action>,
+) {
+    use crate::debug::DebugOverlay;
 
-    let snap_area = snapshot.area;
-    let x_end = screen
-        .x
-        .saturating_add(screen.width)
-        .min(snap_area.x.saturating_add(snap_area.width));
-    let y_end = screen
-        .y
-        .saturating_add(screen.height)
-        .min(snap_area.y.saturating_add(snap_area.height));
-
-    for y in screen.y..y_end {
-        for x in screen.x..x_end {
-            let cell = snapshot[(x, y)].clone();
-            f.buffer_mut()[(x, y)] = cell;
-        }
-    }
-}
-
-fn buffer_to_text(buffer: &Buffer) -> String {
-    let area = buffer.area;
-    let mut out = String::new();
-
-    for y in area.y..area.y.saturating_add(area.height) {
-        let mut line = String::new();
-        for x in area.x..area.x.saturating_add(area.width) {
-            line.push_str(buffer[(x, y)].symbol());
-        }
-        out.push_str(line.trim_end_matches(' '));
-        if y + 1 < area.y.saturating_add(area.height) {
-            out.push('\n');
-        }
-    }
-
-    out
-}
-
-fn render_debug_overlay(f: &mut Frame, keybindings: &KeybindingsConfig, debug: &DebugFreeze) {
     if debug.overlay.is_some() {
         crate::ui::theme::dim_buffer_in_place(f.buffer_mut(), 0.7);
     }
     render_debug_banner(f, keybindings, debug);
     if let Some(overlay) = &debug.overlay {
-        render_debug_table_overlay(f, overlay.table());
+        match overlay {
+            DebugOverlay::ActionLog(action_log) => {
+                render_action_log_overlay(f, action_log);
+            }
+            _ => {
+                if let Some(table) = overlay.table() {
+                    render_debug_table_overlay(f, table);
+                }
+            }
+        }
     }
 }
 
-fn render_debug_banner(f: &mut Frame, keybindings: &KeybindingsConfig, debug: &DebugFreeze) {
+fn render_debug_banner(
+    f: &mut Frame,
+    keybindings: &KeybindingsConfig,
+    debug: &DebugFreeze<Action>,
+) {
     let screen = f.area();
     if screen.height == 0 {
         return;
@@ -123,6 +106,10 @@ fn render_debug_banner(f: &mut Frame, keybindings: &KeybindingsConfig, debug: &D
         .get_first_keybinding("debug.mouse.toggle", BindingContext::Debug)
         .map(|k| format_key_for_display(&k))
         .unwrap_or_else(|| "I".to_string());
+    let actions_key = keybindings
+        .get_first_keybinding("debug.actions.toggle", BindingContext::Debug)
+        .map(|k| format_key_for_display(&k))
+        .unwrap_or_else(|| "A".to_string());
 
     f.render_widget(
         Block::default().style(Style::default().bg(raw::BG_DEEP())),
@@ -146,6 +133,8 @@ fn render_debug_banner(f: &mut Frame, keybindings: &KeybindingsConfig, debug: &D
         Span::styled(" copy ", text_style),
         Span::styled(format!(" {state_key} "), key_style(raw::NEON_CYAN())),
         Span::styled(" state ", text_style),
+        Span::styled(format!(" {actions_key} "), key_style(raw::NEON_GREEN())),
+        Span::styled(" actions ", text_style),
         Span::styled(format!(" {mouse_key} "), key_style(raw::ELECTRIC_BLUE())),
         Span::styled(
             if debug.mouse_capture_enabled {
@@ -282,14 +271,6 @@ fn render_cell_preview(f: &mut Frame, area: Rect, preview: &CellPreview) {
     f.render_widget(Paragraph::new(line), preview_area);
 }
 
-/// Format a Color as a compact RGB string.
-fn format_color_compact(color: ratatui::style::Color) -> String {
-    match color {
-        ratatui::style::Color::Rgb(r, g, b) => format!("({r},{g},{b})"),
-        other => format!("{other:?}"),
-    }
-}
-
 fn render_debug_table(f: &mut Frame, area: Rect, rows: &[DebugTableRow]) {
     if area.height < 2 || area.width < 10 {
         return;
@@ -353,4 +334,117 @@ fn render_debug_table(f: &mut Frame, area: Rect, rows: &[DebugTableRow]) {
         .header(header)
         .column_spacing(2);
     f.render_widget(table_widget, area);
+}
+
+/// Render the action log overlay showing recent dispatched actions
+fn render_action_log_overlay(f: &mut Frame, action_log: &ActionLogOverlay) {
+    let screen = f.area();
+    if screen.height < 2 {
+        return;
+    }
+
+    let screen_wo_banner = Rect {
+        x: screen.x,
+        y: screen.y,
+        width: screen.width,
+        height: screen.height.saturating_sub(1),
+    };
+    if screen_wo_banner.height < 4 || screen_wo_banner.width < 20 {
+        return;
+    }
+
+    // Use modal for the overlay
+    let inner = Modal::new(&action_log.title)
+        .style(
+            ModalStyle::new()
+                .size(85, 70)
+                .min_size(40, 10)
+                .max_size(140, 50),
+        )
+        .render(f, screen_wo_banner);
+
+    if inner.height < 2 || inner.width < 20 {
+        return;
+    }
+
+    // Calculate visible window based on selected index
+    let visible_rows = inner.height.saturating_sub(1) as usize; // -1 for header
+    let selected = action_log.selected;
+    let scroll_offset = if selected >= visible_rows {
+        selected - visible_rows + 1
+    } else {
+        0
+    };
+
+    // Build table rows from action log entries (only visible ones)
+    let header_style = Style::default()
+        .fg(raw::NEON_CYAN())
+        .bg(raw::BG_PANEL())
+        .add_modifier(Modifier::BOLD);
+    let header = Row::new(vec![
+        Cell::from("#").style(header_style),
+        Cell::from("Elapsed").style(header_style),
+        Cell::from("Δ").style(header_style),
+        Cell::from("Action").style(header_style),
+    ]);
+
+    let table_rows: Vec<Row> = action_log
+        .entries
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(visible_rows)
+        .map(|(idx, entry)| {
+            let is_selected = idx == selected;
+            let seq_style = Style::default().fg(raw::TEXT_DIM());
+            let elapsed_style = Style::default().fg(raw::NEON_AMBER());
+            let state_changed = entry.state_changed.unwrap_or(false);
+            let changed_style = if state_changed {
+                Style::default().fg(raw::NEON_GREEN())
+            } else {
+                Style::default().fg(raw::TEXT_DIM())
+            };
+            let summary_style = Style::default().fg(raw::TEXT_PRIMARY());
+
+            // Highlight selected row
+            let row_style = if is_selected {
+                Style::default()
+                    .bg(raw::NEON_PURPLE())
+                    .fg(raw::BG_DEEP())
+                    .add_modifier(Modifier::BOLD)
+            } else if idx % 2 == 0 {
+                Style::default().bg(raw::BG_PANEL())
+            } else {
+                Style::default().bg(raw::BG_SURFACE())
+            };
+
+            // For selected row, override cell styles
+            let (seq_style, elapsed_style, changed_style, summary_style) = if is_selected {
+                let sel = Style::default().fg(raw::BG_DEEP());
+                (sel, sel, sel, sel)
+            } else {
+                (seq_style, elapsed_style, changed_style, summary_style)
+            };
+
+            Row::new(vec![
+                Cell::from(format!("{}", entry.sequence)).style(seq_style),
+                Cell::from(entry.elapsed.clone()).style(elapsed_style),
+                Cell::from(if state_changed { "•" } else { " " }).style(changed_style),
+                Cell::from(entry.summary.clone()).style(summary_style),
+            ])
+            .style(row_style)
+        })
+        .collect();
+
+    let constraints = [
+        Constraint::Length(6), // Sequence #
+        Constraint::Length(8), // Elapsed time
+        Constraint::Length(1), // State changed indicator
+        Constraint::Min(20),   // Action summary
+    ];
+
+    let table = Table::new(table_rows, constraints)
+        .header(header)
+        .column_spacing(1);
+    f.render_widget(table, inner);
 }

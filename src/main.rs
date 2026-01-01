@@ -24,7 +24,7 @@ use memtui::backend::CommandStatus;
 use memtui::cli::{parse_connection_string, Cli, LogLevel};
 use memtui::clipboard;
 use memtui::config::Config;
-use memtui::debug::{self, ActionLogger, ActionLoggerConfig, DebugFreeze, DebugOverlay};
+use memtui::debug::{self, ActionLoggerConfig, DebugFreeze, DebugOverlay};
 use memtui::events::{Event, EventKind};
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
 use memtui::terminal;
@@ -43,6 +43,7 @@ use memtui::ui::components::welcome::WelcomeScreenProps;
 use memtui::ui::components::Component;
 use memtui::ui::{self, init_theme, Panel, UiState};
 use memtui::userdata;
+use tui_dispatch::debug::{ActionLogConfig, ActionLogOverlay, ActionLoggerMiddleware};
 
 pub struct App {
     pub app_state: AppState,
@@ -58,9 +59,9 @@ pub struct App {
     auto_connect_name: Option<String>,
     /// Debug mode enabled via --debug flag
     debug_mode_enabled: bool,
-    debug_freeze: DebugFreeze,
-    /// Action logger for debug tracing
-    action_logger: Option<ActionLogger>,
+    debug_freeze: DebugFreeze<Action>,
+    /// Action logger middleware for tracing + in-memory ActionLog
+    action_logger: ActionLoggerMiddleware,
     pub event_runner: EventRunner,
 }
 
@@ -143,13 +144,16 @@ impl App {
 
         let event_runner = EventRunner::new(tx.clone(), &config);
 
-        // Create action logger if debug mode is enabled
+        // Create action logger middleware
+        // In debug mode: enables tracing + in-memory ActionLog (100 entries)
+        // In normal mode: disabled (no tracing, no in-memory storage)
         let action_logger = if cli.debug {
-            let config =
+            let filter =
                 ActionLoggerConfig::new(cli.debug_actions.as_deref(), cli.debug_exclude.as_deref());
-            Some(ActionLogger::new(config))
+            ActionLoggerMiddleware::with_log(ActionLogConfig::new(100, filter))
         } else {
-            None
+            // Exclude everything when not in debug mode
+            ActionLoggerMiddleware::new(ActionLoggerConfig::with_patterns(vec![], vec!["*".into()]))
         };
 
         Self {
@@ -331,6 +335,43 @@ impl App {
                     self.debug_freeze.overlay = None;
                     self.needs_render = true;
                     return;
+                }
+
+                // Handle scrolling in ActionLog overlay
+                if let Some(DebugOverlay::ActionLog(ref mut log)) = self.debug_freeze.overlay {
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            log.scroll_up();
+                            self.needs_render = true;
+                            return;
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            log.scroll_down();
+                            self.needs_render = true;
+                            return;
+                        }
+                        KeyCode::Home | KeyCode::Char('g') => {
+                            log.scroll_to_top();
+                            self.needs_render = true;
+                            return;
+                        }
+                        KeyCode::End | KeyCode::Char('G') => {
+                            log.scroll_to_bottom();
+                            self.needs_render = true;
+                            return;
+                        }
+                        KeyCode::PageUp => {
+                            log.page_up(10);
+                            self.needs_render = true;
+                            return;
+                        }
+                        KeyCode::PageDown => {
+                            log.page_down(10);
+                            self.needs_render = true;
+                            return;
+                        }
+                        _ => {}
+                    }
                 }
 
                 let command = self.keybindings.get_command(*key, BindingContext::Debug);
@@ -795,6 +836,7 @@ impl App {
             "debug.copy_frame" => Some(Action::DebugCopyFrame),
             "debug.state.toggle" => Some(Action::DebugToggleStateView),
             "debug.mouse.toggle" => Some(Action::DebugToggleMouseCapture),
+            "debug.actions.toggle" => Some(Action::DebugToggleActionLog),
 
             // Help
             "help.toggle" => Some(Action::ToggleHelp),
@@ -881,11 +923,17 @@ impl App {
     async fn update(&mut self, action: Action) {
         use async_handlers::*;
         use sync_handlers::*;
+        use tui_dispatch::Middleware;
 
-        // Log action if debug logging is enabled
-        if let Some(ref logger) = self.action_logger {
-            logger.log(&action);
-        }
+        // Log action via middleware (handles both tracing + in-memory ActionLog)
+        self.action_logger.before(&action);
+
+        // Only clone for after() if in-memory log is enabled (avoids copying large payloads)
+        let action_for_after = if self.action_logger.log().is_some() {
+            Some(action.clone())
+        } else {
+            None
+        };
 
         let should_render = match action {
             // Core lifecycle
@@ -965,6 +1013,26 @@ impl App {
                         let _ = terminal::set_mouse_capture(false);
                         self.debug_freeze.message =
                             Some("mouse capture OFF (selection ON)".to_string());
+                    }
+                    true
+                }
+            }
+            Action::DebugToggleActionLog => {
+                if !self.debug_freeze.enabled {
+                    false
+                } else {
+                    let show =
+                        !matches!(self.debug_freeze.overlay, Some(DebugOverlay::ActionLog(_)));
+                    if show {
+                        if let Some(log) = self.action_logger.log() {
+                            let overlay = ActionLogOverlay::from_log(log, "Action Log");
+                            self.debug_freeze.overlay = Some(DebugOverlay::ActionLog(overlay));
+                        } else {
+                            self.debug_freeze.message =
+                                Some("ActionLog not enabled (run with --debug)".to_string());
+                        }
+                    } else {
+                        self.debug_freeze.overlay = None;
                     }
                     true
                 }
@@ -1333,6 +1401,12 @@ impl App {
             // Default
             _ => true,
         };
+
+        // Complete middleware logging (records state_changed for ActionLog)
+        // Only call after() if we have an in-memory log (otherwise it's a no-op)
+        if let Some(ref a) = action_for_after {
+            self.action_logger.after(a, should_render);
+        }
 
         if should_render {
             self.needs_render = true;

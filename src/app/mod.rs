@@ -348,3 +348,55 @@ impl Default for AppState {
         Self::new()
     }
 }
+
+use tui_dispatch::debug::{DebugSection, DebugState};
+
+impl DebugState for AppState {
+    fn debug_sections(&self) -> Vec<DebugSection> {
+        vec![
+            DebugSection::new("Connection")
+                .entry(
+                    "active_id",
+                    format!("{:?}", self.connection_manager.get_active_id()),
+                )
+                .entry(
+                    "active_status",
+                    format!("{:?}", self.connection_manager.get_active_status()),
+                )
+                .entry(
+                    "configs.len",
+                    self.connection_manager.get_configs().len().to_string(),
+                ),
+            DebugSection::new("Keys")
+                .entry("keys.loaded_len", self.keys.len().to_string())
+                .entry("keys.total_count", format!("{:?}", self.total_key_count))
+                .entry("keys.cursor", format!("{:?}", self.keys_cursor))
+                .entry("keys.has_more", self.has_more_keys.to_string())
+                .entry("keys.is_loading", self.is_loading_keys.to_string())
+                .entry("keys.per_chunk", self.keys_per_chunk.to_string())
+                .entry("viewport_height", self.viewport_height.to_string())
+                .entry(
+                    "selected_key_index",
+                    format!("{:?}", self.selected_key_index),
+                ),
+            DebugSection::new("Value").entry(
+                "selected_value.present",
+                self.selected_value.is_some().to_string(),
+            ),
+            DebugSection::new("CmdLine")
+                .entry("mode", format!("{:?}", self.cmdline_mode))
+                .entry("buffer", self.cmdline_buffer.clone())
+                .entry("cursor", self.cmdline_cursor.to_string())
+                .entry("results.local", self.search_results_local.len().to_string())
+                .entry(
+                    "results.server",
+                    self.search_results_server.len().to_string(),
+                )
+                .entry("server_searching", self.is_server_searching.to_string())
+                .entry(
+                    "selection_index",
+                    format!("{:?}", self.search_selection_index),
+                ),
+        ]
+    }
+}

@@ -315,6 +315,11 @@ pub fn default_keybindings() -> KeybindingsConfig {
         "debug.mouse.toggle",
         vec!["i".into()],
     );
+    kb.add(
+        BindingContext::Debug,
+        "debug.actions.toggle",
+        vec!["a".into()],
+    );
 
     // Text input context bindings
     // Note: alt+ keys are for macOS compatibility (Option key)

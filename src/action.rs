@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tui_dispatch::ActionSummary;
 
 /// Command line mode (vim-style bottom line)
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -183,6 +184,7 @@ pub enum Action {
     DebugCopyFrame,
     DebugToggleStateView,
     DebugToggleMouseCapture,
+    DebugToggleActionLog,
 
     Error(String),
 }
@@ -373,10 +375,15 @@ impl fmt::Debug for Action {
             Action::DebugCopyFrame => write!(f, "DebugCopyFrame"),
             Action::DebugToggleStateView => write!(f, "DebugToggleStateView"),
             Action::DebugToggleMouseCapture => write!(f, "DebugToggleMouseCapture"),
+            Action::DebugToggleActionLog => write!(f, "DebugToggleActionLog"),
             Action::Error(err) => f.debug_tuple("Error").field(err).finish(),
         }
     }
 }
+
+// ActionSummary uses Debug by default, which already provides concise summaries
+// for large payload actions (e.g., DidScanKeys shows count instead of full data)
+impl ActionSummary for Action {}
 
 #[cfg(test)]
 mod category_tests {

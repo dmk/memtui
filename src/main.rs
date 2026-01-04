@@ -20,13 +20,18 @@ use tracing_subscriber::EnvFilter;
 use memtui::action::{Action, CmdLineMode};
 use memtui::actions::{async_handlers, sync_handlers};
 use memtui::app::{sync_event_context, AppState, EventRunner};
+// TODO: Integrate reducer/effect_handler fully - currently using old handlers
 use memtui::backend::CommandStatus;
 use memtui::cli::{parse_connection_string, Cli, Feature, LogLevel};
 use memtui::clipboard;
 use memtui::config::Config;
 use memtui::debug::{self, ActionLoggerConfig, DebugFreeze, DebugOverlay};
+#[allow(unused_imports)]
+use memtui::effect_handler::handle_effect;
 use memtui::events::{Event, EventKind};
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
+#[allow(unused_imports)]
+use memtui::reducer::{reduce, ReducerContext};
 use memtui::terminal;
 use memtui::types::{BackendType, ConnectionConfig, ValueType};
 use memtui::ui::components::cmdline::{CmdLine, CmdLineProps};
@@ -44,6 +49,8 @@ use memtui::ui::components::Component;
 use memtui::ui::{self, init_theme, Panel, UiState};
 use memtui::userdata;
 use tui_dispatch::debug::{ActionLogConfig, ActionLogOverlay, ActionLoggerMiddleware};
+use tui_dispatch::subscriptions::Subscriptions;
+use tui_dispatch::tasks::TaskManager;
 
 pub struct App {
     pub app_state: AppState,
@@ -65,6 +72,10 @@ pub struct App {
     pub event_runner: EventRunner,
     /// Advanced cmdline modes enabled via --with=advanced-cmd
     advanced_cmd_enabled: bool,
+    /// Task manager for async operations
+    tasks: TaskManager<Action>,
+    /// Subscriptions for continuous action sources (tick timer)
+    subs: Subscriptions<Action>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,6 +169,10 @@ impl App {
             ActionLoggerMiddleware::new(ActionLoggerConfig::with_patterns(vec![], vec!["*".into()]))
         };
 
+        // Create TaskManager and Subscriptions for async operations
+        let tasks = TaskManager::new(tx.clone());
+        let subs = Subscriptions::new(tx.clone());
+
         Self {
             app_state,
             ui_state,
@@ -173,6 +188,8 @@ impl App {
             action_logger,
             event_runner,
             advanced_cmd_enabled: cli.has_feature(Feature::AdvancedCmd),
+            tasks,
+            subs,
         }
     }
 
@@ -197,7 +214,8 @@ impl App {
             "Starting app event loop with EventRunner"
         );
 
-        let mut interval = tokio::time::interval(tick_interval);
+        // Start tick subscription
+        self.subs.interval("tick", tick_interval, || Action::Tick);
 
         loop {
             // Only render when state has changed
@@ -229,6 +247,12 @@ impl App {
             }
 
             if self.debug_freeze.enabled {
+                // Pause tasks and subscriptions during debug freeze
+                if !self.tasks.is_paused() {
+                    self.tasks.pause();
+                    self.subs.pause();
+                }
+
                 tokio::select! {
                     biased;
                     // Priority 1: Debug input events
@@ -242,18 +266,28 @@ impl App {
                             self.event_runner.cancel();
                             return Ok(());
                         }
-                        self.debug_freeze.queued_actions.push(action);
+                        // Skip ticks while frozen, queue other actions
+                        if !matches!(action, Action::Tick) {
+                            self.debug_freeze.queued_actions.push(action);
+                        }
                     }
-                    // Ignore ticks while frozen
-                    _ = interval.tick() => {}
                 }
                 continue;
             }
 
-            // Wait for events, actions from async tasks, or tick
+            // Resume tasks and subscriptions when exiting debug mode
+            if self.tasks.is_paused() {
+                let queued = self.tasks.resume();
+                for action in queued {
+                    let _ = self.action_tx.send(action);
+                }
+                self.subs.resume();
+            }
+
+            // Wait for events, actions from async tasks, or tick (from subscription)
             let action = tokio::select! {
                 biased;
-                // Priority 1: Actions from async tasks (LoadKeys results, etc.)
+                // Priority 1: Actions from async tasks (LoadKeys results, etc.) and ticks from subscription
                 Some(action) = self.action_rx.recv() => action,
                 // Priority 2: Input events from EventRunner
                 Some(event) = self.event_runner.poll() => {
@@ -264,6 +298,8 @@ impl App {
                         if matches!(action, Action::ConfirmQuit) {
                             info!("Quit confirmed from event dispatch, cancelling event runner");
                             self.event_runner.cancel();
+                            self.subs.cancel_all();
+                            self.tasks.cancel_all();
                             return Ok(());
                         }
                         self.update(action).await;
@@ -272,8 +308,6 @@ impl App {
                     self.needs_render = true;
                     continue;
                 },
-                // Priority 3: Tick for animations
-                _ = interval.tick() => Action::Tick,
             };
 
             if let Action::ConfirmQuit = action {
@@ -289,7 +323,9 @@ impl App {
                     debug!(drained, "Drained pending actions before quit");
                 }
 
-                info!("Quit confirmed, cancelling event runner");
+                info!("Quit confirmed, cancelling all async operations");
+                self.subs.cancel_all();
+                self.tasks.cancel_all();
                 self.event_runner.cancel();
                 break;
             }

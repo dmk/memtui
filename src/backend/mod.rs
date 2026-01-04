@@ -35,7 +35,7 @@ pub fn format_backend_output(backend_type: BackendType, text: &str) -> Formatted
 
 /// Main abstraction for all backend stores
 #[async_trait::async_trait]
-pub trait Backend: Send + Sync {
+pub trait Backend: Send + Sync + std::fmt::Debug {
     /// Get backend type (redis, memcached, etcd, etc.)
     fn backend_type(&self) -> BackendType;
 

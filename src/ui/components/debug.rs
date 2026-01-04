@@ -384,7 +384,6 @@ fn render_action_log_overlay(f: &mut Frame, action_log: &ActionLogOverlay) {
     let header = Row::new(vec![
         Cell::from("#").style(header_style),
         Cell::from("Elapsed").style(header_style),
-        Cell::from("Δ").style(header_style),
         Cell::from("Action").style(header_style),
     ]);
 
@@ -398,13 +397,7 @@ fn render_action_log_overlay(f: &mut Frame, action_log: &ActionLogOverlay) {
             let is_selected = idx == selected;
             let seq_style = Style::default().fg(raw::TEXT_DIM());
             let elapsed_style = Style::default().fg(raw::NEON_AMBER());
-            let state_changed = entry.state_changed.unwrap_or(false);
-            let changed_style = if state_changed {
-                Style::default().fg(raw::NEON_GREEN())
-            } else {
-                Style::default().fg(raw::TEXT_DIM())
-            };
-            let summary_style = Style::default().fg(raw::TEXT_PRIMARY());
+            let name_style = Style::default().fg(raw::TEXT_PRIMARY());
 
             // Highlight selected row
             let row_style = if is_selected {
@@ -419,18 +412,24 @@ fn render_action_log_overlay(f: &mut Frame, action_log: &ActionLogOverlay) {
             };
 
             // For selected row, override cell styles
-            let (seq_style, elapsed_style, changed_style, summary_style) = if is_selected {
+            let (seq_style, elapsed_style, name_style) = if is_selected {
                 let sel = Style::default().fg(raw::BG_DEEP());
-                (sel, sel, sel, sel)
+                (sel, sel, sel)
             } else {
-                (seq_style, elapsed_style, changed_style, summary_style)
+                (seq_style, elapsed_style, name_style)
+            };
+
+            // Build summary from name + params
+            let summary = if entry.params.is_empty() {
+                entry.name.clone()
+            } else {
+                format!("{} {}", entry.name, entry.params)
             };
 
             Row::new(vec![
                 Cell::from(format!("{}", entry.sequence)).style(seq_style),
                 Cell::from(entry.elapsed.clone()).style(elapsed_style),
-                Cell::from(if state_changed { "•" } else { " " }).style(changed_style),
-                Cell::from(entry.summary.clone()).style(summary_style),
+                Cell::from(summary).style(name_style),
             ])
             .style(row_style)
         })
@@ -439,8 +438,7 @@ fn render_action_log_overlay(f: &mut Frame, action_log: &ActionLogOverlay) {
     let constraints = [
         Constraint::Length(6), // Sequence #
         Constraint::Length(8), // Elapsed time
-        Constraint::Length(1), // State changed indicator
-        Constraint::Min(20),   // Action summary
+        Constraint::Min(20),   // Action name + params
     ];
 
     let table = Table::new(table_rows, constraints)

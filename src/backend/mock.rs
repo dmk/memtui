@@ -6,6 +6,7 @@ use crate::types::{BackendType, KeyMetadata, KeyScanResult, Value, ValueType};
 use std::time::{Duration, SystemTime};
 
 /// Mock backend for testing and development
+#[derive(Debug)]
 pub struct MockBackend {
     connected: bool,
     read_only: bool,

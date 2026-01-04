@@ -2211,9 +2211,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tui-dispatch"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad498207700cd8c4a299f6765039e7c3801e3eaafc3c1130406c306f8960ed38"
+checksum = "32ac6ad0d6799302f959e1821d39b62d781bb1b7ee372fc48e3540756f1015be"
 dependencies = [
  "tui-dispatch-core",
  "tui-dispatch-macros",
@@ -2221,25 +2221,27 @@ dependencies = [
 
 [[package]]
 name = "tui-dispatch-core"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c166b6e086067cb585fe84bd1f225c4519c50a7d06b4f718c9bdf6575cce692b"
+checksum = "438bea95070224ea18ef46d401515a7fc78368ac42bce6035b39d880212b94f3"
 dependencies = [
+ "base64",
  "bitflags",
  "crossterm",
  "ratatui",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tracing",
 ]
 
 [[package]]
 name = "tui-dispatch-macros"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab74e2817f51277739cacb27a6dd2542ae81c7e45658c7b7a136f84170082014"
+checksum = "84565bedd449254ffa9e0b6dcf0e187ecfed6d739fef925d9d7d44f9735c73dc"
 dependencies = [
  "darling",
  "proc-macro2",

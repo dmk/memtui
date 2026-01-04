@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tui_dispatch::ActionSummary;
 
 /// Command line mode (vim-style bottom line)
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -103,6 +102,8 @@ pub enum Action {
     LoadKeys,
     LoadMoreKeys(usize), // index to load around
     SelectKey(usize),
+    // Legacy debounce actions - kept for backwards compatibility
+    // TaskManager now handles debouncing automatically
     LoadValueDebounced {
         index: usize,
         token: u64,
@@ -164,7 +165,8 @@ pub enum Action {
 
     DidLoadValue {
         value: Value,
-        token: u64,
+        #[allow(dead_code)]
+        token: u64, // Legacy - TaskManager handles cancellation
     },
     DidFailLoadValue(String),
 
@@ -172,11 +174,13 @@ pub enum Action {
     DidSearchLocal {
         indices: Vec<usize>, // Indices of matching keys in loaded keys array
         match_positions: HashMap<usize, Vec<u32>>, // Match positions for highlighting (key index -> char positions)
-        token: u64,
+        #[allow(dead_code)]
+        token: u64,     // Legacy - TaskManager handles cancellation
     },
     DidSearchServer {
         result: KeyScanResult,
-        token: u64,
+        #[allow(dead_code)]
+        token: u64, // Legacy - TaskManager handles cancellation
     },
 
     // Debug
@@ -380,10 +384,6 @@ impl fmt::Debug for Action {
         }
     }
 }
-
-// ActionSummary uses Debug by default, which already provides concise summaries
-// for large payload actions (e.g., DidScanKeys shows count instead of full data)
-impl ActionSummary for Action {}
 
 #[cfg(test)]
 mod category_tests {

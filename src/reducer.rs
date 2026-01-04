@@ -630,18 +630,6 @@ pub fn reduce(
         }
 
         // =========================================================================
-        // Debug (handled in main.rs)
-        // =========================================================================
-        Action::ToggleDebug
-        | Action::DebugCopyFrame
-        | Action::DebugToggleStateView
-        | Action::DebugToggleMouseCapture
-        | Action::DebugToggleActionLog => {
-            // Debug actions are handled in main.rs
-            DispatchResult::unchanged()
-        }
-
-        // =========================================================================
         // Error
         // =========================================================================
         Action::Error(error) => {

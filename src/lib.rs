@@ -5,7 +5,6 @@ pub mod backend;
 pub mod cli;
 pub mod clipboard;
 pub mod config;
-pub mod debug;
 pub mod effect;
 pub mod effect_handler;
 pub mod events;

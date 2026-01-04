@@ -102,7 +102,6 @@ pub fn default_keybindings() -> KeybindingsConfig {
     kb.add_global("help.toggle", vec!["?".into()]);
     kb.add_global("connection.palette.toggle", vec!["ctrl+p".into()]);
     kb.add_global("connection.form.open", vec!["ctrl+n".into()]);
-    kb.add_global("debug.toggle", vec!["f12".into(), "ctrl+d".into()]);
 
     // Default context bindings (when connected and browsing)
     kb.add(BindingContext::Default, "cmdline.search", vec!["/".into()]);
@@ -292,33 +291,6 @@ pub fn default_keybindings() -> KeybindingsConfig {
         BindingContext::Help,
         "help.close",
         vec!["?".into(), "esc".into(), "q".into()],
-    );
-
-    // Debug context bindings
-    kb.add(
-        BindingContext::Debug,
-        "debug.toggle",
-        vec!["esc".into(), "f12".into(), "ctrl+d".into()],
-    );
-    kb.add(
-        BindingContext::Debug,
-        "debug.copy_frame",
-        vec!["y".into(), "c".into()],
-    );
-    kb.add(
-        BindingContext::Debug,
-        "debug.state.toggle",
-        vec!["s".into()],
-    );
-    kb.add(
-        BindingContext::Debug,
-        "debug.mouse.toggle",
-        vec!["i".into()],
-    );
-    kb.add(
-        BindingContext::Debug,
-        "debug.actions.toggle",
-        vec!["a".into()],
     );
 
     // Text input context bindings

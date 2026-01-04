@@ -2,7 +2,6 @@ pub mod cmdline;
 pub mod command_suggestions;
 pub mod connection_form;
 pub mod connection_list;
-pub mod debug;
 pub mod help;
 pub mod key_list;
 pub mod modal;

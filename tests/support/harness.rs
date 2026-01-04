@@ -166,11 +166,6 @@ impl ActionDispatcher for AppHarness {
         false
     }
 
-    fn dispatch_debug(&mut self, _action: &Action) -> bool {
-        // Debug actions not handled in tests
-        false
-    }
-
     fn dispatch_page(&mut self, action: &Action) -> bool {
         // PageDown/PageUp are categorized as "page" by tui_dispatch
         sync_handlers::handle_navigation(

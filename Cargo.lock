@@ -2211,9 +2211,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tui-dispatch"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32ac6ad0d6799302f959e1821d39b62d781bb1b7ee372fc48e3540756f1015be"
+version = "0.3.3"
 dependencies = [
  "tui-dispatch-core",
  "tui-dispatch-macros",
@@ -2221,9 +2219,7 @@ dependencies = [
 
 [[package]]
 name = "tui-dispatch-core"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "438bea95070224ea18ef46d401515a7fc78368ac42bce6035b39d880212b94f3"
+version = "0.3.3"
 dependencies = [
  "base64",
  "bitflags",
@@ -2239,9 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "tui-dispatch-macros"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84565bedd449254ffa9e0b6dcf0e187ecfed6d739fef925d9d7d44f9735c73dc"
+version = "0.3.3"
 dependencies = [
  "darling",
  "proc-macro2",

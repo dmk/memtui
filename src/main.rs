@@ -1,8 +1,7 @@
 use clap::Parser;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, KeyCode, MouseButton, MouseEvent,
-        MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, MouseButton, MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -23,23 +22,19 @@ use memtui::app::{sync_event_context, AppState, EventRunner};
 // TODO: Integrate reducer/effect_handler fully - currently using old handlers
 use memtui::backend::CommandStatus;
 use memtui::cli::{parse_connection_string, Cli, Feature, LogLevel};
-use memtui::clipboard;
 use memtui::config::Config;
-use memtui::debug::{self, ActionLoggerConfig, DebugFreeze, DebugOverlay};
 #[allow(unused_imports)]
 use memtui::effect_handler::handle_effect;
 use memtui::events::{Event, EventKind};
 use memtui::keybindings::{BindingContext, KeybindingsConfig};
 #[allow(unused_imports)]
 use memtui::reducer::{reduce, ReducerContext};
-use memtui::terminal;
 use memtui::types::{BackendType, ConnectionConfig, ValueType};
 use memtui::ui::components::cmdline::{CmdLine, CmdLineProps};
 use memtui::ui::components::command_suggestions::{
     command_suggestions, goto_suggestions, CommandSuggestionsProps,
 };
 use memtui::ui::components::connection_list::ConnectionListProps;
-use memtui::ui::components::debug as debug_ui;
 use memtui::ui::components::help::HelpScreenProps;
 use memtui::ui::components::key_list::KeyListProps;
 use memtui::ui::components::quit_confirmation::QuitConfirmationProps;
@@ -48,7 +43,7 @@ use memtui::ui::components::welcome::WelcomeScreenProps;
 use memtui::ui::components::Component;
 use memtui::ui::{self, init_theme, Panel, UiState};
 use memtui::userdata;
-use tui_dispatch::debug::{ActionLogConfig, ActionLogOverlay, ActionLoggerMiddleware};
+use tui_dispatch::debug::{DebugLayer, DebugState};
 use tui_dispatch::subscriptions::Subscriptions;
 use tui_dispatch::tasks::TaskManager;
 
@@ -64,11 +59,6 @@ pub struct App {
     temp_connection_id: Option<String>,
     /// Connection name to auto-connect to on startup
     auto_connect_name: Option<String>,
-    /// Debug mode enabled via --debug flag
-    debug_mode_enabled: bool,
-    debug_freeze: DebugFreeze<Action>,
-    /// Action logger middleware for tracing + in-memory ActionLog
-    action_logger: ActionLoggerMiddleware,
     pub event_runner: EventRunner,
     /// Advanced cmdline modes enabled via --with=advanced-cmd
     advanced_cmd_enabled: bool,
@@ -76,6 +66,8 @@ pub struct App {
     tasks: TaskManager<Action>,
     /// Subscriptions for continuous action sources (tick timer)
     subs: Subscriptions<Action>,
+    /// Debug layer from tui-dispatch
+    debug: DebugLayer<Action>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,21 +149,20 @@ impl App {
 
         let event_runner = EventRunner::new(tx.clone(), &config);
 
-        // Create action logger middleware
-        // In debug mode: enables tracing + in-memory ActionLog (100 entries)
-        // In normal mode: disabled (no tracing, no in-memory storage)
-        let action_logger = if cli.debug {
-            let filter =
-                ActionLoggerConfig::new(cli.debug_actions.as_deref(), cli.debug_exclude.as_deref());
-            ActionLoggerMiddleware::with_log(ActionLogConfig::new(100, filter))
-        } else {
-            // Exclude everything when not in debug mode
-            ActionLoggerMiddleware::new(ActionLoggerConfig::with_patterns(vec![], vec!["*".into()]))
-        };
-
         // Create TaskManager and Subscriptions for async operations
         let tasks = TaskManager::new(tx.clone());
         let subs = Subscriptions::new(tx.clone());
+
+        // Create DebugLayer with task/subscription integration
+        // When debug mode is toggled, tasks and subscriptions are automatically paused/resumed
+        let debug = DebugLayer::simple()
+            .with_task_manager(&tasks)
+            .with_subscriptions(&subs)
+            .active(cli.debug);
+
+        // Now make them mutable for use
+        let tasks = tasks;
+        let subs = subs;
 
         Self {
             app_state,
@@ -183,13 +174,11 @@ impl App {
             needs_render: true, // Render on first loop iteration
             temp_connection_id,
             auto_connect_name,
-            debug_mode_enabled: cli.debug,
-            debug_freeze: DebugFreeze::default(),
-            action_logger,
             event_runner,
             advanced_cmd_enabled: cli.has_feature(Feature::AdvancedCmd),
             tasks,
             subs,
+            debug,
         }
     }
 
@@ -221,22 +210,23 @@ impl App {
             // Only render when state has changed
             if self.needs_render {
                 terminal.draw(|f| {
-                    if self.debug_freeze.enabled {
-                        debug_ui::render_debug_freeze(
-                            f,
-                            &mut self.app_state,
-                            &mut self.ui_state,
-                            &self.keybindings,
-                            &mut self.debug_freeze,
-                        );
-                    } else {
-                        ui::render(
-                            f,
-                            &mut self.app_state,
-                            &mut self.ui_state,
-                            &self.keybindings,
-                        );
-                    }
+                    self.debug
+                        .render_with_state(f, |frame, _area, wants_state| {
+                            ui::render(
+                                frame,
+                                &mut self.app_state,
+                                &mut self.ui_state,
+                                &self.keybindings,
+                            );
+                            if wants_state {
+                                Some(
+                                    (&self.app_state, &self.ui_state)
+                                        .build_debug_table("Application State"),
+                                )
+                            } else {
+                                None
+                            }
+                        });
                 })?;
                 self.needs_render = false;
 
@@ -246,54 +236,35 @@ impl App {
                 });
             }
 
-            if self.debug_freeze.enabled {
-                // Pause tasks and subscriptions during debug freeze
-                if !self.tasks.is_paused() {
-                    self.tasks.pause();
-                    self.subs.pause();
-                }
-
-                tokio::select! {
-                    biased;
-                    // Priority 1: Debug input events
-                    Some(event) = self.event_runner.poll() => {
-                        self.handle_debug_event(&event).await;
-                    }
-                    // Priority 2: Background actions (queued until unfreeze)
-                    Some(action) = self.action_rx.recv() => {
-                        if matches!(action, Action::ConfirmQuit) {
-                            info!("Quit confirmed while frozen, cancelling event runner");
-                            self.event_runner.cancel();
-                            return Ok(());
-                        }
-                        // Skip ticks while frozen, queue other actions
-                        if !matches!(action, Action::Tick) {
-                            self.debug_freeze.queued_actions.push(action);
-                        }
-                    }
-                }
-                continue;
-            }
-
-            // Resume tasks and subscriptions when exiting debug mode
-            if self.tasks.is_paused() {
-                let queued = self.tasks.resume();
-                for action in queued {
-                    let _ = self.action_tx.send(action);
-                }
-                self.subs.resume();
-            }
-
             // Wait for events, actions from async tasks, or tick (from subscription)
             let action = tokio::select! {
                 biased;
                 // Priority 1: Actions from async tasks (LoadKeys results, etc.) and ticks from subscription
-                Some(action) = self.action_rx.recv() => action,
+                Some(action) = self.action_rx.recv() => {
+                    // Log action for debug overlay
+                    self.debug.log_action(&action);
+                    action
+                },
                 // Priority 2: Input events from EventRunner
                 Some(event) = self.event_runner.poll() => {
+                    let state = (&self.app_state, &self.ui_state);
+                    if let Some(needs_render) = self
+                        .debug
+                        .handle_event_with_state(&event.kind, &state)
+                        .dispatch_queued(|action| {
+                            let _ = self.action_tx.send(action);
+                        })
+                    {
+                        self.needs_render = needs_render;
+                        continue;
+                    }
+
+                    // Normal event handling
                     let actions = self.dispatch_event(&event);
                     // Process all actions from this event
                     for action in actions {
+                        // Log action for debug overlay
+                        self.debug.log_action(&action);
                         // Check for quit before processing
                         if matches!(action, Action::ConfirmQuit) {
                             info!("Quit confirmed from event dispatch, cancelling event runner");
@@ -334,103 +305,6 @@ impl App {
         }
         info!("Event loop finished");
         Ok(())
-    }
-
-    async fn handle_debug_event(&mut self, event: &Event) {
-        match &event.kind {
-            EventKind::Resize(_, _) => {
-                self.debug_freeze.pending_capture = true;
-                self.needs_render = true;
-            }
-            EventKind::Mouse(mouse) => {
-                // Ignore scroll events entirely (don't close overlays)
-                if matches!(
-                    mouse.kind,
-                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-                ) {
-                    return;
-                }
-
-                if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-                    && self.debug_freeze.mouse_capture_enabled
-                {
-                    if let Some(snapshot) = self.debug_freeze.snapshot.as_ref() {
-                        let overlay = debug::build_inspect_overlay(
-                            mouse.column,
-                            mouse.row,
-                            snapshot,
-                            &self.app_state,
-                            &self.ui_state,
-                        );
-                        self.debug_freeze.overlay = Some(DebugOverlay::Inspect(overlay));
-                    }
-                    self.debug_freeze.mouse_capture_enabled = false;
-                    let _ = terminal::set_mouse_capture(false);
-                    self.needs_render = true;
-                }
-            }
-            EventKind::Key(key) => {
-                if key.code == KeyCode::Esc && self.debug_freeze.overlay.is_some() {
-                    self.debug_freeze.overlay = None;
-                    self.needs_render = true;
-                    return;
-                }
-
-                // Handle scrolling in ActionLog overlay
-                if let Some(DebugOverlay::ActionLog(ref mut log)) = self.debug_freeze.overlay {
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            log.scroll_up();
-                            self.needs_render = true;
-                            return;
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            log.scroll_down();
-                            self.needs_render = true;
-                            return;
-                        }
-                        KeyCode::Home | KeyCode::Char('g') => {
-                            log.scroll_to_top();
-                            self.needs_render = true;
-                            return;
-                        }
-                        KeyCode::End | KeyCode::Char('G') => {
-                            log.scroll_to_bottom();
-                            self.needs_render = true;
-                            return;
-                        }
-                        KeyCode::PageUp => {
-                            log.page_up(10);
-                            self.needs_render = true;
-                            return;
-                        }
-                        KeyCode::PageDown => {
-                            log.page_down(10);
-                            self.needs_render = true;
-                            return;
-                        }
-                        _ => {}
-                    }
-                }
-
-                let command = self.keybindings.get_command(*key, BindingContext::Debug);
-                if let Some(command) = command {
-                    if command.starts_with("debug.") {
-                        if let Some(action) = self.command_to_action(&command) {
-                            self.update(action).await;
-                            return;
-                        }
-                    }
-                }
-
-                // Any other key dismisses the debug overlay (if open).
-                if self.debug_freeze.overlay.is_some() {
-                    self.debug_freeze.overlay = None;
-                    self.needs_render = true;
-                }
-            }
-            _ => {}
-        }
     }
 
     /// Dispatch an event to the appropriate component based on focus
@@ -870,13 +744,6 @@ impl App {
             "quit.confirm" => Some(Action::ConfirmQuit),
             "quit.cancel" => Some(Action::CancelQuit),
 
-            // Debug
-            "debug.toggle" => Some(Action::ToggleDebug),
-            "debug.copy_frame" => Some(Action::DebugCopyFrame),
-            "debug.state.toggle" => Some(Action::DebugToggleStateView),
-            "debug.mouse.toggle" => Some(Action::DebugToggleMouseCapture),
-            "debug.actions.toggle" => Some(Action::DebugToggleActionLog),
-
             // Help
             "help.toggle" => Some(Action::ToggleHelp),
             "help.close" => Some(Action::ToggleHelp),
@@ -967,17 +834,6 @@ impl App {
     async fn update(&mut self, action: Action) {
         use async_handlers::*;
         use sync_handlers::*;
-        use tui_dispatch::Middleware;
-
-        // Log action via middleware (handles both tracing + in-memory ActionLog)
-        self.action_logger.before(&action);
-
-        // Only clone for after() if in-memory log is enabled (avoids copying large payloads)
-        let action_for_after = if self.action_logger.log().is_some() {
-            Some(action.clone())
-        } else {
-            None
-        };
 
         let should_render = match action {
             // Core lifecycle
@@ -985,102 +841,6 @@ impl App {
             Action::Quit => false,
             Action::ConfirmQuit => false,
             Action::Resize(_, _) => true,
-
-            // Debug (requires --debug flag)
-            Action::ToggleDebug => {
-                if !self.debug_mode_enabled {
-                    false
-                } else if self.debug_freeze.enabled {
-                    let queued = std::mem::take(&mut self.debug_freeze.queued_actions);
-                    self.debug_freeze = DebugFreeze::default();
-                    let _ = terminal::set_mouse_capture(true);
-                    for action in queued {
-                        let _ = self.action_tx.send(action);
-                    }
-                    true
-                } else {
-                    self.debug_freeze.enabled = true;
-                    self.debug_freeze.pending_capture = true;
-                    self.debug_freeze.snapshot = None;
-                    self.debug_freeze.snapshot_text.clear();
-                    self.debug_freeze.queued_actions.clear();
-                    self.debug_freeze.message = None;
-                    self.debug_freeze.overlay = None;
-                    self.debug_freeze.mouse_capture_enabled = false;
-                    let _ = terminal::set_mouse_capture(false);
-                    true
-                }
-            }
-            Action::DebugCopyFrame => {
-                let text = self.debug_freeze.snapshot_text.clone();
-                if text.is_empty() {
-                    self.debug_freeze.message = Some("No frozen frame captured yet".to_string());
-                    true
-                } else {
-                    match clipboard::osc52_copy(&text) {
-                        Ok(()) => {
-                            self.debug_freeze.message =
-                                Some("copied to clipboard (OSC52)".to_string())
-                        }
-                        Err(e) => {
-                            self.debug_freeze.message = Some(format!("copy failed: {e}"));
-                        }
-                    }
-                    true
-                }
-            }
-            Action::DebugToggleStateView => {
-                let show = !matches!(self.debug_freeze.overlay, Some(DebugOverlay::State(_)));
-                if show {
-                    let overlay = debug::build_state_overlay(
-                        &self.app_state,
-                        &self.ui_state,
-                        &self.debug_freeze,
-                    );
-                    self.debug_freeze.overlay = Some(DebugOverlay::State(overlay));
-                } else {
-                    self.debug_freeze.overlay = None;
-                }
-                true
-            }
-            Action::DebugToggleMouseCapture => {
-                if !self.debug_freeze.enabled {
-                    false
-                } else {
-                    self.debug_freeze.mouse_capture_enabled =
-                        !self.debug_freeze.mouse_capture_enabled;
-                    if self.debug_freeze.mouse_capture_enabled {
-                        let _ = terminal::set_mouse_capture(true);
-                        self.debug_freeze.message =
-                            Some("mouse capture ON (selection OFF)".to_string());
-                    } else {
-                        let _ = terminal::set_mouse_capture(false);
-                        self.debug_freeze.message =
-                            Some("mouse capture OFF (selection ON)".to_string());
-                    }
-                    true
-                }
-            }
-            Action::DebugToggleActionLog => {
-                if !self.debug_freeze.enabled {
-                    false
-                } else {
-                    let show =
-                        !matches!(self.debug_freeze.overlay, Some(DebugOverlay::ActionLog(_)));
-                    if show {
-                        if let Some(log) = self.action_logger.log() {
-                            let overlay = ActionLogOverlay::from_log(log, "Action Log");
-                            self.debug_freeze.overlay = Some(DebugOverlay::ActionLog(overlay));
-                        } else {
-                            self.debug_freeze.message =
-                                Some("ActionLog not enabled (run with --debug)".to_string());
-                        }
-                    } else {
-                        self.debug_freeze.overlay = None;
-                    }
-                    true
-                }
-            }
 
             // UI toggles - delegated to sync_handlers
             Action::ShowQuitConfirmation
@@ -1445,12 +1205,6 @@ impl App {
             // Default
             _ => true,
         };
-
-        // Complete middleware logging (records state_changed for ActionLog)
-        // Only call after() if we have an in-memory log (otherwise it's a no-op)
-        if let Some(ref a) = action_for_after {
-            self.action_logger.after(a, should_render);
-        }
 
         if should_render {
             self.needs_render = true;

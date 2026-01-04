@@ -96,19 +96,6 @@ impl Component for HelpScreen {
         let resize_right = get_key("pane.resize.right", "^L");
         let help = get_key("help.toggle", "?");
         let quit = get_key("quit.show", "Q");
-        let debug_toggle = get_key("debug.toggle", "F12");
-        let debug_copy = keybindings
-            .get_first_keybinding("debug.copy_frame", BindingContext::Debug)
-            .map(|k| format_key_for_display(&k))
-            .unwrap_or_else(|| "Y".to_string());
-        let debug_state = keybindings
-            .get_first_keybinding("debug.state.toggle", BindingContext::Debug)
-            .map(|k| format_key_for_display(&k))
-            .unwrap_or_else(|| "S".to_string());
-        let debug_mouse = keybindings
-            .get_first_keybinding("debug.mouse.toggle", BindingContext::Debug)
-            .map(|k| format_key_for_display(&k))
-            .unwrap_or_else(|| "I".to_string());
 
         let help_sections: Vec<(&str, Vec<(&str, String)>)> = vec![
             (
@@ -133,16 +120,6 @@ impl Component for HelpScreen {
                 vec![
                     ("Resize panes", format!("{}  {}", resize_left, resize_right)),
                     ("Mouse resize", "drag border".to_string()),
-                ],
-            ),
-            (
-                "Debug",
-                vec![
-                    ("Freeze / resume", debug_toggle),
-                    ("Copy frozen frame", debug_copy),
-                    ("Show app state", debug_state),
-                    ("Inspect cell", format!("{debug_mouse} + Click")),
-                    ("Toggle mouse capture", debug_mouse),
                 ],
             ),
             ("General", vec![("Toggle help", help), ("Quit", quit)]),

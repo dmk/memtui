@@ -183,13 +183,6 @@ pub enum Action {
         token: u64, // Legacy - TaskManager handles cancellation
     },
 
-    // Debug
-    ToggleDebug,
-    DebugCopyFrame,
-    DebugToggleStateView,
-    DebugToggleMouseCapture,
-    DebugToggleActionLog,
-
     Error(String),
 }
 
@@ -375,11 +368,6 @@ impl fmt::Debug for Action {
                 .field("keys", &result.keys.len())
                 .field("token", token)
                 .finish(),
-            Action::ToggleDebug => write!(f, "ToggleDebug"),
-            Action::DebugCopyFrame => write!(f, "DebugCopyFrame"),
-            Action::DebugToggleStateView => write!(f, "DebugToggleStateView"),
-            Action::DebugToggleMouseCapture => write!(f, "DebugToggleMouseCapture"),
-            Action::DebugToggleActionLog => write!(f, "DebugToggleActionLog"),
             Action::Error(err) => f.debug_tuple("Error").field(err).finish(),
         }
     }
@@ -426,10 +414,6 @@ mod category_tests {
 
         // Test welcome category
         assert_eq!(Action::WelcomeNextItem.category(), Some("welcome"));
-
-        // Test debug category
-        assert_eq!(Action::DebugCopyFrame.category(), Some("debug"));
-        assert!(Action::DebugToggleStateView.is_debug());
 
         // Uncategorized actions
         assert_eq!(Action::Tick.category(), None);
